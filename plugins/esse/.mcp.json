@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "esse": {
+      "title": "esse",
+      "description": "Local image folders, provider settings, parallel generation queues, previews, and follow-up edits.",
+      "command": "./bin/esse",
+      "args": [],
+      "cwd": "."
+    }
+  }
+}

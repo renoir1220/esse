@@ -1,0 +1,43 @@
+{
+  "name": "esse",
+  "version": "0.1.0+codex.20260718093027",
+  "description": "Run parallel image generation and editing from local folders.",
+  "author": {
+    "name": "Renoir"
+  },
+  "license": "MIT",
+  "keywords": [
+    "images",
+    "batch",
+    "generation",
+    "local",
+    "providers"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "esse",
+    "shortDescription": "Parallel local-folder image generation and editing",
+    "longDescription": "Inspect local image folders, let GPT prepare prompts, run provider requests in parallel, monitor progress, preview results, and select one or many images for another editing pass. Provider credentials stay on this computer.",
+    "developerName": "Renoir",
+    "category": "Productivity",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Open esse and configure my image provider",
+      "Inspect a local image folder and prepare a parallel generation batch",
+      "Show my recent image batches"
+    ],
+    "brandColor": "#176B55",
+    "composerIcon": "./assets/icon.svg",
+    "logo": "./assets/logo.svg",
+    "screenshots": [
+      "./assets/batch-sidebar.png",
+      "./assets/batch-fullscreen.png",
+      "./assets/provider-fullscreen.png"
+    ]
+  }
+}

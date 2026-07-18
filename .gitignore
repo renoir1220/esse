@@ -1,0 +1,16 @@
+node_modules/
+dist/
+web/dist/
+plugins/esse/web/preview.html
+plugins/esse/bin/
+plugins/esse/mcp/server.cjs
+plugins/esse/mcp/widget.html
+release/
+.env
+.env.local
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+coverage/

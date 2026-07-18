@@ -1,0 +1,4 @@
+interface:
+  display_name: "esse"
+  short_description: "Inspect local images and run parallel generation batches"
+  default_prompt: "Use $batch-generate-images with esse to add vases to every flower photo in a local folder."

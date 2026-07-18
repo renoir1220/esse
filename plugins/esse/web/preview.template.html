@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>esse Local Preview</title><style>/*__WIDGET_CSS__*/</style></head>
+<body>
+<div id="root"></div>
+<script>
+const now = new Date().toISOString();
+const offering = { id:"offer-gpt-default", providerProfileId:"provider-rabbit-default", providerName:"兔子", tierName:"default", adapterId:"tuzi-json-images", canonicalModelId:"gpt-image-2", providerModelId:"gpt-image-2", displayName:"GPT-Image 2", concurrency:3, price:{mode:"per_request",amount:0.035,currency:"CNY",observedAt:"2026-07-18"} };
+const allJobs = [
+  {id:"job-1",index:0,name:"图1",inputPath:"C:\\Photos\\Flowers\\rose.jpg",outputPath:"C:\\Photos\\Flowers\\esse Output\\rose-generated.png",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"succeeded",progress:100,attempt:1,retryable:false,chargeState:"charged",durationMs:30200,previewUrl:"https://images.unsplash.com/photo-1490750967868-88aa4486c946?auto=format&fit=crop&w=900&q=80"},
+  {id:"job-2",index:1,name:"图2",inputPath:"C:\\Photos\\Flowers\\tulip.jpg",outputPath:"C:\\Photos\\Flowers\\esse Output\\tulip-generated.png",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"succeeded",progress:100,attempt:1,retryable:false,chargeState:"charged",durationMs:34100,previewUrl:"https://images.unsplash.com/photo-1520763185298-1b434c919102?auto=format&fit=crop&w=900&q=80"},
+  {id:"job-3",index:2,name:"图3",inputPath:"C:\\Photos\\Flowers\\daisy.jpg",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"running",progress:15,attempt:1,retryable:false,chargeState:"unknown"},
+  {id:"job-4",index:3,name:"图4",inputPath:"C:\\Photos\\Flowers\\peony.jpg",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"queued",progress:0,attempt:1,retryable:false,chargeState:"not_charged"}
+];
+const singlePreview = new URLSearchParams(location.search).get("mode") === "single";
+const jobs = singlePreview ? allJobs.slice(0, 1) : allJobs;
+const batch = {id:"batch-preview",title:singlePreview?"向日葵商品图":"鲜花照片加花瓶",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",inputDirectory:"C:\\Photos\\Flowers",outputDirectory:"C:\\Photos\\Flowers\\esse Output\\batch-preview",offering,jobs,status:singlePreview?"completed":"running",total:jobs.length,queued:singlePreview?0:1,running:singlePreview?0:1,succeeded:singlePreview?1:2,failed:0,canceled:0,estimatedCost:singlePreview ? .035 : .14,currency:"CNY",createdAt:now,updatedAt:now};
+const profile = {id:"provider-rabbit-default",displayName:"兔子",tierName:"default",baseUrl:"https://api.tu-zi.com",adapterId:"tuzi-json-images",concurrency:3,hasApiKey:true,offerings:[{id:offering.id,canonicalModelId:offering.canonicalModelId,providerModelId:offering.providerModelId,displayName:offering.displayName,price:offering.price,supportsTextToImage:true,supportsImageToImage:true,sizes:["auto","1024x1024"],qualities:["auto","high"]}],createdAt:now,updatedAt:now};
+window.__ESSE_PREVIEW__={view:{tab:location.hash==="#settings"?"settings":"batches",batchId:batch.id},providers:[profile],offerings:[{...profile.offerings[0],providerProfileId:profile.id,providerName:profile.displayName,tierName:profile.tierName,adapterId:profile.adapterId,concurrency:3,configured:true}],defaultOfferingId:offering.id,batches:[batch],activeBatch:batch,platform:"win32",secureStorage:"Windows DPAPI"};
+</script>
+<script type="module">/*__WIDGET_JS__*/</script>
+</body>
+</html>
