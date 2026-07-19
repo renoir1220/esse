@@ -5,6 +5,27 @@ export function keepSelectedBatchId(currentId: string | undefined, incoming: Wor
   return incoming.activeBatch?.id || incoming.view.batchId || incoming.batches[0]?.id;
 }
 
+export function batchIdAfterStateRefresh(
+  currentId: string | undefined,
+  current: WorkbenchState,
+  incoming: WorkbenchState
+): string | undefined {
+  const activation = incoming.activation;
+  const previousRevision = current.activation?.revision || 0;
+  if (activation && activation.revision > previousRevision && incoming.batches.some((batch) => batch.id === activation.batchId)) {
+    return activation.batchId;
+  }
+  return keepSelectedBatchId(currentId, incoming);
+}
+
+export function hasNewBatchActivation(current: WorkbenchState, incoming: WorkbenchState): boolean {
+  return Boolean(incoming.activation && incoming.activation.revision > (current.activation?.revision || 0));
+}
+
+export function isStaleStateRefresh(current: WorkbenchState, incoming: WorkbenchState): boolean {
+  return Boolean(current.activation && incoming.activation && incoming.activation.revision < current.activation.revision);
+}
+
 export function batchIdAfterUpdate(currentId: string | undefined, batch: BatchSnapshot, activateBatchId?: string): string {
   if (activateBatchId === batch.id) return batch.id;
   return currentId || batch.id;

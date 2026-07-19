@@ -43,7 +43,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await client.connect(clientTransport);
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
-    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "ui_get_batch_state", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_metadata", "ui_save_image_as", "ui_delete_image_batch"]) {
+    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_metadata", "ui_save_image_as", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
     }
     const settingsTool = tools.tools.find((tool) => tool.name === "ui_save_provider_profile");
@@ -53,7 +53,11 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const createTool = tools.tools.find((tool) => tool.name === "create_image_batch");
     assert(!((createTool?.inputSchema as { required?: string[] })?.required || []).includes("offeringId"), "create_image_batch must use the configured default when offeringId is omitted");
     assert((createTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.referenceImages, "create_image_batch must accept existing Esse image references");
-    for (const headlessName of ["create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "list_image_batches", "get_image_batch", "render_image_batch", "modify_selected_images"]) {
+    const listTool = tools.tools.find((tool) => tool.name === "list_image_batches");
+    assert.equal((listTool?.inputSchema as { properties?: { limit?: { maximum?: number } } })?.properties?.limit?.maximum, 50);
+    const modifyTool = tools.tools.find((tool) => tool.name === "modify_selected_images");
+    assert((modifyTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.imageIds, "modify_selected_images must accept exact image IDs");
+    for (const headlessName of ["create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "list_image_batches", "get_image_batch", "render_image_batch", "modify_selected_images", "delete_esse_images", "merge_image_batches"]) {
       const headless = tools.tools.find((tool) => tool.name === headlessName);
       assert.equal((headless?._meta as { ui?: { resourceUri?: string } })?.ui?.resourceUri, undefined, `${headlessName} must not reopen an inline widget`);
     }
@@ -98,6 +102,8 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const createdBatch = (created.structuredContent as { batch?: { id?: string; offering?: { id?: string } } }).batch;
     assert.equal(createdBatch?.offering?.id, defaultOfferingId);
     assert.equal((created.structuredContent as { activateBatchId?: string }).activateBatchId, createdBatch?.id);
+    const refreshedState = await client.callTool({ name: "ui_get_local_state", arguments: { batchId: createdBatch?.id } });
+    assert.equal((refreshedState.structuredContent as { state?: { activation?: { batchId?: string } } }).state?.activation?.batchId, createdBatch?.id);
     let completedJobId: string | undefined;
     let completedOutputPath: string | undefined;
     for (let index = 0; index < 100; index += 1) {

@@ -6,7 +6,7 @@ import type { BatchSnapshot } from "../web/types.js";
 test("selected Esse images are identified by display name, stable image ID, and path", () => {
   const context = selectionModelContext(batch(), new Set(["job-2"]));
   assert.match(context, /图2 \(image ID: job-2, local path: C:\\output\\job-2\.png\)/);
-  assert.match(context, /必须使用这些准确 image ID 和本地路径/);
+  assert.match(context, /必须把这些准确 image ID 传给 modify_selected_images/);
 });
 
 test("multiple unselected images require clarification and explain both selection methods", () => {

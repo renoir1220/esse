@@ -146,6 +146,7 @@ export interface WorkbenchState {
   defaultOfferingId?: string;
   batches: BatchSnapshot[];
   activeBatch?: BatchSnapshot;
+  activation?: { batchId: string; revision: number };
   platform: string;
   secureStorage: string;
 }

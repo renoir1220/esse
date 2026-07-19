@@ -130,6 +130,7 @@ export interface BatchRecord {
   parentBatchId?: string;
   requestKey?: string;
   modificationKeys?: Record<string, string[]>;
+  mergeKeys?: Record<string, string[]>;
   title: string;
   prompt: string;
   inputDirectory?: string;
@@ -138,6 +139,11 @@ export interface BatchRecord {
   jobs: JobRecord[];
   createdAt: string;
   updatedAt: string;
+}
+
+export interface BatchActivation {
+  batchId: string;
+  revision: number;
 }
 
 export interface BatchSnapshot extends BatchRecord {

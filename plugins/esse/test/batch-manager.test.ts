@@ -211,6 +211,51 @@ test("in-place modification keeps the batch, refreshes the main image, and creat
   }
 });
 
+test("backup and failed-source modifications append jobs to the same batch", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-append-edit-"));
+  try {
+    const { manager } = await createManager(root, async () => new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    const created = await manager.create({ offeringId: "offer-default", prompt: "original", count: 1 });
+    const completed = await waitForBatch(manager, created.id);
+    const edited = await manager.modifyInPlace({ batchId: created.id, imageIds: [completed.jobs[0]!.id], instructions: "first edit" });
+    const editedComplete = await waitForBatch(manager, edited.id);
+    const backup = editedComplete.jobs[0]!.backups![0]!;
+
+    const fromBackup = await manager.modifyInPlace({ batchId: created.id, imageIds: [backup.id], instructions: "edit the preserved version", requestKey: "append-backup" });
+    assert.equal(fromBackup.id, created.id);
+    assert.equal(fromBackup.total, 2);
+    assert.equal(fromBackup.jobs[1]?.name, "图2");
+    assert.deepEqual(fromBackup.jobs[1]?.referenceImagePaths, [backup.outputPath]);
+    const backupComplete = await waitForBatch(manager, created.id);
+    assert.equal(backupComplete.jobs[1]?.status, "succeeded");
+    await access(backup.outputPath);
+
+    const failedSource = path.join(root, "failed-source.png");
+    await writeFile(failedSource, Buffer.from(onePixelPng, "base64"));
+    const delegated = await manager.create({
+      offeringId: CODEX_GENERATION_OFFERING_ID,
+      prompt: "delegated",
+      jobs: [{ prompt: "will fail", referenceImagePaths: [failedSource] }]
+    });
+    const failed = await manager.failAgentJob(delegated.id, delegated.jobs[0]!.id, "generation unavailable");
+    const fromFailed = await manager.modifyInPlace({
+      batchId: delegated.id,
+      imageIds: [failed.jobs[0]!.id],
+      instructions: "recover from the exact source",
+      offeringId: "offer-default"
+    });
+    assert.equal(fromFailed.id, delegated.id);
+    assert.equal(fromFailed.total, 2);
+    assert.equal(fromFailed.jobs[1]?.name, "图2");
+    assert.deepEqual(fromFailed.jobs[1]?.referenceImagePaths, [failedSource]);
+    const recovered = await waitForBatch(manager, delegated.id);
+    assert.equal(recovered.jobs[1]?.status, "succeeded");
+    await access(failedSource);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("definitely uncharged failures auto retry three times, while unknown-charge failures do not", async () => {
   const retryRoot = await mkdtemp(path.join(os.tmpdir(), "esse-retry-"));
   const unknownRoot = await mkdtemp(path.join(os.tmpdir(), "esse-unknown-"));
@@ -266,6 +311,62 @@ test("deleting a terminal batch removes its managed images and record", async ()
     assert.throws(() => manager.get(created.id), /Unknown image batch/);
     assert.equal(await store.get(created.id), undefined);
     await assert.rejects(access(outputPath));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("deleting exact images removes managed files without renumbering survivors", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-delete-images-"));
+  try {
+    const { manager } = await createManager(root, async () => new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    const created = await manager.create({ offeringId: "offer-default", prompt: "delete selected", count: 2 });
+    const completed = await waitForBatch(manager, created.id);
+    const edited = await manager.modifyInPlace({ batchId: created.id, imageIds: [completed.jobs[0]!.id], instructions: "create a backup" });
+    const editedComplete = await waitForBatch(manager, edited.id);
+    const backup = editedComplete.jobs[0]!.backups![0]!;
+    const second = editedComplete.jobs[1]!;
+    const firstOutput = editedComplete.jobs[0]!.outputPath!;
+
+    const withoutBackup = await manager.deleteImages(created.id, [backup.id]);
+    assert.equal(withoutBackup.jobs[0]?.backups?.length || 0, 0);
+    assert.equal(withoutBackup.jobs[0]?.referenceImagePaths, undefined);
+    await assert.rejects(access(backup.outputPath));
+
+    const withoutSecond = await manager.deleteImages(created.id, [second.id]);
+    assert.deepEqual(withoutSecond.jobs.map((job) => job.name), ["图1"]);
+    await assert.rejects(access(second.outputPath!));
+    await access(firstOutput);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("merging batches copies managed images and preserves or deletes sources explicitly", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-merge-"));
+  try {
+    const { manager } = await createManager(root, async () => new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    const target = await waitForBatch(manager, (await manager.create({ offeringId: "offer-default", title: "target", prompt: "target", count: 1 })).id);
+    const source = await waitForBatch(manager, (await manager.create({ offeringId: "offer-default", title: "source", prompt: "source", count: 1 })).id);
+    const sourceOutput = source.jobs[0]!.outputPath!;
+
+    const merged = await manager.mergeBatches({ targetBatchId: target.id, sourceBatchIds: [source.id], requestKey: "merge-once" });
+    assert.deepEqual(merged.jobs.map((job) => job.name), ["图1", "图2"]);
+    assert.notEqual(merged.jobs[1]?.id, source.jobs[0]?.id);
+    assert.notEqual(merged.jobs[1]?.outputPath, sourceOutput);
+    assert(merged.jobs[1]?.outputPath?.startsWith(target.outputDirectory));
+    await access(sourceOutput);
+    await access(merged.jobs[1]!.outputPath!);
+    assert.equal(manager.get(source.id).id, source.id);
+    const duplicate = await manager.mergeBatches({ targetBatchId: target.id, sourceBatchIds: [source.id], requestKey: "merge-once" });
+    assert.equal(duplicate.total, 2);
+
+    const disposable = await waitForBatch(manager, (await manager.create({ offeringId: "offer-default", title: "disposable", prompt: "disposable", count: 1 })).id);
+    const mergedAndDeleted = await manager.mergeBatches({ targetBatchId: target.id, sourceBatchIds: [disposable.id], deleteSourceBatches: true });
+    assert.deepEqual(mergedAndDeleted.jobs.map((job) => job.name), ["图1", "图2", "图3"]);
+    assert.throws(() => manager.get(disposable.id), /Unknown image batch/);
+    await access(mergedAndDeleted.jobs[2]!.outputPath!);
+    assert.equal(manager.activation()?.batchId, target.id);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

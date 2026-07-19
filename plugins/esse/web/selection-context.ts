@@ -38,7 +38,7 @@ export function selectionModelContext(batch: BatchSnapshot, selectedImageIds: Se
     `${image.name} (image ID: ${image.id}${includePath ? `, local path: ${image.path}` : ""})`;
 
   if (selected.length) {
-    return `用户当前在 Esse 批次“${batch.title}” (${batch.id}) 中已选择：${selected.map((image) => label(image, true)).join("、")}。当用户说“我选择的图片”或“选中的图片”时，必须使用这些准确 image ID 和本地路径；其中可能包含历史备份或失败任务的原始参考图。`;
+    return `用户当前在 Esse 批次“${batch.title}” (${batch.id}) 中已选择：${selected.map((image) => label(image, true)).join("、")}。当用户说“我选择的图片”或“选中的图片”时，必须把这些准确 image ID 传给 modify_selected_images 的 imageIds；其中可能包含历史备份或失败任务的原始参考图，修改仍须留在当前批次。`;
   }
   if (available.length > 1) {
     return `用户当前没有在 Esse 批次“${batch.title}” (${batch.id}) 中选择图片。可选图片有：${available.map((image) => label(image)).join("、")}。如果用户要求修改但没有明确图像名称，不得猜测；必须询问想改哪张，并提示可以输入图像名称（例如“图1”或“图2-1”），或者在 Esse 中双击选择图片。`;
