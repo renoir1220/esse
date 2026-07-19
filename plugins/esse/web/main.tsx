@@ -2,6 +2,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createRoot } from "react-dom/client";
 import { ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
 import { bridge } from "./bridge";
+import { formatImageFileSize, formatImageResolution } from "./image-metadata";
+import type { ImageMetadata } from "./image-metadata";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
 import { providerSavePayload } from "./provider-payload";
 import { offeringPriceLabel } from "./pricing";
@@ -583,6 +585,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   const [previewFull, setPreviewFull] = useState<string>();
   const [previewZoom, setPreviewZoom] = useState(initialImageZoom);
   const [detailAsset, setDetailAsset] = useState<ImageAsset>();
+  const [detailMetadata, setDetailMetadata] = useState<ImageMetadata>();
   const [busy, setBusy] = useState<string>();
   const modificationOfferings = useMemo<ModificationOffering[]>(() => {
     const configured = props.offerings
@@ -675,6 +678,23 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     void load();
     return () => { canceled = true; };
   }, [batch.id, detailAsset?.id, detailReferencePaths.join("|")]);
+
+  useEffect(() => {
+    if (!detailAsset) { setDetailMetadata(undefined); return; }
+    let canceled = false;
+    setDetailMetadata(undefined);
+    void bridge.callTool("ui_get_image_metadata", { batchId: batch.id, jobId: detailAsset.id }).then((result) => {
+      if (canceled) return;
+      const content = result.structuredContent || {};
+      setDetailMetadata({
+        available: content.available === true,
+        width: typeof content.width === "number" ? content.width : undefined,
+        height: typeof content.height === "number" ? content.height : undefined,
+        sizeBytes: typeof content.sizeBytes === "number" ? content.sizeBytes : undefined
+      });
+    }).catch(() => { if (!canceled) setDetailMetadata({ available: false }); });
+    return () => { canceled = true; };
+  }, [batch.id, detailAsset?.id]);
 
   useEffect(() => {
     if (!detailAsset) return;
@@ -815,7 +835,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       </div>
       {batch.queued > 0 && <footer className="batch-actions"><button className="secondary-button" onClick={() => void cancel()} disabled={Boolean(busy)}>取消排队</button></footer>}
       {previewAsset && <div className="lightbox" role="dialog" aria-modal="true" aria-label={previewAsset.name}><button className="lightbox-close" onClick={() => setPreviewAsset(undefined)} aria-label="关闭预览">×</button>{previewableAssets.length > 1 && <><button className="lightbox-nav previous" onClick={() => movePreview(-1)} aria-label="上一张" title="上一张（←）"><CaretLeft size={24} /></button><button className="lightbox-nav next" onClick={() => movePreview(1)} aria-label="下一张" title="下一张（→）"><CaretRight size={24} /></button></>}<div className="lightbox-stage" onClick={() => setPreviewAsset(undefined)} onWheel={zoomPreview}>{previewFull ? <img className={previewZoom.scale > 1.0001 ? "is-zoomed" : ""} src={previewFull} alt={previewAsset.name} style={{ transform: `translate3d(${previewZoom.x}px, ${previewZoom.y}px, 0) scale(${previewZoom.scale})` }} onClick={(event) => event.stopPropagation()} onDoubleClick={() => setPreviewZoom(initialImageZoom)} /> : <span className="spinner large lightbox-spinner" />}</div><div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span><button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div></div>}
-      {detailAsset && <TaskDetailDialog asset={detailAsset} referencePaths={detailReferencePaths} previews={previews} onClose={() => setDetailAsset(undefined)} />}
+      {detailAsset && <TaskDetailDialog asset={detailAsset} metadata={detailMetadata} referencePaths={detailReferencePaths} previews={previews} onClose={() => setDetailAsset(undefined)} />}
     </div>
   );
 }
@@ -854,7 +874,7 @@ function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: A
   </article>;
 }
 
-function TaskDetailDialog({ asset, referencePaths, previews, onClose }: { asset: ImageAsset; referencePaths: string[]; previews: Record<string, CachedPreview>; onClose: () => void }) {
+function TaskDetailDialog({ asset, metadata, referencePaths, previews, onClose }: { asset: ImageAsset; metadata?: ImageMetadata; referencePaths: string[]; previews: Record<string, CachedPreview>; onClose: () => void }) {
   const prompt = asset.job?.prompt || asset.backup?.prompt || "未记录 Prompt";
   const status = asset.backup ? "历史版本" : asset.job ? jobStatusLabel(asset.job) : "任务";
   const offering = asset.job?.offering || asset.backup?.offering;
@@ -865,6 +885,7 @@ function TaskDetailDialog({ asset, referencePaths, previews, onClose }: { asset:
     <section className="task-detail-dialog" role="dialog" aria-modal="true" aria-label={`${asset.name} 任务详情`} onClick={(event) => event.stopPropagation()}>
       <header className="task-detail-header"><div><span className="eyebrow">任务详情</span><h2>{asset.name}</h2></div><button onClick={onClose} aria-label="关闭任务详情">×</button></header>
       <div className="task-detail-meta"><span>{status}</span>{offering && <span>{offering.displayName} · {offeringPriceLabel(offering.price)}</span>}{asset.job && <><span>当前第 {asset.job.attempt} 次尝试</span><span>{referencePaths.length} 张参考图</span></>}</div>
+      <section className="task-detail-section"><strong>图片信息</strong><div className="image-metadata-grid"><div><span>分辨率</span><b>{formatImageResolution(metadata)}</b></div><div title={metadata?.sizeBytes === undefined ? undefined : `${metadata.sizeBytes.toLocaleString()} 字节`}><span>文件大小</span><b>{formatImageFileSize(metadata)}</b></div></div></section>
       <section className="task-detail-section"><strong>Prompt</strong><p>{prompt}</p></section>
       {asset.job && <section className="task-detail-section"><strong>调用记录</strong>
         <div className="call-history-summary"><span>{calls.length} 次调用</span><span>{succeededCalls} 次成功</span><span>累计 {formatDuration(totalDuration)}</span></div>

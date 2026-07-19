@@ -43,7 +43,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await client.connect(clientTransport);
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
-    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "ui_get_batch_state", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_save_image_as", "ui_delete_image_batch"]) {
+    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "ui_get_batch_state", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_metadata", "ui_save_image_as", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
     }
     const settingsTool = tools.tools.find((tool) => tool.name === "ui_save_provider_profile");
@@ -112,6 +112,8 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     }
     assert(completedJobId);
     assert(completedOutputPath);
+    const imageMetadata = await client.callTool({ name: "ui_get_image_metadata", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
+    assert.deepEqual(imageMetadata.structuredContent, { batchId: createdBatch?.id, jobId: completedJobId, available: true, width: 1, height: 1, sizeBytes: Buffer.from(onePixelPng, "base64").length });
     const listed = await client.callTool({ name: "list_image_batches", arguments: { limit: 5 } });
     const listedBatches = (listed.structuredContent as { batches?: Array<{ id?: string; jobs?: Array<{ name?: string }> }> }).batches;
     assert.equal(listedBatches?.[0]?.id, createdBatch?.id);
@@ -166,6 +168,23 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert.equal((imported.structuredContent as { job?: { status?: string } }).job?.status, "succeeded");
     const importedHistory = (imported.structuredContent as { batch?: { jobs?: Array<{ id?: string; callHistory?: Array<{ status?: string; source?: string }> }> } }).batch?.jobs?.find((job) => job.id === delegatedJobId)?.callHistory;
     assert.deepEqual(importedHistory?.map((call) => [call.status, call.source]), [["succeeded", "agent"]]);
+
+    await client.callTool({ name: "modify_selected_images", arguments: { batchId: createdBatch?.id, jobIds: [completedJobId], instructions: "create one backup for metadata verification", offeringId: defaultOfferingId } });
+    let backupId: string | undefined;
+    for (let index = 0; index < 100; index += 1) {
+      const current = await client.callTool({ name: "get_image_batch", arguments: { batchId: createdBatch?.id } });
+      const currentBatch = (current.structuredContent as { batch?: { status?: string; jobs?: Array<{ backups?: Array<{ id?: string; name?: string }> }> } }).batch;
+      if (currentBatch?.status && !["queued", "running"].includes(currentBatch.status)) {
+        const backup = currentBatch.jobs?.[0]?.backups?.[0];
+        assert.equal(backup?.name, "图1-1");
+        backupId = backup?.id;
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    assert(backupId);
+    const backupMetadata = await client.callTool({ name: "ui_get_image_metadata", arguments: { batchId: createdBatch?.id, jobId: backupId } });
+    assert.deepEqual(backupMetadata.structuredContent, { batchId: createdBatch?.id, jobId: backupId, available: true, width: 1, height: 1, sizeBytes: Buffer.from(onePixelPng, "base64").length });
 
     const unsupported = await client.callTool({ name: "create_image_batch", arguments: { prompt: "unsupported Agent", count: 1, requestKey: "unsupported-agent" } });
     const unsupportedBatch = (unsupported.structuredContent as { batch?: { id?: string; jobs?: Array<{ id?: string }> } }).batch;
