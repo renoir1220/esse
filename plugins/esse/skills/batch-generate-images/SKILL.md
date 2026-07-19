@@ -24,14 +24,22 @@ Use the local Esse MCP tools. Let Esse resolve the user's configured default off
    - Before generating a job, call `start_agent_image_job`. Use its exact `prompt` and every returned `referenceImagePaths` entry. For a built-in image tool that requires visible local references, inspect each reference first.
    - On success, call `complete_agent_image_job` with the real absolute local output path. On failure, call `fail_agent_image_job`. Never invent a path or submit an inline-only image that was not saved locally.
    - Do not poll Esse. Each start, completion, and failure call updates the workbench directly.
-10. When the user selects results and describes another change, call `modify_selected_images` with the selected job IDs. The main image is updated inside the same batch and the previous version is kept as `图1-1`, `图1-2`, and so on. Pass `offeringId` only when the user explicitly names a model or selected it in the Esse widget; otherwise omit it so Esse reuses the batch model. Then follow the normal-Provider or `agent-generation` branch above.
+10. When the user describes another change, resolve the target images before submitting work:
+   - If the current Esse MCP App context says the user selected images, treat phrases such as “我选择的图片” or “选中的图片” as those exact image IDs and local paths. Selection may contain a current result, a backup such as `图2-1`, or the source image retained by a failed job.
+   - If the user explicitly names images such as `图1`, `图2`, or `图2-1`, resolve those exact names from the current batch. Names embedded in a request sent by the Esse modification composer are already resolved; do not ask again.
+   - If no image is selected or named and the current batch has more than one available image, do not guess. Ask which image to modify and remind the user that they can type a name such as `图1`, or double-click images in Esse to select them.
+   - If the batch has exactly one available image, an otherwise unambiguous modification request may target that sole image.
+   - For current successful result jobs, call `modify_selected_images` with the resolved job IDs. The main image is updated inside the same batch and its previous version is kept as `图1-1`, `图1-2`, and so on.
+   - For a selected backup or failed-job source, create a new job using that exact existing image through `referenceImages`; do not substitute the current main image or call `modify_selected_images` with a backup ID.
+   Pass `offeringId` only when the user explicitly names a model or selected it in the Esse widget; otherwise omit it so Esse reuses the batch model. Then follow the normal-Provider or `agent-generation` branch above.
 
 ## Guardrails
 
 - Tell the user where selected files are sent: the chosen external Provider, or the current Agent's image-generation service/model for Codex 生成.
 - Never overwrite source images. Use the batch output directory returned by the tool.
-- For normal Provider offerings, do not automatically retry a failed request whose `chargeState` is `unknown`; ask the user to confirm the possible duplicate charge. Definitely-not-charged retryable failures may retry automatically up to three times.
+- For normal Provider offerings, do not automatically retry a failed request whose `chargeState` is `unknown`. A direct click on Esse's retry button is already the user's explicit retry decision and must not trigger a second confirmation. Definitely-not-charged retryable failures may retry automatically up to three times.
 - For Codex 生成, let the current Agent decide its own supported execution method, but always report a terminal success or failure to Esse.
 - Preserve local paths exactly. Do not invent filenames or claim a folder was processed before the batch reaches a terminal status.
 - Existing Esse images must be passed structurally through `referenceImages`; a matching phrase in the prompt does not count as attaching the image.
+- Never infer one target from a multi-image batch when neither the user nor the Esse selection context identifies it. Treat current results, backups, and failed-job source images as distinct selectable images.
 - Limit one batch to 50 images. Split larger folders into deliberate batches with distinct request keys.

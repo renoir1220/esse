@@ -24,6 +24,7 @@ try {
   assert(names.includes("create_image_batch"));
   assert(names.includes("list_image_batches"));
   assert(names.includes("ui_get_batch_state"));
+  assert(names.includes("ui_open_batch_folder"));
   assert(names.includes("ui_save_provider_profile"));
   assert(names.includes("ui_save_image_as"));
   const resources = await client.listResources();

@@ -25,7 +25,11 @@ class HostBridge {
 
   async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
     const cleanArgs = compactToolArgs(args);
-    if (window.__ESSE_PREVIEW__) return previewCall(name, cleanArgs);
+    if (window.__ESSE_PREVIEW__) {
+      window.__ESSE_LAST_TOOL_CALL__ = { name, args: cleanArgs };
+      document.documentElement.dataset.esseLastToolCall = JSON.stringify({ name, args: cleanArgs });
+      return previewCall(name, cleanArgs);
+    }
     if (window.openai?.callTool) return window.openai.callTool(name, cleanArgs);
     await this.ensureInitialized();
     return this.request("tools/call", { name, arguments: cleanArgs }) as Promise<ToolResult>;
@@ -50,7 +54,11 @@ class HostBridge {
   }
 
   async sendMessage(text: string): Promise<void> {
-    if (window.__ESSE_PREVIEW__) return;
+    if (window.__ESSE_PREVIEW__) {
+      window.__ESSE_LAST_MESSAGE__ = text;
+      document.documentElement.dataset.esseLastMessage = text;
+      return;
+    }
     if (window.openai?.sendFollowUpMessage) {
       await window.openai.sendFollowUpMessage({ prompt: text, scrollToBottom: true });
       return;
@@ -134,8 +142,9 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
   if (name === "ui_get_image_preview") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);
     const job = batch?.jobs.find((entry) => entry.id === args.jobId);
+    const backup = batch?.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === args.jobId) as ({ previewUrl?: string } | undefined);
     const sourceIndex = typeof args.sourceIndex === "number" ? args.sourceIndex : undefined;
-    const dataUrl = sourceIndex === undefined ? job?.previewUrl : job?.referencePreviewUrls?.[sourceIndex] || (sourceIndex === 0 ? job?.previewUrl : undefined);
+    const dataUrl = sourceIndex === undefined ? backup?.previewUrl || job?.previewUrl : job?.referencePreviewUrls?.[sourceIndex] || (sourceIndex === 0 ? job?.previewUrl : undefined);
     return { structuredContent: { available: Boolean(dataUrl), sourceIndex }, _meta: { dataUrl } };
   }
   if (name === "ui_test_provider_profile") {
@@ -147,6 +156,10 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
   }
   if (name === "ui_save_image_as") {
     return { structuredContent: { saved: true, canceled: false, path: `C:\\Users\\demo\\Pictures\\${String(args.jobId || "image")}.png` } };
+  }
+  if (name === "ui_open_batch_folder") {
+    const batch = state.batches.find((entry) => entry.id === args.batchId);
+    return { structuredContent: { opened: Boolean(batch), path: batch?.outputDirectory } };
   }
   if (name === "modify_selected_images") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);

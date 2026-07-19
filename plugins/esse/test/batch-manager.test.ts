@@ -62,9 +62,16 @@ test("persistent local batch respects profile concurrency and writes unique outp
     assert.equal(new Set(completed.jobs.map((job) => job.outputPath)).size, 5);
     assert.equal((await readdir(completed.outputDirectory)).length, 5);
     assert.equal(completed.estimatedCost, 0.175);
+    for (const job of completed.jobs) {
+      assert.equal(job.callHistory?.length, 1);
+      assert.equal(job.callHistory?.[0]?.source, "provider");
+      assert.equal(job.callHistory?.[0]?.status, "succeeded");
+      assert.equal(typeof job.callHistory?.[0]?.durationMs, "number");
+    }
     const reloaded = new BatchManager(new BatchStore(paths.batchesDir), registry, paths);
     await reloaded.initialize();
     assert.equal(reloaded.get(created.id).succeeded, 5);
+    assert.equal(reloaded.get(created.id).jobs[0]?.callHistory?.[0]?.status, "succeeded");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -142,6 +149,7 @@ test("Codex generation delegates to the current Agent and imports terminal resul
     assert.equal((await manager.startAgentJob(created.id, firstJob.id)).jobs[0]?.status, "running");
     const completed = await manager.completeAgentJob(created.id, firstJob.id, generatedPath);
     assert.equal(completed.jobs[0]?.status, "succeeded");
+    assert.deepEqual(completed.jobs[0]?.callHistory?.map((call) => [call.source, call.status]), [["agent", "succeeded"]]);
     assert(completed.jobs[0]?.outputPath?.startsWith(completed.outputDirectory));
     await access(generatedPath);
     await access(completed.jobs[0]!.outputPath!);
@@ -155,6 +163,7 @@ test("Codex generation delegates to the current Agent and imports terminal resul
     assert.equal(failed.jobs[1]?.status, "failed");
     assert.equal(failed.jobs[1]?.retryable, false);
     assert.equal(failed.jobs[1]?.error, "当前 Agent 不支持第二项生成");
+    assert.deepEqual(failed.jobs[1]?.callHistory?.map((call) => [call.source, call.status, call.error]), [["agent", "failed", "当前 Agent 不支持第二项生成"]]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -190,6 +199,7 @@ test("in-place modification keeps the batch, refreshes the main image, and creat
     assert.equal(modifiedJob.status, "succeeded");
     assert.equal(modifiedJob.offering?.id, "offer-alternate");
     assert.deepEqual(requestedModels, ["gpt-image-2", "alternate-image-model"]);
+    assert.deepEqual(modifiedJob.callHistory?.map((call) => [call.offering.id, call.status]), [["offer-default", "succeeded"], ["offer-alternate", "succeeded"]]);
     assert.notEqual(modifiedJob.outputPath, originalPath);
     assert.deepEqual(modifiedJob.referenceImagePaths, [backupPath]);
     await access(modifiedJob.outputPath!);
@@ -217,6 +227,9 @@ test("definitely uncharged failures auto retry three times, while unknown-charge
     assert.equal(completedJob.status, "succeeded");
     assert.equal(completedJob.attempt, 4);
     assert.equal(retryCalls, 4);
+    assert.deepEqual(completedJob.callHistory?.map((call) => call.status), ["failed", "failed", "failed", "succeeded"]);
+    assert(completedJob.callHistory?.slice(0, 3).every((call) => Boolean(call.error)));
+    assert(completedJob.callHistory?.every((call) => typeof call.durationMs === "number"));
 
     let unknownCalls = 0;
     const { manager: unknownManager } = await createManager(unknownRoot, async () => {
@@ -230,6 +243,13 @@ test("definitely uncharged failures auto retry three times, while unknown-charge
     assert.equal(failedJob.chargeState, "unknown");
     assert.equal(failedJob.retryable, true);
     assert.equal(unknownCalls, 1);
+    assert.deepEqual(failedJob.callHistory?.map((call) => [call.status, call.chargeState]), [["failed", "unknown"]]);
+    assert.match(failedJob.callHistory?.[0]?.error || "", /connection dropped/);
+    const manualRetry = await unknownManager.retry(unknown.id, [failedJob.id], true);
+    assert.equal(onlyJob(manualRetry).attempt, 2);
+    const failedAgain = await waitForBatch(unknownManager, unknown.id);
+    assert.equal(unknownCalls, 2);
+    assert.deepEqual(onlyJob(failedAgain).callHistory?.map((call) => call.status), ["failed", "failed"]);
   } finally {
     await Promise.all([rm(retryRoot, { recursive: true, force: true }), rm(unknownRoot, { recursive: true, force: true })]);
   }

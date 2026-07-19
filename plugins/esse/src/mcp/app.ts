@@ -7,6 +7,7 @@ import type { BatchManager } from "../jobs/batch-manager.js";
 import { scanImageFolder } from "../files/image-files.js";
 import { fileDataUrl } from "../files/output-files.js";
 import { saveFileAs } from "../files/save-file-dialog.js";
+import { openLocalFolder } from "../files/open-folder.js";
 import type { Thumbnailer } from "../files/thumbnailer.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SettingsStore } from "../storage/settings-store.js";
@@ -48,6 +49,7 @@ export function createLocalEsseServer(options: {
   batches: BatchManager;
   thumbnailer: Thumbnailer;
   saveFileAs?: typeof saveFileAs;
+  openFolder?: typeof openLocalFolder;
 }): McpServer {
   const server = new McpServer(
     { name: "esse", version: "0.1.0" },
@@ -198,7 +200,7 @@ export function createLocalEsseServer(options: {
     const message = batch.offering.adapterId === "agent-generation"
       ? `已创建 ${batch.total} 个“Codex 生成”任务。请由当前 Agent 使用自身可用的图像生成能力完成每个 job，并通过 Agent job 接口回传结果；结果目录：${batch.outputDirectory}`
       : `已创建 ${batch.total} 个本地任务，${batch.offering.concurrency} 路并发，结果目录：${batch.outputDirectory}`;
-    return batchResult(batch, message);
+    return batchResult(batch, message, true);
   });
 
   registerAppTool(server, "start_agent_image_job", {
@@ -311,6 +313,18 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     _meta: appOnly
   }, async ({ batchId }) => batchResult(options.batches.get(batchId)));
 
+  registerAppTool(server, "ui_open_batch_folder", {
+    title: "Open batch output folder",
+    description: "Widget-only request to open the current batch output directory in Finder or File Explorer.",
+    inputSchema: { batchId: z.string().min(1) },
+    annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId }) => {
+    const batch = options.batches.get(batchId);
+    await (options.openFolder || openLocalFolder)(batch.outputDirectory);
+    return { structuredContent: { opened: true, path: batch.outputDirectory }, content: [{ type: "text", text: "Batch output folder opened." }] };
+  });
+
   registerAppTool(server, "ui_list_image_batches", {
     title: "Browse local image batches",
     description: "Widget-only paginated batch library ordered by recent activity.",
@@ -393,7 +407,7 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     const job = batch.jobs.find((entry) => entry.id === jobId);
     const backup = batch.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === jobId);
     const sourcePaths = job ? previewSourcePaths(job) : backup?.referenceImagePaths || [];
-    const filePath = sourceIndex === undefined ? backup?.outputPath || job?.outputPath || job?.inputPath : sourcePaths[sourceIndex];
+    const filePath = sourceIndex === undefined ? backup?.outputPath || job?.outputPath || sourcePaths[0] : sourcePaths[sourceIndex];
     if (!filePath) throw new Error("This image has no local file to preview.");
     const dataUrl = full ? await fileDataUrl(filePath).catch(() => options.thumbnailer.dataUrl(filePath, 1600)) : await options.thumbnailer.dataUrl(filePath, 640);
     if (!dataUrl) throw new Error("Could not create a local preview.");
@@ -431,7 +445,7 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
 
   registerAppTool(server, "ui_retry_jobs", {
     title: "Retry local image jobs",
-    description: "Widget-only retry. Unknown-charge jobs stay blocked unless the user explicitly confirms the billing risk.",
+    description: "Widget-only retry. Clicking the retry control is the user's explicit retry action, including when the previous charge state is unknown.",
     inputSchema: { batchId: z.string().min(1), jobIds: z.array(z.string()).min(1).max(50), allowUnknownCharge: z.boolean().default(false) },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: appOnly
@@ -497,9 +511,9 @@ function resolveExistingImagePaths(
     const selector = reference.image.trim();
     const job = batch.jobs.find((entry) => entry.id === selector || entry.name === selector);
     const backup = batch.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === selector || entry.name === selector);
-    const outputPath = backup?.outputPath || job?.outputPath;
+    const outputPath = backup?.outputPath || job?.outputPath || (job?.status === "failed" ? previewSourcePaths(job)[0] : undefined);
     if (!job && !backup) throw new Error(`批次“${batch.title}”中找不到图片“${selector}”。请使用 list_image_batches 返回的准确名称或 ID。`);
-    if (!outputPath) throw new Error(`批次“${batch.title}”中的“${selector}”尚未生成完成，暂时不能作为参考图。`);
+    if (!outputPath) throw new Error(`批次“${batch.title}”中的“${selector}”没有可用的完成图或失败任务原图，暂时不能作为参考图。`);
     return outputPath;
   });
 }
@@ -508,9 +522,9 @@ function appResult(state: unknown) {
   return { structuredContent: { state }, content: [{ type: "text" as const, text: "Local esse state is ready." }] };
 }
 
-function batchResult(batch: BatchSnapshot, message?: string) {
+function batchResult(batch: BatchSnapshot, message?: string, activate = false) {
   return {
-    structuredContent: { batch },
+    structuredContent: { batch, ...(activate ? { activateBatchId: batch.id } : {}) },
     content: [{ type: "text" as const, text: message || `${batch.title}: ${batch.succeeded}/${batch.total} completed; outputs: ${batch.outputDirectory}` }]
   };
 }

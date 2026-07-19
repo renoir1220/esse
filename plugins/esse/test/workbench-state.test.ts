@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { batchPollDelay, keepSelectedBatchId, mergeBatchWithoutReordering } from "../web/workbench-state.js";
+import { batchIdAfterUpdate, batchPollDelay, keepSelectedBatchId, mergeBatchWithoutReordering } from "../web/workbench-state.js";
 import type { BatchSnapshot, WorkbenchState } from "../web/types.js";
 
 function batch(id: string, updatedAt = "2026-01-01T00:00:00.000Z", status: BatchSnapshot["status"] = "completed"): BatchSnapshot {
@@ -32,6 +32,13 @@ test("full refresh preserves the batch explicitly selected by the user", () => {
   const second = batch("second");
   assert.equal(keepSelectedBatchId("second", state([first, second], first)), "second");
   assert.equal(keepSelectedBatchId("missing", state([first], first)), "first");
+});
+
+test("a newly created batch explicitly activates itself", () => {
+  const created = batch("created");
+  assert.equal(batchIdAfterUpdate("older", created, "created"), "created");
+  assert.equal(batchIdAfterUpdate(undefined, created), "created");
+  assert.equal(batchIdAfterUpdate("older", created), "older");
 });
 
 test("batch polling replaces in place without reordering or changing active batch", () => {

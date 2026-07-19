@@ -4,7 +4,7 @@ import { mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import type { DataPaths } from "../paths.js";
 import { imageFileToDataUrl } from "../files/image-files.js";
 import { backupImageVersion, importGeneratedImage, saveGeneratedImage } from "../files/output-files.js";
-import type { BatchRecord, BatchSnapshot, BatchStatus, JobRecord, ProviderRequestError } from "../types.js";
+import type { BatchRecord, BatchSnapshot, BatchStatus, JobCallRecord, JobCallStatus, JobRecord, OfferingSnapshot, ProviderRequestError } from "../types.js";
 import { ProviderRequestError as ProviderError } from "../types.js";
 import type { BatchStore } from "../storage/batch-store.js";
 import type { ProviderRegistry, ResolvedOffering } from "../providers/registry.js";
@@ -47,6 +47,7 @@ export class BatchManager {
     for (const batch of await this.store.loadAll()) {
       let changed = false;
       for (const job of batch.jobs) {
+        if (migrateLegacyCallHistory(job, job.offering || batch.offering)) changed = true;
         const chineseName = `图${job.index + 1}`;
         if (job.name !== chineseName) {
           job.name = chineseName;
@@ -54,15 +55,25 @@ export class BatchManager {
         }
         if (job.status === "running") {
           const agentGenerated = (job.offering || batch.offering).adapterId === "agent-generation";
+          const finished = Date.now();
+          const started = job.startedAt ? new Date(job.startedAt).getTime() : finished;
+          const interruptionError = agentGenerated
+            ? "当前 Agent 在返回图片前中断了。请重新向 Agent 发起这项生成任务。"
+            : "The local plugin stopped while this provider request was running. Review billing before retrying.";
           Object.assign(job, {
             status: "failed",
             progress: 100,
             retryable: !agentGenerated,
             chargeState: "unknown",
-            error: agentGenerated
-              ? "当前 Agent 在返回图片前中断了。请重新向 Agent 发起这项生成任务。"
-              : "The local plugin stopped while this provider request was running. Review billing before retrying.",
-            finishedAt: new Date().toISOString()
+            error: interruptionError,
+            finishedAt: new Date(finished).toISOString(),
+            durationMs: Math.max(0, finished - started)
+          });
+          finishActiveCall(job, "failed", {
+            finishedAt: new Date(finished).toISOString(),
+            durationMs: Math.max(0, finished - started),
+            chargeState: "unknown",
+            error: interruptionError
           });
           changed = true;
         } else if (job.status === "queued") {
@@ -212,13 +223,15 @@ export class BatchManager {
     if (job.status === "succeeded") return snapshot(batch);
     if (job.status === "failed" || job.status === "canceled") throw new Error(`${job.name} is already ${job.status}.`);
     if (job.status === "queued") {
+      const startedAt = new Date().toISOString();
       Object.assign(job, {
         status: "running",
         progress: 15,
         chargeState: "unknown",
-        startedAt: new Date().toISOString(),
+        startedAt,
         error: undefined
       });
+      beginCall(job, job.offering || batch.offering, startedAt);
       batch.updatedAt = new Date().toISOString();
       await this.persist(batch);
     }
@@ -241,14 +254,22 @@ export class BatchManager {
     if (job.status === "succeeded" || job.status === "canceled") throw new Error(`${job.name} is already ${job.status}.`);
     const finished = Date.now();
     const started = job.startedAt ? new Date(job.startedAt).getTime() : finished;
+    const call = activeCall(job) || beginCall(job, job.offering || batch.offering, new Date(started).toISOString());
+    const failureMessage = error.trim() || "当前 Agent 无法生成这张图片。";
     Object.assign(job, {
       status: "failed",
       progress: 100,
       retryable: false,
       chargeState: "unknown",
-      error: error.trim() || "当前 Agent 无法生成这张图片。",
+      error: failureMessage,
       finishedAt: new Date(finished).toISOString(),
       durationMs: Math.max(0, finished - started)
+    });
+    finishCall(call, "failed", {
+      finishedAt: new Date(finished).toISOString(),
+      durationMs: Math.max(0, finished - started),
+      chargeState: "unknown",
+      error: failureMessage
     });
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
@@ -310,6 +331,7 @@ export class BatchManager {
         retryable: false,
         chargeState: "not_charged",
         error: undefined,
+        providerRequestId: undefined,
         startedAt: undefined,
         finishedAt: undefined,
         durationMs: undefined,
@@ -351,6 +373,7 @@ export class BatchManager {
     if (job.status === "succeeded") return snapshot(batch);
     if (job.status === "failed" || job.status === "canceled") throw new Error(`${job.name} is already ${job.status}.`);
     const started = job.startedAt ? new Date(job.startedAt).getTime() : Date.now();
+    const call = activeCall(job) || beginCall(job, job.offering || batch.offering, new Date(started).toISOString());
     Object.assign(job, {
       status: "running",
       progress: 90,
@@ -377,16 +400,28 @@ export class BatchManager {
         finishedAt: new Date(finished).toISOString(),
         durationMs: Math.max(0, finished - started)
       });
+      finishCall(call, "succeeded", {
+        finishedAt: new Date(finished).toISOString(),
+        durationMs: Math.max(0, finished - started),
+        chargeState: "charged"
+      });
     } catch (error) {
       const finished = Date.now();
+      const failureMessage = error instanceof Error ? error.message : "Could not import the Agent-generated image.";
       Object.assign(job, {
         status: "failed",
         progress: 100,
         retryable: false,
         chargeState: "unknown",
-        error: error instanceof Error ? error.message : "Could not import the Agent-generated image.",
+        error: failureMessage,
         finishedAt: new Date(finished).toISOString(),
         durationMs: Math.max(0, finished - started)
+      });
+      finishCall(call, "failed", {
+        finishedAt: new Date(finished).toISOString(),
+        durationMs: Math.max(0, finished - started),
+        chargeState: "unknown",
+        error: failureMessage
       });
       throw error;
     } finally {
@@ -406,7 +441,9 @@ export class BatchManager {
 
   private async runJob(batch: BatchRecord, job: JobRecord, resolved: ResolvedOffering): Promise<void> {
     const started = Date.now();
-    Object.assign(job, { status: "running", progress: 15, chargeState: "unknown", startedAt: new Date(started).toISOString() });
+    const startedAt = new Date(started).toISOString();
+    const call = beginCall(job, resolved.snapshot, startedAt);
+    Object.assign(job, { status: "running", progress: 15, chargeState: "unknown", startedAt });
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
     let autoRetry = false;
@@ -437,14 +474,27 @@ export class BatchManager {
         generationInputPath: undefined,
         generationInputPaths: undefined
       });
+      Object.assign(call, {
+        status: "succeeded",
+        chargeState: "charged",
+        providerRequestId: result.providerRequestId
+      });
     } catch (error) {
       const providerError = error instanceof ProviderError ? error as ProviderRequestError : undefined;
+      const failureMessage = error instanceof Error ? error.message : "Unknown local image generation error";
       Object.assign(job, {
         status: "failed",
         progress: 100,
         retryable: providerError?.details.retryable ?? false,
         chargeState: providerError?.details.chargeState ?? "unknown",
-        error: error instanceof Error ? error.message : "Unknown local image generation error"
+        error: failureMessage,
+        providerRequestId: providerError?.details.requestId
+      });
+      Object.assign(call, {
+        status: "failed",
+        chargeState: providerError?.details.chargeState ?? "unknown",
+        error: failureMessage,
+        providerRequestId: providerError?.details.requestId
       });
       if (providerError?.details.retryable && providerError.details.chargeState === "not_charged" && job.attempt <= AUTO_RETRY_LIMIT) {
         Object.assign(job, {
@@ -462,6 +512,7 @@ export class BatchManager {
       }
     } finally {
       const finished = Date.now();
+      Object.assign(call, { finishedAt: new Date(finished).toISOString(), durationMs: Math.max(0, finished - started) });
       if (autoRetry) Object.assign(job, { finishedAt: undefined, durationMs: undefined });
       else Object.assign(job, { finishedAt: new Date(finished).toISOString(), durationMs: finished - started });
       batch.updatedAt = new Date().toISOString();
@@ -522,7 +573,10 @@ function snapshot(batch: BatchRecord): BatchSnapshot {
     : undefined;
   return {
     ...batch,
-    jobs: batch.jobs.map((job) => ({ ...job })),
+    jobs: batch.jobs.map((job) => ({
+      ...job,
+      callHistory: job.callHistory?.map((call) => ({ ...call, offering: { ...call.offering, price: { ...call.offering.price } } }))
+    })),
     status: deriveStatus(counts, batch.jobs.length),
     total: batch.jobs.length,
     ...counts,
@@ -548,6 +602,63 @@ function generationInputsFor(job: JobRecord): string[] {
 
 function isAgentGeneration(resolved: ResolvedOffering): boolean {
   return resolved.profile.adapterId === "agent-generation";
+}
+
+function beginCall(job: JobRecord, offering: OfferingSnapshot, startedAt: string): JobCallRecord {
+  const history = job.callHistory || [];
+  const call: JobCallRecord = {
+    id: randomUUID(),
+    sequence: history.length + 1,
+    attempt: job.attempt,
+    source: offering.adapterId === "agent-generation" ? "agent" : "provider",
+    offering: { ...offering, price: { ...offering.price } },
+    status: "running",
+    chargeState: "unknown",
+    startedAt
+  };
+  job.callHistory = [...history, call];
+  return call;
+}
+
+function activeCall(job: JobRecord): JobCallRecord | undefined {
+  return [...(job.callHistory || [])].reverse().find((call) => call.status === "running");
+}
+
+function finishActiveCall(job: JobRecord, status: JobCallStatus, patch: Partial<JobCallRecord>): void {
+  const call = activeCall(job);
+  if (call) finishCall(call, status, patch);
+}
+
+function finishCall(call: JobCallRecord, status: JobCallStatus, patch: Partial<JobCallRecord>): void {
+  Object.assign(call, patch, { status });
+}
+
+function migrateLegacyCallHistory(job: JobRecord, offering: OfferingSnapshot): boolean {
+  if (job.callHistory?.length) return false;
+  const actuallyStarted = Boolean(job.startedAt || job.providerRequestId || job.durationMs !== undefined || job.status === "succeeded" || job.status === "failed");
+  if (!actuallyStarted) return false;
+  const startedAt = job.startedAt || job.createdAt;
+  const call: JobCallRecord = {
+    id: randomUUID(),
+    sequence: 1,
+    attempt: job.attempt,
+    source: offering.adapterId === "agent-generation" ? "agent" : "provider",
+    offering: { ...offering, price: { ...offering.price } },
+    status: legacyCallStatus(job.status),
+    chargeState: job.chargeState,
+    startedAt,
+    finishedAt: job.finishedAt,
+    durationMs: job.durationMs,
+    error: job.error,
+    providerRequestId: job.providerRequestId
+  };
+  job.callHistory = [call];
+  return true;
+}
+
+function legacyCallStatus(status: JobRecord["status"]): JobCallStatus {
+  if (status === "queued") return "canceled";
+  return status;
 }
 
 function promptFor(input: CreateBatchInput, inputPath: string | undefined, name: string, index: number): string {

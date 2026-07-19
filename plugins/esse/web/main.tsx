@@ -5,8 +5,10 @@ import { bridge } from "./bridge";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
 import { providerSavePayload } from "./provider-payload";
 import { offeringPriceLabel } from "./pricing";
-import { batchPollDelay, keepSelectedBatchId, mergeBatchWithoutReordering } from "./workbench-state";
-import type { BatchSnapshot, JobBackupSnapshot, JobSnapshot, OfferingConfig, ProviderDraft, ProviderProfile, PublicOffering, ToolResult, WorkbenchState } from "./types";
+import { imagesMentionedInRequest, selectableImages, selectionModelContext } from "./selection-context";
+import type { SelectableImage } from "./selection-context";
+import { batchIdAfterUpdate, batchPollDelay, keepSelectedBatchId, mergeBatchWithoutReordering } from "./workbench-state";
+import type { BatchSnapshot, JobBackupSnapshot, JobCallSnapshot, JobSnapshot, OfferingConfig, ProviderDraft, ProviderProfile, PublicOffering, ToolResult, WorkbenchState } from "./types";
 import "./styles.css";
 
 type Tab = "batches" | "settings";
@@ -40,7 +42,7 @@ function App() {
   const [state, setState] = useState<WorkbenchState>(startingState);
   const [tab, setTab] = useState<Tab>(() => persistedState.tab || startingState.view.tab);
   const [activeBatchId, setActiveBatchId] = useState<string | undefined>(() => persistedState.batchId || startingState.view.batchId || startingState.activeBatch?.id || startingState.batches[0]?.id);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(persistedState.selectedJobIds || []));
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(persistedState.selectedImageIds || persistedState.selectedJobIds || []));
   const [modificationRequest, setModificationRequest] = useState(() => persistedState.modificationRequest || "");
   const [displayMode, setDisplayMode] = useState(window.openai?.displayMode || "inline");
   const [notice, setNotice] = useState<string>();
@@ -61,7 +63,15 @@ function App() {
     const batch = result.structuredContent?.batch;
     if (batch) {
       setState((current) => mergeBatchWithoutReordering(current, batch));
-      setActiveBatchId((current) => current || batch.id);
+      const activateBatchId = result.structuredContent?.activateBatchId;
+      setActiveBatchId((current) => batchIdAfterUpdate(current, batch, activateBatchId));
+      if (activateBatchId === batch.id) {
+        setTab("batches");
+        setSelected(new Set());
+        setModificationRequest("");
+        setBatchSwitcherOpen(false);
+        setBatchMenuOpen(false);
+      }
     }
   }, []);
 
@@ -132,7 +142,7 @@ function App() {
   }, [activeBatchId, applyResult, isPreview]);
 
   useEffect(() => {
-    bridge.persistState({ tab, batchId: activeBatch?.id, selectedJobIds: [...selected], modificationRequest });
+    bridge.persistState({ tab, batchId: activeBatch?.id, selectedImageIds: [...selected], modificationRequest });
   }, [tab, activeBatch?.id, selected, modificationRequest]);
 
   useEffect(() => {
@@ -144,13 +154,10 @@ function App() {
   useEffect(() => {
     if (!activeBatch || isPreview) return;
     const timer = window.setTimeout(() => {
-      const ids = [...selected];
-      void bridge.updateModelContext(ids.length
-        ? `用户在本地图片批次 ${activeBatch.id} 中选择了 job IDs: ${ids.join(", ")}。等待用户给出修改要求。`
-        : `用户当前没有在本地图片批次 ${activeBatch.id} 中选择图片。`).catch(() => undefined);
+      void bridge.updateModelContext(selectionModelContext(activeBatch, selected)).catch(() => undefined);
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [activeBatch?.id, selected, isPreview]);
+  }, [activeBatch?.id, activeBatch?.updatedAt, selected, isPreview]);
 
   const switchTab = (next: Tab) => { setTab(next); setNotice(undefined); setBatchSwitcherOpen(false); setBatchMenuOpen(false); setConfirmDeleteBatch(false); };
   const switchBatch = (id: string) => { setActiveBatchId(id); setSelected(new Set()); setModificationRequest(""); setTab("batches"); setBatchSwitcherOpen(false); setBatchMenuOpen(false); setConfirmDeleteBatch(false); };
@@ -171,12 +178,22 @@ function App() {
     } catch (error) { setNotice(errorMessage(error)); }
     finally { setHeaderBusy(undefined); setConfirmDeleteBatch(false); }
   };
+  const openActiveBatchFolder = async () => {
+    if (!activeBatch) return;
+    setHeaderBusy("open-folder");
+    try {
+      const result = await bridge.callTool("ui_open_batch_folder", { batchId: activeBatch.id });
+      setNotice(`已在文件夹中打开 ${String(result.structuredContent?.path || activeBatch.outputDirectory)}`);
+      setBatchMenuOpen(false);
+    } catch (error) { setNotice(errorMessage(error)); }
+    finally { setHeaderBusy(undefined); }
+  };
 
   return (
     <main className="app-shell" data-display-mode={displayMode}>
       <header className="app-header">
         <div className="header-context">
-          <span className="header-context-icon">{tab === "settings" ? <SlidersHorizontal size={17} /> : <FolderSimple size={18} />}</span>
+          {tab === "settings" && <span className="header-context-icon"><SlidersHorizontal size={17} /></span>}
           {tab === "batches" && activeBatch ? <div className="current-batch-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setBatchSwitcherOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape") setBatchSwitcherOpen(false); }}>
             <button
               type="button"
@@ -199,6 +216,7 @@ function App() {
           {tab === "batches" && activeBatch && <div className="header-more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) { setBatchMenuOpen(false); setConfirmDeleteBatch(false); } }}>
             <button className="header-icon-action" onClick={() => { setBatchSwitcherOpen(false); setBatchMenuOpen((open) => !open); }} aria-label="当前批次操作" aria-expanded={batchMenuOpen}><DotsThree size={18} weight="bold" /></button>
             {batchMenuOpen && <div className="header-menu" role="menu">
+              <button role="menuitem" onClick={() => void openActiveBatchFolder()} disabled={Boolean(headerBusy)}><FolderSimple size={14} />在文件夹中打开</button>
               <button className={confirmDeleteBatch ? "is-danger" : ""} role="menuitem" onClick={() => void deleteActiveBatch()} disabled={Boolean(headerBusy) || activeBatch.running > 0 || activeBatch.queued > 0}><Trash size={14} />{confirmDeleteBatch ? "确认删除批次" : "删除当前批次"}</button>
             </div>}
           </div>}
@@ -327,7 +345,7 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
         {props.state.providers.map((profile) => (
           <button key={profile.id} className={`provider-item ${draft.id === profile.id ? "is-active" : ""}`} onClick={() => editProvider(profile)}>
             <span className="provider-avatar">{profile.displayName.slice(0, 1)}</span>
-            <span><strong>{profile.displayName}</strong><small>{profile.tierName} · {profile.adapterId}</small></span>
+            <span><strong>{profile.displayName}</strong><small>{profile.tierName} · {adapterDisplayName(profile.adapterId)}</small></span>
             <i className={profile.hasApiKey ? "status-ok" : "status-missing"} />
           </button>
         ))}
@@ -342,7 +360,7 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
             <Field label="服务商名称"><input value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
             <Field label="档位名称"><input value={draft.tierName} onChange={(event) => setDraft({ ...draft, tierName: event.target.value })} /></Field>
             <Field label="API 地址" wide><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} /></Field>
-            <Field label="接口格式"><SettingsSelect ariaLabel="接口格式" value={draft.adapterId} options={[{ value: "tuzi-json-images", label: "兔子 JSON Images" }, { value: "openai-images", label: "OpenAI Images" }]} onChange={(value) => setDraft({ ...draft, adapterId: value as ProviderDraft["adapterId"] })} /></Field>
+            <Field label="接口格式" labelAccessory={<InfoTip label="查看兔子分组与接口格式的对应关系"><strong>兔子分组对应关系</strong><span><b>default</b> → 兔子 JSON Images</span><span><b>codex / openai / 原价</b> → OpenAI Images</span></InfoTip>}><SettingsSelect ariaLabel="接口格式" value={draft.adapterId} options={[{ value: "tuzi-json-images", label: "兔子 JSON Images" }, { value: "openai-images", label: "OpenAI Images" }]} onChange={(value) => setDraft({ ...draft, adapterId: value as ProviderDraft["adapterId"] })} /></Field>
             <Field label="并发数"><input type="number" min="1" max="12" value={draft.concurrency} onChange={(event) => setDraft({ ...draft, concurrency: Number(event.target.value) })} /></Field>
             <Field label="API Key" wide hint={draft.hasApiKey ? "留空保留现有密钥" : "安全存储在本机"}>
               <div className="secret-input"><input type="password" autoComplete="off" placeholder={draft.hasApiKey ? "•••••••• 已安全保存" : "粘贴 API Key"} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} /><button onClick={() => void test()} disabled={Boolean(busy)}>{busy === "test" ? "测试中…" : "测试连接"}</button></div>
@@ -407,7 +425,7 @@ function BatchesView(props: {
   onNotice: (message?: string) => void;
   onOpenSettings: () => void;
 }) {
-  if (!props.batch) return <EmptyBatches configured={props.state.providers.length > 0} onOpenSettings={props.onOpenSettings} />;
+  if (!props.batch) return <EmptyBatches state={props.state} onOpenSettings={props.onOpenSettings} onNotice={props.onNotice} />;
   return (
     <section className="batches-layout">
       <BatchPanel key={props.batch.id} {...props} batch={props.batch} offerings={props.state.offerings} />
@@ -550,6 +568,7 @@ type ImageAsset = {
   kind: "job" | "backup";
   job?: JobSnapshot;
   backup?: JobBackupSnapshot;
+  selectableImage?: SelectableImage;
 };
 
 type CachedPreview = { path: string; dataUrl: string };
@@ -565,7 +584,6 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   const [previewZoom, setPreviewZoom] = useState(initialImageZoom);
   const [detailAsset, setDetailAsset] = useState<ImageAsset>();
   const [busy, setBusy] = useState<string>();
-  const [confirmRetryId, setConfirmRetryId] = useState<string>();
   const modificationOfferings = useMemo<ModificationOffering[]>(() => {
     const configured = props.offerings
       .filter((offering) => offering.configured && offering.supportsImageToImage)
@@ -585,12 +603,15 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   const [selectedOfferingId, setSelectedOfferingId] = useState(batch.offering.id);
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const selectedOffering = modificationOfferings.find((offering) => offering.id === selectedOfferingId) || modificationOfferings[0]!;
-  const completed = useMemo(() => batch.jobs.filter((job) => job.status === "succeeded" && job.outputPath), [batch.jobs]);
-  const selectedCompleted = completed.filter((job) => props.selected.has(job.id));
+  const availableImages = useMemo(() => selectableImages(batch), [batch.jobs]);
+  const selectableById = useMemo(() => new Map(availableImages.map((image) => [image.id, image])), [availableImages]);
+  const selectedImages = availableImages.filter((image) => props.selected.has(image.id));
+  const mentionedImages = useMemo(() => imagesMentionedInRequest(batch, props.modificationRequest), [batch.jobs, props.modificationRequest]);
+  const resolvedTargets = mentionedImages.length ? mentionedImages : selectedImages;
   const assets = useMemo<ImageAsset[]>(() => batch.jobs.flatMap((job) => [
-    { id: job.id, name: job.name, outputPath: job.outputPath, inputPath: job.inputPath, kind: "job" as const, job },
-    ...(job.backups || []).map((backup) => ({ id: backup.id, name: backup.name, outputPath: backup.outputPath, kind: "backup" as const, backup }))
-  ]), [batch.jobs]);
+    { id: job.id, name: job.name, outputPath: job.outputPath, inputPath: selectableById.get(job.id)?.path || job.inputPath, kind: "job" as const, job, selectableImage: selectableById.get(job.id) },
+    ...(job.backups || []).map((backup) => ({ id: backup.id, name: backup.name, outputPath: backup.outputPath, kind: "backup" as const, backup, selectableImage: selectableById.get(backup.id) }))
+  ]), [batch.jobs, selectableById]);
   const previewableAssets = useMemo(
     () => assets.filter((asset) => !asset.job || !isProcessing(asset.job)),
     [assets],
@@ -669,11 +690,10 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [modelMenuOpen]);
 
-  const toggle = (job: JobSnapshot) => {
-    if (job.status !== "succeeded" || !job.outputPath) return;
+  const toggle = (image: SelectableImage) => {
     props.setSelected((current) => {
       const next = new Set(current);
-      if (next.has(job.id)) next.delete(job.id); else next.add(job.id);
+      if (next.has(image.id)) next.delete(image.id); else next.add(image.id);
       return next;
     });
   };
@@ -720,44 +740,24 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   };
   const retry = async (job: JobSnapshot) => {
     const unknownCharge = job.chargeState === "unknown";
-    if (unknownCharge && confirmRetryId !== job.id) {
-      setConfirmRetryId(job.id);
-      props.onNotice(`${job.name} 的扣费状态未知，再点一次“确认重试”可能产生重复费用。`);
-      return;
-    }
     setBusy(`retry:${job.id}`);
     try {
       props.applyResult(await bridge.callTool("ui_retry_jobs", { batchId: batch.id, jobIds: [job.id], allowUnknownCharge: unknownCharge }));
-      setConfirmRetryId(undefined);
+      if (unknownCharge) props.onNotice(`${job.name} 已重试；上一次调用的扣费状态未知。`);
     } catch (error) { props.onNotice(errorMessage(error)); }
     finally { setBusy(undefined); }
   };
   const sendSelection = async () => {
     const request = props.modificationRequest.trim();
-    if (!selectedCompleted.length) { props.onNotice("请先双击图片，将它添加到输入框。"); return; }
     if (!request) { props.onNotice("请先填写具体的修改要求。"); return; }
+    if (!resolvedTargets.length) { props.onNotice("请双击选择图片，或在修改要求中输入图像名称，例如“图1”或“图2-1”。"); return; }
     setBusy("modify");
-    const ids = selectedCompleted.map((job) => job.id);
     try {
-      if (selectedOffering.adapterId === "agent-generation") {
-        const names = selectedCompleted.map((job) => `${job.name} (${job.id})`).join("、");
-        await bridge.sendMessage(`请使用 Esse 的“Codex 生成”（offeringId: ${selectedOffering.id}）修改批次 ${batch.id} 中的 ${names}。修改要求：${request}`);
-        props.setSelected(new Set());
-        props.setModificationRequest("");
-        props.onNotice(`已将 ${ids.length} 张图片的修改要求交给当前 Agent`);
-        return;
-      }
-      const result = await bridge.callTool("modify_selected_images", {
-        batchId: batch.id,
-        jobIds: ids,
-        instructions: request,
-        offeringId: selectedOffering.id,
-        requestKey: modificationRequestKey(batch, selectedCompleted, request, selectedOffering.id)
-      });
-      props.applyResult(result);
+      const targets = resolvedTargets.map((image) => `${image.name}（image ID: ${image.id}；本地路径: ${image.path}；类型: ${image.kind}）`).join("、");
+      await bridge.sendMessage(`这是用户从 Esse 修改框提交的请求。请修改批次“${batch.title}”（batchId: ${batch.id}）中的目标图片：${targets}。用户已明确选择模型“${selectedOffering.displayName}”（offeringId: ${selectedOffering.id}）。修改要求：${request}\n目标已由 Esse 按双击选择和图像名称解析，无需再次询问。当前结果图可调用 modify_selected_images；历史备份或失败任务原图必须作为准确参考图创建新任务，不得替换成同批次的其他图片。`);
       props.setSelected(new Set());
       props.setModificationRequest("");
-      props.onNotice(`已开始修改 ${ids.length} 张图片`);
+      props.onNotice(`已将 ${resolvedTargets.length} 张图片的修改要求交给当前 Agent`);
     } catch (error) { props.onNotice(errorMessage(error)); }
     finally { setBusy(undefined); }
   };
@@ -780,21 +780,21 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       <div className={`batch-workspace ${assetsToShow.length === 1 ? "is-single" : ""}`}>
         <section className="gallery-panel" aria-label="批次图片">
           <div className="selection-bar"><strong>图片</strong></div>
-          <section className="image-grid">{assetsToShow.map((asset) => <JobCard key={asset.id} asset={asset} preview={asset.job && isProcessing(asset.job) ? undefined : previews[asset.id]?.path === (asset.outputPath || asset.inputPath) ? previews[asset.id]?.dataUrl : undefined} sourcePreviews={sourcePreviewsFor(asset)} selected={asset.job ? props.selected.has(asset.job.id) : false} confirmRetry={confirmRetryId === asset.id} busy={busy === `retry:${asset.id}`} onSelect={asset.job ? () => toggle(asset.job!) : undefined} onPreview={() => openPreview(asset)} onDetail={() => setDetailAsset(asset)} onSave={() => void saveImage(asset)} onRetry={asset.job ? () => void retry(asset.job!) : undefined} />)}</section>
+          <section className="image-grid">{assetsToShow.map((asset) => <JobCard key={asset.id} asset={asset} preview={asset.job && isProcessing(asset.job) ? undefined : previews[asset.id]?.path === (asset.outputPath || asset.inputPath) ? previews[asset.id]?.dataUrl : undefined} sourcePreviews={sourcePreviewsFor(asset)} selected={Boolean(asset.selectableImage && props.selected.has(asset.selectableImage.id))} busy={busy === `retry:${asset.id}`} onSelect={asset.selectableImage ? () => toggle(asset.selectableImage!) : undefined} onPreview={() => openPreview(asset)} onDetail={() => setDetailAsset(asset)} onSave={() => void saveImage(asset)} onRetry={asset.job ? () => void retry(asset.job!) : undefined} />)}</section>
           {assets.length > assetsToShow.length && <div className="show-more">展开后可查看全部 {assets.length} 张图片</div>}
         </section>
         <section className="modify-composer" aria-label="修改选定图片">
           <div className="modify-entry">
-            {selectedCompleted.length > 0 && <div className="modify-attachments" aria-label="待修改图片">
-              {selectedCompleted.map((job) => {
-                const attachmentPreview = previews[job.id]?.dataUrl;
-                return <div className="modify-attachment" key={job.id} title={job.name}>
-                  {attachmentPreview ? <img src={attachmentPreview} alt={job.name} /> : <ImageSquare size={18} />}
-                  <button type="button" onClick={() => toggle(job)} aria-label={`移除 ${job.name}`} title="移除"><X size={10} weight="bold" /></button>
+            {selectedImages.length > 0 && <div className="modify-attachments" aria-label="待修改图片">
+              {selectedImages.map((image) => {
+                const attachmentPreview = previews[image.id]?.dataUrl;
+                return <div className="modify-attachment" key={image.id} title={image.name}>
+                  {attachmentPreview ? <img src={attachmentPreview} alt={image.name} /> : <ImageSquare size={18} />}
+                  <button type="button" onClick={() => toggle(image)} aria-label={`移除 ${image.name}`} title="移除"><X size={10} weight="bold" /></button>
                 </div>;
               })}
             </div>}
-            <textarea ref={modificationTextareaRef} value={props.modificationRequest} onChange={(event) => props.setModificationRequest(event.target.value)} placeholder={selectedCompleted.length ? "描述你希望如何修改这些图片…" : "双击图片添加到这里…"} rows={1} maxLength={1200} aria-label="修改要求" />
+            <textarea ref={modificationTextareaRef} value={props.modificationRequest} onChange={(event) => props.setModificationRequest(event.target.value)} placeholder={selectedImages.length ? "描述你希望如何修改这些图片…" : "双击选择想要编辑的图片"} rows={1} maxLength={1200} aria-label="修改要求" />
           </div>
           <div className="modify-toolbar">
             <div className="modify-model-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setModelMenuOpen(false); }}>
@@ -809,7 +809,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
                 </button>)}
               </div>}
             </div>
-            <button type="button" className="modify-submit-button" onClick={() => void sendSelection()} disabled={!selectedCompleted.length || !props.modificationRequest.trim() || Boolean(busy)} aria-busy={busy === "modify"}>修改选定图片</button>
+            <button type="button" className="modify-submit-button" onClick={() => void sendSelection()} disabled={!props.modificationRequest.trim() || Boolean(busy)} aria-busy={busy === "modify"}>提交修改</button>
           </div>
         </section>
       </div>
@@ -820,13 +820,13 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   );
 }
 
-function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: Array<string | undefined>; selected: boolean; confirmRetry: boolean; busy: boolean; onSelect?: () => void; onPreview: () => void; onDetail: () => void; onSave: () => void; onRetry?: () => void }) {
+function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: Array<string | undefined>; selected: boolean; busy: boolean; onSelect?: () => void; onPreview: () => void; onDetail: () => void; onSave: () => void; onRetry?: () => void }) {
   const previewTimer = useRef<number>();
   const job = props.asset.job;
   const processing = Boolean(job && (job.status === "queued" || job.status === "running"));
   const hasImage = !processing && Boolean(props.asset.outputPath || props.asset.inputPath);
   const canSave = !processing && Boolean(props.asset.outputPath);
-  const selectable = Boolean(job?.status === "succeeded" && job.outputPath && props.onSelect);
+  const selectable = Boolean(props.asset.selectableImage && props.onSelect);
   const canRetry = job?.status === "failed" && job.retryable && Boolean(props.onRetry);
   useEffect(() => () => { if (previewTimer.current !== undefined) window.clearTimeout(previewTimer.current); }, []);
   const previewOnSingleClick = () => {
@@ -847,7 +847,7 @@ function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: A
     <div className="card-tools">
       <button className="card-icon-button" onClick={(event) => { event.stopPropagation(); props.onDetail(); }} aria-label={`查看 ${props.asset.name} 详情`} title="任务详情"><Info size={13} /></button>
       {canSave && <button className="card-icon-button" onClick={(event) => { event.stopPropagation(); props.onSave(); }} aria-label={`保存 ${props.asset.name}`} title="保存图片"><DownloadSimple size={13} /></button>}
-      {canRetry && <button className={props.confirmRetry ? "confirm" : ""} onClick={(event) => { event.stopPropagation(); props.onRetry?.(); }} disabled={props.busy}>{props.busy ? "重试中…" : props.confirmRetry ? "确认重试" : "重试"}</button>}
+      {canRetry && <button onClick={(event) => { event.stopPropagation(); props.onRetry?.(); }} disabled={props.busy}>{props.busy ? "重试中…" : "重试"}</button>}
     </div>
     <div className="card-copy"><strong title={props.asset.name}>{props.asset.name}</strong></div>
     {job?.error && <p className="error-copy" title={job.error}>{job.error}</p>}
@@ -858,11 +858,22 @@ function TaskDetailDialog({ asset, referencePaths, previews, onClose }: { asset:
   const prompt = asset.job?.prompt || asset.backup?.prompt || "未记录 Prompt";
   const status = asset.backup ? "历史版本" : asset.job ? jobStatusLabel(asset.job) : "任务";
   const offering = asset.job?.offering || asset.backup?.offering;
+  const calls = callHistoryFor(asset.job);
+  const succeededCalls = calls.filter((call) => call.status === "succeeded").length;
+  const totalDuration = calls.reduce((total, call) => total + (call.durationMs || 0), 0);
   return <div className="task-detail-backdrop" onClick={onClose}>
     <section className="task-detail-dialog" role="dialog" aria-modal="true" aria-label={`${asset.name} 任务详情`} onClick={(event) => event.stopPropagation()}>
       <header className="task-detail-header"><div><span className="eyebrow">任务详情</span><h2>{asset.name}</h2></div><button onClick={onClose} aria-label="关闭任务详情">×</button></header>
-      <div className="task-detail-meta"><span>{status}</span>{offering && <span>{offering.displayName} · {offeringPriceLabel(offering.price)}</span>}{asset.job && <><span>第 {asset.job.attempt} 次</span><span>{referencePaths.length} 张参考图</span></>}</div>
+      <div className="task-detail-meta"><span>{status}</span>{offering && <span>{offering.displayName} · {offeringPriceLabel(offering.price)}</span>}{asset.job && <><span>当前第 {asset.job.attempt} 次尝试</span><span>{referencePaths.length} 张参考图</span></>}</div>
       <section className="task-detail-section"><strong>Prompt</strong><p>{prompt}</p></section>
+      {asset.job && <section className="task-detail-section"><strong>调用记录</strong>
+        <div className="call-history-summary"><span>{calls.length} 次调用</span><span>{succeededCalls} 次成功</span><span>累计 {formatDuration(totalDuration)}</span></div>
+        {calls.length ? <div className="call-history-list">{[...calls].reverse().map((call) => <article className={`call-history-item is-${call.status}`} key={call.id}>
+          <header><span className="call-status-dot" /><strong>第 {call.sequence} 次 · {callStatusLabel(call.status)}</strong><time dateTime={call.startedAt}>{formatCallTime(call.startedAt)}</time></header>
+          <div className="call-history-meta"><span>{call.source === "agent" ? "当前 Agent" : `${call.offering.providerName} · ${call.offering.tierName}`}</span><span>{call.offering.displayName}</span><span>{call.status === "running" ? "进行中" : formatDuration(call.durationMs || 0)}</span>{call.providerRequestId && <code title={call.providerRequestId}>{call.providerRequestId}</code>}</div>
+          {call.error && <p>{call.error}</p>}
+        </article>)}</div> : <div className="call-history-empty">任务尚未发起模型调用</div>}
+      </section>}
       <section className="task-detail-section"><strong>参考图</strong>
         {referencePaths.length ? <div className="task-reference-grid">{referencePaths.map((filePath, index) => {
           const cached = previews[sourcePreviewKey(asset.id, index)];
@@ -884,12 +895,55 @@ function ProcessingPreview({ job, previews }: { job: JobSnapshot; previews: Arra
   return <div className="processing-preview"><div className={`reference-grid count-${Math.min(4, cells.length)}`}>{cells.map((preview, index) => <span className={`reference-cell ${preview ? "" : "is-loading"}`} key={index}>{preview && <img src={preview} alt={`参考图 ${index + 1}`} />}</span>)}</div><div className="processing-mask"><span className="spinner processing-spinner" /><strong>{modifying ? "修改中" : job.status === "queued" ? "等待生成" : "生成中"}</strong>{job.status === "running" && <span>{Math.max(15, job.progress)}%</span>}</div></div>;
 }
 
-function EmptyBatches({ configured, onOpenSettings }: { configured: boolean; onOpenSettings: () => void }) {
-  return <div className="empty-state"><span className="empty-art"><ImageSquare size={28} /></span><h1>{configured ? "还没有图片任务" : "先配置一个 Provider"}</h1><p>{configured ? "告诉 GPT 要处理的本地文件夹和修改目标，任务会在这里并行运行。" : "API Key 只会写入这台电脑的安全存储，不会进入聊天内容。"}</p>{!configured && <button className="primary-button" onClick={onOpenSettings}>配置 Provider</button>}</div>;
+function EmptyBatches({ state, onOpenSettings, onNotice }: { state: WorkbenchState; onOpenSettings: () => void; onNotice: (message?: string) => void }) {
+  const offerings = state.offerings.filter((offering) => offering.configured && offering.supportsTextToImage);
+  const [prompt, setPrompt] = useState("");
+  const [selectedOfferingId, setSelectedOfferingId] = useState(() => state.defaultOfferingId || "");
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const selectedOffering = offerings.find((offering) => offering.id === selectedOfferingId);
+
+  useEffect(() => {
+    if (selectedOfferingId && offerings.some((offering) => offering.id === selectedOfferingId)) return;
+    setSelectedOfferingId(state.defaultOfferingId && offerings.some((offering) => offering.id === state.defaultOfferingId) ? state.defaultOfferingId : "");
+  }, [state.defaultOfferingId, offerings.map((offering) => offering.id).join("|")]);
+
+  const submit = async () => {
+    const request = prompt.trim();
+    if (!selectedOffering) { onNotice("请先选择本次使用的模型。"); return; }
+    if (!request) { onNotice("请先描述想生成什么图片。"); return; }
+    setBusy(true);
+    try {
+      await bridge.sendMessage(`请使用 Esse 创建一个新的图片批次。用户已在 Esse 中明确选择模型“${selectedOffering.displayName}”（offeringId: ${selectedOffering.id}）。生成要求：${request}`);
+      setPrompt("");
+      onNotice("已将新批次要求交给当前 Agent");
+    } catch (error) { onNotice(errorMessage(error)); }
+    finally { setBusy(false); }
+  };
+
+  return <section className="empty-batches-layout">
+    <div className="empty-state"><span className="empty-art"><ImageSquare size={28} /></span><h1>开始第一个图片任务</h1><p>描述想生成的图片并选择模型；Agent 创建批次后，Esse 会自动切换过去。</p>{!offerings.length && <button className="primary-button" onClick={onOpenSettings}>打开模型设置</button>}</div>
+    <section className="modify-composer empty-generate-composer" aria-label="新建图片任务">
+      <div className="modify-entry"><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="描述你想生成的图片…" rows={1} maxLength={1200} aria-label="新批次生成要求" /></div>
+      <div className="modify-toolbar">
+        <div className="modify-model-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setModelMenuOpen(false); }}>
+          <button type="button" className="modify-model-trigger" onClick={() => setModelMenuOpen((open) => !open)} aria-haspopup="listbox" aria-expanded={modelMenuOpen} aria-label={selectedOffering ? `选择生图模型，当前 ${selectedOffering.displayName}` : "选择生图模型"} disabled={busy || !offerings.length}>
+            <Lightning size={13} weight="fill" /><span>{selectedOffering?.displayName || "选择模型"}</span>{selectedOffering && <small>{offeringPriceLabel(selectedOffering.price)}</small>}<CaretDown size={12} />
+          </button>
+          {modelMenuOpen && <div className="modify-model-menu" role="listbox" aria-label="选择新批次模型">{offerings.map((offering) => <button type="button" role="option" aria-selected={offering.id === selectedOfferingId} key={offering.id} onClick={() => { setSelectedOfferingId(offering.id); setModelMenuOpen(false); }}><span><strong>{offering.displayName}</strong><small>{offering.providerName} · {offering.tierName}</small></span><b>{offeringPriceLabel(offering.price)}</b><Check size={13} weight="bold" /></button>)}</div>}
+        </div>
+        <button type="button" className="modify-submit-button" onClick={() => void submit()} disabled={!selectedOffering || !prompt.trim() || busy} aria-busy={busy}>{busy ? "发送中…" : "开始生成"}</button>
+      </div>
+    </section>
+  </section>;
 }
 
-function Field({ label, hint, wide, children }: { label: string; hint?: string; wide?: boolean; children: React.ReactNode }) {
-  return <label className={`field ${wide ? "wide" : ""}`}><span>{label}{hint && <small>{hint}</small>}</span>{children}</label>;
+function Field({ label, labelAccessory, hint, wide, children }: { label: string; labelAccessory?: React.ReactNode; hint?: string; wide?: boolean; children: React.ReactNode }) {
+  return <label className={`field ${wide ? "wide" : ""}`}><span><span className="field-label-copy">{label}{labelAccessory}</span>{hint && <small>{hint}</small>}</span>{children}</label>;
+}
+
+function InfoTip({ label, children }: { label: string; children: React.ReactNode }) {
+  return <span className="info-tip" tabIndex={0} aria-label={label} onClick={(event) => { event.preventDefault(); event.stopPropagation(); event.currentTarget.focus(); }}><Info size={13} /><span className="info-tooltip" role="tooltip">{children}</span></span>;
 }
 
 function providerDraftFromProfile(profile: ProviderProfile): ProviderDraft {
@@ -916,6 +970,53 @@ function rabbitOffering(): OfferingConfig {
 
 function blankOffering(): OfferingConfig {
   return { id: "", canonicalModelId: "", providerModelId: "", displayName: "", price: { mode: "unknown", currency: "CNY" }, supportsTextToImage: true, supportsImageToImage: true, sizes: [], qualities: [] };
+}
+
+function adapterDisplayName(adapterId: ProviderDraft["adapterId"]): string {
+  if (adapterId === "tuzi-json-images") return "兔子 JSON Images";
+  if (adapterId === "openai-images") return "OpenAI Images";
+  return "Codex 生成";
+}
+
+function callHistoryFor(job: JobSnapshot | undefined): JobCallSnapshot[] {
+  if (!job) return [];
+  if (job.callHistory?.length) return job.callHistory;
+  if (!job.offering || (!job.startedAt && job.durationMs === undefined && !job.error)) return [];
+  return [{
+    id: `legacy-${job.id}`,
+    sequence: 1,
+    attempt: job.attempt,
+    source: job.offering.adapterId === "agent-generation" ? "agent" : "provider",
+    offering: job.offering,
+    status: job.status === "queued" ? "canceled" : job.status,
+    chargeState: job.chargeState,
+    startedAt: job.startedAt || job.createdAt,
+    finishedAt: job.finishedAt,
+    durationMs: job.durationMs,
+    error: job.error,
+    providerRequestId: job.providerRequestId
+  }];
+}
+
+function callStatusLabel(status: JobCallSnapshot["status"]): string {
+  if (status === "succeeded") return "成功";
+  if (status === "failed") return "失败";
+  if (status === "canceled") return "已取消";
+  return "调用中";
+}
+
+function formatDuration(durationMs: number): string {
+  if (durationMs < 1_000) return `${Math.max(0, Math.round(durationMs))} 毫秒`;
+  if (durationMs < 60_000) return `${(durationMs / 1_000).toFixed(durationMs < 10_000 ? 1 : 0)} 秒`;
+  const minutes = Math.floor(durationMs / 60_000);
+  const seconds = Math.round((durationMs % 60_000) / 1_000);
+  return `${minutes} 分 ${seconds} 秒`;
+}
+
+function formatCallTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" }).format(date);
 }
 
 function formatBatchDate(value: string): string {
@@ -971,16 +1072,6 @@ function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error) return String((error as { message: unknown }).message);
   return "本地插件操作失败。";
-}
-
-function modificationRequestKey(batch: BatchSnapshot, jobs: JobSnapshot[], request: string, offeringId: string): string {
-  const source = [batch.id, offeringId, ...jobs.map((job) => `${job.id}:${job.outputPath || ""}`), request].join("|");
-  let hash = 2166136261;
-  for (let index = 0; index < source.length; index += 1) {
-    hash ^= source.charCodeAt(index);
-    hash = Math.imul(hash, 16777619);
-  }
-  return `widget-modify-${batch.id}-${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 const root = document.getElementById("root");

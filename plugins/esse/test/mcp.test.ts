@@ -29,19 +29,21 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const batches = new BatchManager(new BatchStore(paths.batchesDir), registry, paths);
     await batches.initialize();
     let nativeSaveSource: string | undefined;
+    let openedFolder: string | undefined;
     const server = createLocalEsseServer({
       widgetHtml: "<html><body><div id=\"root\"></div></body></html>",
       settings,
       registry,
       batches,
       thumbnailer: new Thumbnailer(paths),
-      saveFileAs: async (sourcePath) => { nativeSaveSource = sourcePath; return path.join(root, "saved.png"); }
+      saveFileAs: async (sourcePath) => { nativeSaveSource = sourcePath; return path.join(root, "saved.png"); },
+      openFolder: async (folderPath) => { openedFolder = folderPath; }
     });
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
-    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "ui_get_batch_state", "ui_list_image_batches", "ui_save_provider_profile", "ui_save_image_as", "ui_delete_image_batch"]) {
+    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "ui_get_batch_state", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_save_image_as", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
     }
     const settingsTool = tools.tools.find((tool) => tool.name === "ui_save_provider_profile");
@@ -95,6 +97,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const created = await client.callTool({ name: "create_image_batch", arguments: { prompt: "use my default", count: 1 } });
     const createdBatch = (created.structuredContent as { batch?: { id?: string; offering?: { id?: string } } }).batch;
     assert.equal(createdBatch?.offering?.id, defaultOfferingId);
+    assert.equal((created.structuredContent as { activateBatchId?: string }).activateBatchId, createdBatch?.id);
     let completedJobId: string | undefined;
     let completedOutputPath: string | undefined;
     for (let index = 0; index < 100; index += 1) {
@@ -137,6 +140,9 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const nativeSave = await client.callTool({ name: "ui_save_image_as", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
     assert.equal((nativeSave.structuredContent as { saved?: boolean }).saved, true);
     assert(nativeSaveSource);
+    const opened = await client.callTool({ name: "ui_open_batch_folder", arguments: { batchId: createdBatch?.id } });
+    assert.equal((opened.structuredContent as { opened?: boolean }).opened, true);
+    assert.equal(openedFolder, path.dirname(completedOutputPath!));
 
     await client.callTool({ name: "ui_set_default_offering", arguments: { offeringId: CODEX_GENERATION_OFFERING_ID } });
     const delegated = await client.callTool({
@@ -158,6 +164,8 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await writeFile(agentOutput, Buffer.from(onePixelPng, "base64"));
     const imported = await client.callTool({ name: "complete_agent_image_job", arguments: { batchId: delegatedBatch?.id, jobId: delegatedJobId, imagePath: agentOutput } });
     assert.equal((imported.structuredContent as { job?: { status?: string } }).job?.status, "succeeded");
+    const importedHistory = (imported.structuredContent as { batch?: { jobs?: Array<{ id?: string; callHistory?: Array<{ status?: string; source?: string }> }> } }).batch?.jobs?.find((job) => job.id === delegatedJobId)?.callHistory;
+    assert.deepEqual(importedHistory?.map((call) => [call.status, call.source]), [["succeeded", "agent"]]);
 
     const unsupported = await client.callTool({ name: "create_image_batch", arguments: { prompt: "unsupported Agent", count: 1, requestKey: "unsupported-agent" } });
     const unsupportedBatch = (unsupported.structuredContent as { batch?: { id?: string; jobs?: Array<{ id?: string }> } }).batch;

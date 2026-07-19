@@ -1,5 +1,6 @@
 export type AdapterId = "tuzi-json-images" | "openai-images" | "agent-generation";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
+export type JobCallStatus = "running" | "succeeded" | "failed" | "canceled";
 
 export interface PriceConfig {
   mode: "per_request" | "token" | "model_quota" | "unknown";
@@ -70,9 +71,29 @@ export interface JobSnapshot {
   retryable: boolean;
   chargeState: "not_charged" | "charged" | "unknown";
   error?: string;
+  providerRequestId?: string;
+  createdAt: string;
+  startedAt?: string;
+  finishedAt?: string;
   durationMs?: number;
+  callHistory?: JobCallSnapshot[];
   previewUrl?: string;
   referencePreviewUrls?: string[];
+}
+
+export interface JobCallSnapshot {
+  id: string;
+  sequence: number;
+  attempt: number;
+  source: "provider" | "agent";
+  offering: BatchSnapshot["offering"];
+  status: JobCallStatus;
+  chargeState: "not_charged" | "charged" | "unknown";
+  startedAt: string;
+  finishedAt?: string;
+  durationMs?: number;
+  error?: string;
+  providerRequestId?: string;
 }
 
 export interface JobBackupSnapshot {
@@ -130,7 +151,7 @@ export interface WorkbenchState {
 }
 
 export interface ToolResult {
-  structuredContent?: { state?: WorkbenchState; batch?: BatchSnapshot; [key: string]: unknown };
+  structuredContent?: { state?: WorkbenchState; batch?: BatchSnapshot; activateBatchId?: string; [key: string]: unknown };
   content?: Array<{ type: string; text?: string }>;
   _meta?: Record<string, unknown>;
 }
@@ -139,7 +160,7 @@ declare global {
   interface Window {
     openai?: {
       toolOutput?: { state?: WorkbenchState; batch?: BatchSnapshot };
-      widgetState?: { tab?: "batches" | "settings"; batchId?: string; selectedJobIds?: string[]; modificationRequest?: string };
+      widgetState?: { tab?: "batches" | "settings"; batchId?: string; selectedImageIds?: string[]; selectedJobIds?: string[]; modificationRequest?: string };
       displayMode?: "inline" | "pip" | "fullscreen";
       theme?: "light" | "dark";
       callTool?: (name: string, args: Record<string, unknown>) => Promise<ToolResult>;
@@ -149,5 +170,7 @@ declare global {
       requestDisplayMode?: (value: { mode: "fullscreen" }) => Promise<void>;
     };
     __ESSE_PREVIEW__?: WorkbenchState;
+    __ESSE_LAST_MESSAGE__?: string;
+    __ESSE_LAST_TOOL_CALL__?: { name: string; args: Record<string, unknown> };
   }
 }

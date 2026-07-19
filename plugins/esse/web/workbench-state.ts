@@ -5,6 +5,11 @@ export function keepSelectedBatchId(currentId: string | undefined, incoming: Wor
   return incoming.activeBatch?.id || incoming.view.batchId || incoming.batches[0]?.id;
 }
 
+export function batchIdAfterUpdate(currentId: string | undefined, batch: BatchSnapshot, activateBatchId?: string): string {
+  if (activateBatchId === batch.id) return batch.id;
+  return currentId || batch.id;
+}
+
 export function mergeBatchWithoutReordering(current: WorkbenchState, batch: BatchSnapshot): WorkbenchState {
   const index = current.batches.findIndex((entry) => entry.id === batch.id);
   const existing = index >= 0 ? current.batches[index] : undefined;
