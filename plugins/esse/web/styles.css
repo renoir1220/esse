@@ -372,14 +372,11 @@ button { -webkit-tap-highlight-color: transparent; }
 .call-history-meta code { max-width: 210px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace; }
 .call-history-item > p { margin: 0 0 0 15px; padding: 7px 8px; border-radius: 6px; background: var(--danger-soft); color: var(--danger); font-size: var(--font-size-meta); line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .call-history-empty { min-height: 62px; display: grid; place-items: center; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); font-size: var(--font-size-meta); }
-.task-reference-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 8px; }
-.task-reference-grid article { min-width: 0; display: grid; grid-template-columns: 72px minmax(0, 1fr); gap: 9px; padding: 7px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); }
-.task-reference-image { width: 72px; height: 64px; display: grid; place-items: center; overflow: hidden; border-radius: 6px; background: var(--surface-2); color: var(--muted); }
+.task-reference-grid { display: grid; grid-template-columns: repeat(auto-fill, 76px); gap: 10px 8px; }
+.task-reference-grid figure { min-width: 0; margin: 0; }
+.task-reference-image { width: 76px; height: 76px; display: grid; place-items: center; overflow: hidden; border-radius: 6px; background: var(--surface-2); color: var(--muted); }
 .task-reference-image img { width: 100%; height: 100%; object-fit: contain; }
-.task-reference-grid article > div:last-child { min-width: 0; display: grid; align-content: center; gap: 2px; }
-.task-reference-grid b { font-size: var(--font-size-meta); }
-.task-reference-grid span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--font-size-meta); }
-.task-reference-grid code { display: -webkit-box; overflow: hidden; color: var(--muted); font-family: ui-monospace, "SFMono-Regular", "SF Mono", Menlo, Consolas, "Liberation Mono", monospace; font-size: var(--font-size-meta); line-height: 1.35; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.task-reference-grid figcaption { margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--font-size-meta); text-align: center; }
 .task-reference-empty { min-height: 78px; display: grid; place-items: center; align-content: center; gap: 5px; border: 1px dashed var(--border); border-radius: 8px; color: var(--muted); font-size: var(--font-size-meta); }
 .lightbox { position: fixed; z-index: 30; inset: 0; background: rgba(8,10,8,.88); }
 .lightbox-stage { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; padding: 45px 18px 65px; overscroll-behavior: contain; }

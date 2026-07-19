@@ -1210,7 +1210,8 @@ function TaskDetailDialog({ asset, metadata, referencePaths, previews, onClose }
         {referencePaths.length ? <div className="task-reference-grid">{referencePaths.map((filePath, index) => {
           const cached = previews[sourcePreviewKey(asset.id, index)];
           const preview = cached?.signature === filePath ? cached.dataUrl : undefined;
-          return <article key={`${filePath}:${index}`}><div className="task-reference-image">{preview ? <img src={preview} alt={`参考图 ${index + 1}`} /> : <ImageSquare size={22} />}</div><div><b>参考图 {index + 1}</b><span title={filePath}>{fileName(filePath)}</span><code title={filePath}>{filePath}</code></div></article>;
+          const name = fileName(filePath);
+          return <figure key={`${filePath}:${index}`} title={filePath}><div className="task-reference-image">{preview ? <img src={preview} alt={`参考图 ${index + 1}`} /> : <ImageSquare size={22} />}</div>{name && <figcaption>{name}</figcaption>}</figure>;
         })}</div> : <div className="task-reference-empty"><ImageSquare size={20} /><span>无参考图，使用纯文本生成</span></div>}
       </section>
     </section>
