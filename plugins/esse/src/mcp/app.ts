@@ -87,6 +87,7 @@ export function createLocalEsseServer(options: {
 
   registerAppResource(server, "esse-ui", widgetUri, {}, async () => widgetResource(widgetUri));
   if (options.mediaServer) {
+    registerAppResource(server, "esse-ui-v1-compatible", WIDGET_URI, {}, async () => widgetResource(WIDGET_URI));
     server.registerResource(
       "esse-ui-process-compatible",
       new ResourceTemplate("ui://esse/local-v2-{mediaIdentity}.html", { list: undefined }),
