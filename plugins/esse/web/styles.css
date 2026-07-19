@@ -16,6 +16,7 @@
   --surface: #ffffff;
   --surface-2: #f6f6f4;
   --surface-3: #ececea;
+  --thumbnail-surface: var(--surface-2);
   --text: #252523;
   --muted: #74746f;
   --border: #e9e9e6;
@@ -41,6 +42,7 @@
   --surface: #292a2d;
   --surface-2: #343538;
   --surface-3: #3f4043;
+  --thumbnail-surface: var(--surface);
   --text: #ececf1;
   --muted: #a9a9b0;
   --border: #3f4145;
@@ -199,22 +201,22 @@ button { -webkit-tap-highlight-color: transparent; }
 .text-button { min-height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--accent); font-size: var(--font-size-meta); font-weight: var(--font-weight-bold); cursor: pointer; }
 .text-button:disabled { color: var(--muted); opacity: .5; }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
-.job-card { position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 1px 2px rgba(0,0,0,.025); transition: border-color 140ms ease, box-shadow 140ms ease; }
-.job-card:hover { border-color: var(--border-strong); box-shadow: 0 2px 8px rgba(0,0,0,.055); }
-.image-button { display: block; width: 100%; aspect-ratio: 1 / 1; padding: 0; border: 0; outline: 0; background: var(--surface-2); overflow: hidden; }
+.job-card { position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--thumbnail-surface); border-radius: 9px; background: var(--thumbnail-surface); }
+.job-card:hover { border-color: var(--thumbnail-surface); }
+.image-button { display: block; width: 100%; aspect-ratio: 1 / 1; padding: 0; border: 0; outline: 0; background: var(--thumbnail-surface); overflow: hidden; }
 .image-button:enabled { cursor: zoom-in; }
 .image-button.is-attachable:enabled { cursor: copy; }
 .image-button:focus-visible { box-shadow: inset 0 0 0 1px var(--border-strong); }
 .image-button img { display: block; width: 100%; height: 100%; object-fit: contain; }
-.processing-preview { position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--surface-2); }
-.reference-grid { width: 100%; height: 100%; display: grid; gap: 2px; background: var(--border); }
+.processing-preview { position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--thumbnail-surface); }
+.reference-grid { width: 100%; height: 100%; display: grid; gap: 2px; background: var(--bg); }
 .reference-grid.count-1 { grid-template-columns: 1fr; }
 .reference-grid.count-2 { grid-template-columns: repeat(2, 1fr); }
 .reference-grid.count-3, .reference-grid.count-4 { grid-template-columns: repeat(2, 1fr); grid-template-rows: repeat(2, 1fr); }
 .reference-grid.count-3 .reference-cell:first-child { grid-row: 1 / 3; }
-.reference-cell { min-width: 0; min-height: 0; overflow: hidden; background: var(--surface-2); }
+.reference-cell { min-width: 0; min-height: 0; overflow: hidden; background: var(--thumbnail-surface); }
 .reference-cell img { width: 100%; height: 100%; object-fit: contain; }
-.reference-cell.is-loading { background: linear-gradient(110deg, var(--surface-2) 28%, var(--surface) 42%, var(--surface-2) 56%); background-size: 240% 100%; animation: preview-shimmer 1.4s ease-in-out infinite; }
+.reference-cell.is-loading { background: linear-gradient(110deg, var(--thumbnail-surface) 28%, var(--bg) 42%, var(--thumbnail-surface) 56%); background-size: 240% 100%; animation: preview-shimmer 1.4s ease-in-out infinite; }
 .processing-mask { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; background: rgba(20,22,21,.48); color: white; text-shadow: 0 1px 8px rgba(0,0,0,.35); backdrop-filter: blur(1.5px); }
 .processing-mask strong { font-size: var(--font-size-meta); font-weight: var(--font-weight-semibold); }
 .processing-mask span:not(.spinner) { font-size: var(--font-size-meta); opacity: .9; }
@@ -236,7 +238,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .card-tools .card-icon-button { width: 24px; padding: 0; }
 .card-tools button.confirm { border-color: #ffc9c2; background: rgba(183,71,61,.92); }
 .card-tools button:disabled { opacity: .6; cursor: default; }
-.job-card.is-backup { background: color-mix(in srgb, var(--surface) 88%, var(--accent-soft)); }
+.job-card.is-backup { background: var(--thumbnail-surface); }
 .card-copy { display: flex; align-items: center; min-height: 32px; padding: 6px 8px; }
 .card-copy strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-control); }
 .error-copy { margin: -4px 8px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--danger); font-size: var(--font-size-meta); }
