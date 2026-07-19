@@ -24,3 +24,16 @@ test("thumbnail names overlay square image frames", async () => {
   assert.match(styles, /\.card-copy\s*\{[^}]*position:\s*absolute;[^}]*left:\s*6px;[^}]*bottom:\s*6px;/);
   assert.match(styles, /\.card-copy strong\s*\{[^}]*border-radius:\s*999px;[^}]*background:\s*var\(--thumbnail-control-bg\);/);
 });
+
+test("task reference images use a compact thumbnail grid with filename-only captions", async () => {
+  const [styles, workbench] = await Promise.all([
+    readFile(stylesPath, "utf8"),
+    readFile(workbenchPath, "utf8")
+  ]);
+
+  assert.match(styles, /\.task-reference-grid\s*\{[^}]*grid-template-columns:\s*repeat\(auto-fill,\s*76px\);/);
+  assert.match(styles, /\.task-reference-image\s*\{[^}]*width:\s*76px;[^}]*height:\s*76px;/);
+  assert.match(workbench, /<figcaption>\{name\}<\/figcaption>/);
+  assert.doesNotMatch(workbench, /<b>参考图 \{index \+ 1\}<\/b>/);
+  assert.doesNotMatch(workbench, /<code title=\{filePath\}>\{filePath\}<\/code>/);
+});
