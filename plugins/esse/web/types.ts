@@ -36,6 +36,12 @@ export interface ProviderProfile {
   updatedAt: string;
 }
 
+export type ProviderDraft = Omit<ProviderProfile, "id" | "hasApiKey" | "createdAt" | "updatedAt"> & {
+  id?: string;
+  apiKey: string;
+  hasApiKey: boolean;
+};
+
 export interface PublicOffering extends OfferingConfig {
   providerProfileId: string;
   providerName: string;
@@ -50,9 +56,13 @@ export interface JobSnapshot {
   index: number;
   name: string;
   inputPath?: string;
+  inputPaths?: string[];
+  referenceImagePaths?: string[];
   outputPath?: string;
   generationInputPath?: string;
+  generationInputPaths?: string[];
   backups?: JobBackupSnapshot[];
+  offering?: BatchSnapshot["offering"];
   prompt: string;
   status: JobStatus;
   progress: number;
@@ -62,6 +72,7 @@ export interface JobSnapshot {
   error?: string;
   durationMs?: number;
   previewUrl?: string;
+  referencePreviewUrls?: string[];
 }
 
 export interface JobBackupSnapshot {
@@ -69,6 +80,8 @@ export interface JobBackupSnapshot {
   name: string;
   outputPath: string;
   prompt: string;
+  referenceImagePaths?: string[];
+  offering?: BatchSnapshot["offering"];
   createdAt: string;
 }
 

@@ -61,9 +61,13 @@ export interface JobRecord {
   index: number;
   name: string;
   inputPath?: string;
+  inputPaths?: string[];
+  referenceImagePaths?: string[];
   outputPath?: string;
   generationInputPath?: string;
+  generationInputPaths?: string[];
   backups?: JobBackup[];
+  offering?: OfferingSnapshot;
   prompt: string;
   status: JobStatus;
   progress: number;
@@ -83,6 +87,8 @@ export interface JobBackup {
   name: string;
   outputPath: string;
   prompt: string;
+  referenceImagePaths?: string[];
+  offering?: OfferingSnapshot;
   createdAt: string;
 }
 

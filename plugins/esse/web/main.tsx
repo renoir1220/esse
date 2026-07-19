@@ -1,11 +1,15 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
 import { bridge } from "./bridge";
-import type { BatchSnapshot, JobBackupSnapshot, JobSnapshot, OfferingConfig, ProviderProfile, ToolResult, WorkbenchState } from "./types";
+import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
+import { providerSavePayload } from "./provider-payload";
+import { batchPollDelay, keepSelectedBatchId, mergeBatchWithoutReordering } from "./workbench-state";
+import type { BatchSnapshot, JobBackupSnapshot, JobSnapshot, OfferingConfig, ProviderDraft, ProviderProfile, PublicOffering, ToolResult, WorkbenchState } from "./types";
 import "./styles.css";
 
 type Tab = "batches" | "settings";
-type ProviderDraft = Omit<ProviderProfile, "id" | "hasApiKey" | "createdAt" | "updatedAt"> & { id?: string; apiKey: string; hasApiKey: boolean };
+type PersistedWidgetState = NonNullable<NonNullable<Window["openai"]>["widgetState"]>;
 
 function initialState(): WorkbenchState {
   const direct = window.__ESSE_PREVIEW__ || window.openai?.toolOutput?.state;
@@ -22,32 +26,41 @@ function initialState(): WorkbenchState {
   };
 }
 
+function persistedWidgetState(): PersistedWidgetState {
+  let stored: PersistedWidgetState = {};
+  try { stored = JSON.parse(window.sessionStorage.getItem("esse:widget-state") || "{}"); }
+  catch { /* A corrupt optional session value should not block the widget. */ }
+  return { ...stored, ...(window.openai?.widgetState || {}) };
+}
+
 function App() {
-  const [state, setState] = useState<WorkbenchState>(initialState);
-  const [tab, setTab] = useState<Tab>(() => window.openai?.widgetState?.tab || initialState().view.tab);
-  const [activeBatchId, setActiveBatchId] = useState<string | undefined>(() => window.openai?.widgetState?.batchId || initialState().view.batchId || initialState().activeBatch?.id || initialState().batches[0]?.id);
-  const [selected, setSelected] = useState<Set<string>>(() => new Set(window.openai?.widgetState?.selectedJobIds || []));
-  const [modificationRequest, setModificationRequest] = useState(() => window.openai?.widgetState?.modificationRequest || "");
+  const [startingState] = useState<WorkbenchState>(initialState);
+  const [persistedState] = useState<PersistedWidgetState>(persistedWidgetState);
+  const [state, setState] = useState<WorkbenchState>(startingState);
+  const [tab, setTab] = useState<Tab>(() => persistedState.tab || startingState.view.tab);
+  const [activeBatchId, setActiveBatchId] = useState<string | undefined>(() => persistedState.batchId || startingState.view.batchId || startingState.activeBatch?.id || startingState.batches[0]?.id);
+  const [selected, setSelected] = useState<Set<string>>(() => new Set(persistedState.selectedJobIds || []));
+  const [modificationRequest, setModificationRequest] = useState(() => persistedState.modificationRequest || "");
   const [displayMode, setDisplayMode] = useState(window.openai?.displayMode || "inline");
   const [notice, setNotice] = useState<string>();
+  const [libraryOpen, setLibraryOpen] = useState(false);
+  const [batchSwitcherOpen, setBatchSwitcherOpen] = useState(false);
+  const [batchMenuOpen, setBatchMenuOpen] = useState(false);
+  const [confirmDeleteBatch, setConfirmDeleteBatch] = useState(false);
+  const [headerBusy, setHeaderBusy] = useState<string>();
   const isPreview = Boolean(window.__ESSE_PREVIEW__);
 
   const applyResult = useCallback((result: ToolResult) => {
     if (result.structuredContent?.state) {
-      setState(result.structuredContent.state);
-      setActiveBatchId(result.structuredContent.state.activeBatch?.id || result.structuredContent.state.batches[0]?.id);
+      const incoming = result.structuredContent.state;
+      setState(incoming);
+      setActiveBatchId((current) => keepSelectedBatchId(current, incoming));
       return;
     }
     const batch = result.structuredContent?.batch;
     if (batch) {
-      setState((current) => ({
-        ...current,
-        batches: [batch, ...current.batches.filter((entry) => entry.id !== batch.id)],
-        activeBatch: batch,
-        view: { tab: "batches", batchId: batch.id }
-      }));
-      setActiveBatchId(batch.id);
-      setTab("batches");
+      setState((current) => mergeBatchWithoutReordering(current, batch));
+      setActiveBatchId((current) => current || batch.id);
     }
   }, []);
 
@@ -57,6 +70,11 @@ function App() {
     if (isPreview) return;
     void bridge.callTool("ui_get_local_state", { batchId: activeBatchId }).then(applyResult).catch((error) => setNotice(errorMessage(error)));
   }, []);
+
+  useEffect(() => {
+    if (isPreview) return;
+    void bridge.requestFullscreen().catch(() => undefined);
+  }, [isPreview]);
 
   useEffect(() => {
     const listener = (event: Event) => {
@@ -72,26 +90,55 @@ function App() {
   const activeBatch = state.activeBatch?.id === activeBatchId
     ? state.activeBatch
     : state.batches.find((batch) => batch.id === activeBatchId) || state.batches[0];
+  const headerBatches = useMemo(() => {
+    const recent = state.batches.slice(0, 8);
+    if (!activeBatch || recent.some((batch) => batch.id === activeBatch.id)) return recent;
+    return [activeBatch, ...recent.slice(0, 7)];
+  }, [activeBatch, state.batches]);
 
   useEffect(() => {
     if (isPreview) return;
     let canceled = false;
-    let inFlight = false;
-    const refresh = async () => {
-      if (canceled || inFlight) return;
-      inFlight = true;
-      try { applyResult(await bridge.callTool("ui_get_local_state", { batchId: activeBatch?.id })); }
-      catch (error) { if (!canceled) setNotice(errorMessage(error)); }
-      finally { inFlight = false; }
+    let timer: number | undefined;
+    const schedule = (delay: number) => {
+      if (canceled || document.hidden) return;
+      if (timer !== undefined) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void refresh(), delay);
     };
-    const timer = window.setInterval(refresh, 2000);
-    void refresh();
-    return () => { canceled = true; window.clearInterval(timer); };
-  }, [activeBatch?.id, applyResult, isPreview]);
+    const refresh = async () => {
+      if (canceled || document.hidden || !activeBatchId) return;
+      let nextDelay = batchPollDelay(activeBatch);
+      try {
+        const result = await bridge.callTool("ui_get_batch_state", { batchId: activeBatchId });
+        if (canceled || result.structuredContent?.batch?.id !== activeBatchId) return;
+        applyResult(result);
+        nextDelay = batchPollDelay(result.structuredContent.batch);
+      }
+      catch (error) { if (!canceled) setNotice(errorMessage(error)); }
+      finally { if (!canceled) schedule(nextDelay); }
+    };
+    const onVisibilityChange = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange, { passive: true });
+    schedule(Math.min(750, batchPollDelay(activeBatch)));
+    return () => {
+      canceled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [activeBatchId, applyResult, isPreview]);
 
   useEffect(() => {
     bridge.persistState({ tab, batchId: activeBatch?.id, selectedJobIds: [...selected], modificationRequest });
   }, [tab, activeBatch?.id, selected, modificationRequest]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const timer = window.setTimeout(() => setNotice(undefined), 3600);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   useEffect(() => {
     if (!activeBatch || isPreview) return;
@@ -104,22 +151,63 @@ function App() {
     return () => window.clearTimeout(timer);
   }, [activeBatch?.id, selected, isPreview]);
 
-  const switchTab = (next: Tab) => { setTab(next); setNotice(undefined); };
-  const switchBatch = (id: string) => { setActiveBatchId(id); setSelected(new Set()); setModificationRequest(""); setTab("batches"); };
+  const switchTab = (next: Tab) => { setTab(next); setNotice(undefined); setBatchSwitcherOpen(false); setBatchMenuOpen(false); setConfirmDeleteBatch(false); };
+  const switchBatch = (id: string) => { setActiveBatchId(id); setSelected(new Set()); setModificationRequest(""); setTab("batches"); setBatchSwitcherOpen(false); setBatchMenuOpen(false); setConfirmDeleteBatch(false); };
   const requestFullscreen = async () => {
     await bridge.requestFullscreen();
     if (isPreview) setDisplayMode(document.body.classList.contains("standalone-fullscreen") ? "fullscreen" : "inline");
+  };
+  const deleteActiveBatch = async () => {
+    if (!activeBatch) return;
+    if (!confirmDeleteBatch) { setConfirmDeleteBatch(true); return; }
+    setHeaderBusy("delete-batch");
+    try {
+      applyResult(await bridge.callTool("ui_delete_image_batch", { batchId: activeBatch.id }));
+      setSelected(new Set());
+      setModificationRequest("");
+      setBatchMenuOpen(false);
+      setNotice("批次已删除");
+    } catch (error) { setNotice(errorMessage(error)); }
+    finally { setHeaderBusy(undefined); setConfirmDeleteBatch(false); }
   };
 
   return (
     <main className="app-shell" data-display-mode={displayMode}>
       <header className="app-header">
-        <div className="brand"><span className="brand-mark"><ImageIcon /></span><div><strong>esse</strong><span>图片工作台</span></div></div>
-        <nav className="tabs" aria-label="图片工作台导航">
-          <button className={tab === "batches" ? "is-active" : ""} onClick={() => switchTab("batches")}>任务</button>
-          <button className={tab === "settings" ? "is-active" : ""} onClick={() => switchTab("settings")}>设置</button>
-        </nav>
-        <button className="icon-button" onClick={() => void requestFullscreen()} aria-label={displayMode === "fullscreen" ? "收起预览" : "展开全屏"}><ExpandIcon /></button>
+        <div className="header-context">
+          <span className="header-context-icon">{tab === "settings" ? <SlidersHorizontal size={17} /> : <FolderSimple size={18} />}</span>
+          {tab === "batches" && activeBatch ? <div className="current-batch-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setBatchSwitcherOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape") setBatchSwitcherOpen(false); }}>
+            <button
+              type="button"
+              className="current-batch-trigger"
+              aria-label="切换当前批次"
+              aria-haspopup="listbox"
+              aria-expanded={batchSwitcherOpen}
+              onClick={() => { setBatchMenuOpen(false); setConfirmDeleteBatch(false); setBatchSwitcherOpen((open) => !open); }}
+            >
+              <span>{activeBatch.title}</span>
+              <CaretDown size={13} />
+            </button>
+            {batchSwitcherOpen && <div className="current-batch-menu" role="listbox" aria-label="最近批次">
+              {headerBatches.map((batch) => <button key={batch.id} type="button" role="option" aria-selected={batch.id === activeBatch.id} onClick={() => switchBatch(batch.id)}>
+                <Check size={14} weight="bold" />
+                <span>{batch.title}</span>
+              </button>)}
+            </div>}
+          </div> : <strong>{tab === "settings" ? "Esse 设置" : "Esse"}</strong>}
+          {tab === "batches" && activeBatch && <div className="header-more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) { setBatchMenuOpen(false); setConfirmDeleteBatch(false); } }}>
+            <button className="header-icon-action" onClick={() => { setBatchSwitcherOpen(false); setBatchMenuOpen((open) => !open); }} aria-label="当前批次操作" aria-expanded={batchMenuOpen}><DotsThree size={18} weight="bold" /></button>
+            {batchMenuOpen && <div className="header-menu" role="menu">
+              <button className={confirmDeleteBatch ? "is-danger" : ""} role="menuitem" onClick={() => void deleteActiveBatch()} disabled={Boolean(headerBusy) || activeBatch.running > 0 || activeBatch.queued > 0}><Trash size={14} />{confirmDeleteBatch ? "确认删除批次" : "删除当前批次"}</button>
+            </div>}
+          </div>}
+        </div>
+        <div className="header-actions">
+          <button className={tab === "batches" ? "is-active" : ""} onClick={() => switchTab("batches")}><ImageSquare size={15} /><span>任务</span></button>
+          <button onClick={() => setLibraryOpen(true)} disabled={!activeBatch}><SquaresFour size={15} /><span>浏览</span></button>
+          <button className={tab === "settings" ? "is-active" : ""} onClick={() => switchTab("settings")}><SlidersHorizontal size={15} /><span>设置</span></button>
+          <button className="header-icon-action" onClick={() => void requestFullscreen()} aria-label={displayMode === "fullscreen" ? "收起预览" : "在侧边栏展开"} title="在侧边栏展开"><ArrowsOutSimple size={16} /></button>
+        </div>
       </header>
 
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice(undefined)} aria-label="关闭">×</button></div>}
@@ -136,12 +224,12 @@ function App() {
           setModificationRequest={setModificationRequest}
           displayMode={displayMode}
           isPreview={isPreview}
-          onSwitchBatch={switchBatch}
           applyResult={applyResult}
           onNotice={setNotice}
           onOpenSettings={() => switchTab("settings")}
         />
       )}
+      {libraryOpen && activeBatch && <BatchBrowserDialog activeBatchId={activeBatch.id} applyResult={applyResult} onSwitchBatch={switchBatch} onNotice={setNotice} onClose={() => setLibraryOpen(false)} />}
     </main>
   );
 }
@@ -153,6 +241,18 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
   const [confirmDelete, setConfirmDelete] = useState(false);
   const editing = Boolean(draft.id);
 
+  const setDefaultOffering = async (offeringId: string) => {
+    if (!offeringId || offeringId === props.state.defaultOfferingId) return;
+    setBusy("default");
+    try {
+      const result = await bridge.callTool("ui_set_default_offering", { offeringId });
+      props.applyResult(result);
+      const offering = props.state.offerings.find((entry) => entry.id === offeringId);
+      props.onNotice(`默认模型已设置为 ${offering?.displayName || offeringId}；未明确指定时会自动使用它。`);
+    } catch (error) { props.onNotice(errorMessage(error)); }
+    finally { setBusy(undefined); }
+  };
+
   const editProvider = (profile: ProviderProfile) => {
     setDraft(providerDraftFromProfile(profile));
     setModels([]);
@@ -162,17 +262,7 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
   const save = async () => {
     setBusy("save");
     try {
-      const result = await bridge.callTool("ui_save_provider_profile", {
-        id: draft.id,
-        displayName: draft.displayName,
-        tierName: draft.tierName,
-        baseUrl: draft.baseUrl,
-        adapterId: draft.adapterId,
-        concurrency: draft.concurrency,
-        apiKey: draft.apiKey || undefined,
-        offerings: draft.offerings,
-        makeDefault: props.state.providers.length === 0
-      });
+      const result = await bridge.callTool("ui_save_provider_profile", providerSavePayload(draft));
       props.applyResult(result);
       props.onNotice("Provider 配置已保存在本机；API Key 不会进入 GPT 上下文。");
       const state = result.structuredContent?.state;
@@ -212,9 +302,22 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
 
   return (
     <section className="settings-layout">
+      <div className="default-model-panel">
+        <div><strong>默认模型</strong><span>未指定模型时使用</span></div>
+        <SettingsSelect
+          ariaLabel="默认模型"
+          value={props.state.defaultOfferingId || ""}
+          options={[
+            ...(!props.state.defaultOfferingId ? [{ value: "", label: "请选择默认模型" }] : []),
+            ...props.state.offerings.map((offering) => ({ value: offering.id, label: `${offering.displayName} · ${offering.providerName}/${offering.tierName}` }))
+          ]}
+          onChange={(value) => void setDefaultOffering(value)}
+          disabled={!props.state.offerings.length || Boolean(busy)}
+        />
+      </div>
       <aside className="provider-list">
-        <div className="section-title"><div><strong>Provider</strong><span>本机保存的服务配置</span></div><button className="small-button" onClick={() => setDraft(newRabbitDraft())}>＋ 新建</button></div>
-        {props.state.providers.length === 0 && <div className="empty-mini">尚未配置 Provider。使用右侧的兔子预设开始。</div>}
+        <div className="section-title"><strong>Provider</strong><button className="compact-icon-button" onClick={() => setDraft(newRabbitDraft())} aria-label="新建 Provider" title="新建 Provider"><Plus size={15} /></button></div>
+        {props.state.providers.length === 0 && <div className="empty-mini">尚未配置 Provider</div>}
         {props.state.providers.map((profile) => (
           <button key={profile.id} className={`provider-item ${draft.id === profile.id ? "is-active" : ""}`} onClick={() => editProvider(profile)}>
             <span className="provider-avatar">{profile.displayName.slice(0, 1)}</span>
@@ -222,39 +325,44 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
             <i className={profile.hasApiKey ? "status-ok" : "status-missing"} />
           </button>
         ))}
-        <div className="secure-note"><LockIcon /><span>密钥保存：{props.state.secureStorage}</span></div>
+        <div className="secure-note"><LockSimple size={14} /><span>{props.state.secureStorage}</span></div>
       </aside>
 
       <div className="provider-editor">
-        <div className="editor-heading"><div><span className="eyebrow">{editing ? "编辑配置" : "新建配置"}</span><h1>{draft.displayName || "Provider"} · {draft.tierName || "档位"}</h1></div><span className="local-pill">仅本机</span></div>
-        <div className="form-grid">
-          <Field label="服务商名称"><input value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
-          <Field label="档位名称"><input value={draft.tierName} onChange={(event) => setDraft({ ...draft, tierName: event.target.value })} /></Field>
-          <Field label="API 地址" wide><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} /></Field>
-          <Field label="接口格式"><select value={draft.adapterId} onChange={(event) => setDraft({ ...draft, adapterId: event.target.value as ProviderDraft["adapterId"] })}><option value="tuzi-json-images">兔子 JSON Images</option><option value="openai-images">OpenAI Images</option></select></Field>
-          <Field label="并发数"><input type="number" min="1" max="12" value={draft.concurrency} onChange={(event) => setDraft({ ...draft, concurrency: Number(event.target.value) })} /></Field>
-          <Field label="API Key" wide hint={draft.hasApiKey ? "留空可保留已保存的密钥" : "直接写入系统安全存储，不交给 GPT"}>
-            <div className="secret-input"><input type="password" autoComplete="off" placeholder={draft.hasApiKey ? "•••••••• 已安全保存" : "粘贴 API Key"} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} /><button onClick={() => void test()} disabled={Boolean(busy)}>{busy === "test" ? "测试中…" : "测试连接"}</button></div>
-          </Field>
-        </div>
+        <div className="editor-heading"><h1>{draft.displayName || "Provider"} · {draft.tierName || "档位"}</h1></div>
+        <section className="settings-section">
+          <div className="settings-section-heading"><strong>连接</strong></div>
+          <div className="form-grid">
+            <Field label="服务商名称"><input value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
+            <Field label="档位名称"><input value={draft.tierName} onChange={(event) => setDraft({ ...draft, tierName: event.target.value })} /></Field>
+            <Field label="API 地址" wide><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} /></Field>
+            <Field label="接口格式"><SettingsSelect ariaLabel="接口格式" value={draft.adapterId} options={[{ value: "tuzi-json-images", label: "兔子 JSON Images" }, { value: "openai-images", label: "OpenAI Images" }]} onChange={(value) => setDraft({ ...draft, adapterId: value as ProviderDraft["adapterId"] })} /></Field>
+            <Field label="并发数"><input type="number" min="1" max="12" value={draft.concurrency} onChange={(event) => setDraft({ ...draft, concurrency: Number(event.target.value) })} /></Field>
+            <Field label="API Key" wide hint={draft.hasApiKey ? "留空保留现有密钥" : "安全存储在本机"}>
+              <div className="secret-input"><input type="password" autoComplete="off" placeholder={draft.hasApiKey ? "•••••••• 已安全保存" : "粘贴 API Key"} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} /><button onClick={() => void test()} disabled={Boolean(busy)}>{busy === "test" ? "测试中…" : "测试连接"}</button></div>
+            </Field>
+          </div>
+        </section>
 
         {models.length > 0 && <div className="models-found"><strong>已发现模型</strong><div>{models.slice(0, 20).map((model) => <button key={model} onClick={() => updateOffering(0, { providerModelId: model, canonicalModelId: model, displayName: model })}>{model}</button>)}</div></div>}
 
-        <div className="offerings-heading"><div><strong>模型</strong><span>不同价格档使用独立配置，避免混用凭据和接口</span></div><button className="small-button" onClick={() => setDraft((current) => ({ ...current, offerings: [...current.offerings, blankOffering()] }))}>＋ 添加模型</button></div>
-        <div className="offering-list">
-          {draft.offerings.map((offering, index) => (
-            <article className="offering-editor" key={offering.id || index}>
-              <div className="offering-number">{String(index + 1).padStart(2, "0")}</div>
-              <div className="offering-fields">
-                <Field label="显示名称"><input value={offering.displayName} onChange={(event) => updateOffering(index, { displayName: event.target.value })} /></Field>
-                <Field label="服务商模型 ID"><input value={offering.providerModelId} onChange={(event) => updateOffering(index, { providerModelId: event.target.value })} /></Field>
-                <Field label="标准模型 ID"><input value={offering.canonicalModelId} onChange={(event) => updateOffering(index, { canonicalModelId: event.target.value })} /></Field>
-                <Field label="计费"><div className="price-row"><select value={offering.price.mode} onChange={(event) => updateOffering(index, { price: { ...offering.price, mode: event.target.value as OfferingConfig["price"]["mode"] } })}><option value="per_request">按次</option><option value="token">按 Token</option><option value="unknown">未知</option></select><input type="number" step="0.001" placeholder="价格" value={offering.price.amount ?? ""} onChange={(event) => updateOffering(index, { price: { ...offering.price, amount: event.target.value ? Number(event.target.value) : undefined } })} /><input className="currency" value={offering.price.currency} onChange={(event) => updateOffering(index, { price: { ...offering.price, currency: event.target.value } })} /></div></Field>
-              </div>
-              {draft.offerings.length > 1 && <button className="remove-offering" onClick={() => setDraft((current) => ({ ...current, offerings: current.offerings.filter((_, offeringIndex) => offeringIndex !== index) }))} aria-label="删除模型">×</button>}
-            </article>
-          ))}
-        </div>
+        <section className="settings-section models-section">
+          <div className="offerings-heading"><strong>模型</strong><button className="compact-icon-button" onClick={() => setDraft((current) => ({ ...current, offerings: [...current.offerings, blankOffering()] }))} aria-label="添加模型" title="添加模型"><Plus size={15} /></button></div>
+          <div className="offering-list">
+            {draft.offerings.map((offering, index) => (
+              <article className="offering-editor" key={offering.id || index}>
+                <div className="offering-number">{String(index + 1).padStart(2, "0")}</div>
+                <div className="offering-fields">
+                  <Field label="显示名称"><input value={offering.displayName} onChange={(event) => updateOffering(index, { displayName: event.target.value })} /></Field>
+                  <Field label="服务商模型 ID"><input value={offering.providerModelId} onChange={(event) => updateOffering(index, { providerModelId: event.target.value })} /></Field>
+                  <Field label="标准模型 ID"><input value={offering.canonicalModelId} onChange={(event) => updateOffering(index, { canonicalModelId: event.target.value })} /></Field>
+                  <Field label="计费"><div className="price-row"><SettingsSelect ariaLabel={`计费方式 ${index + 1}`} value={offering.price.mode} options={[{ value: "per_request", label: "按次" }, { value: "token", label: "按 Token" }, { value: "unknown", label: "未知" }]} onChange={(value) => updateOffering(index, { price: { ...offering.price, mode: value as OfferingConfig["price"]["mode"] } })} /><input type="number" step="0.001" placeholder="价格" value={offering.price.amount ?? ""} onChange={(event) => updateOffering(index, { price: { ...offering.price, amount: event.target.value ? Number(event.target.value) : undefined } })} /><input className="currency" value={offering.price.currency} onChange={(event) => updateOffering(index, { price: { ...offering.price, currency: event.target.value } })} /></div></Field>
+                </div>
+                {draft.offerings.length > 1 && <button className="remove-offering" onClick={() => setDraft((current) => ({ ...current, offerings: current.offerings.filter((_, offeringIndex) => offeringIndex !== index) }))} aria-label={`删除模型 ${index + 1}`} title="删除模型"><Trash size={14} /></button>}
+              </article>
+            ))}
+          </div>
+        </section>
 
         <footer className="settings-actions">
           <div>{editing && <button className={`danger-button ${confirmDelete ? "confirm" : ""}`} onClick={() => void remove()} disabled={Boolean(busy)}>{confirmDelete ? "再次点击确认删除" : "删除配置"}</button>}</div>
@@ -263,6 +371,21 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
       </div>
     </section>
   );
+}
+
+function SettingsSelect(props: { ariaLabel: string; value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void; disabled?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const selected = props.options.find((option) => option.value === props.value) || props.options[0];
+  return <div className="settings-select" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}>
+    <button type="button" className="settings-select-trigger" aria-label={props.ariaLabel} aria-haspopup="listbox" aria-expanded={open} disabled={props.disabled} onClick={() => setOpen((current) => !current)}>
+      <span>{selected?.label || "请选择"}</span><CaretDown size={13} />
+    </button>
+    {open && <div className="settings-select-menu" role="listbox" aria-label={props.ariaLabel}>
+      {props.options.map((option) => <button key={option.value} type="button" role="option" aria-selected={option.value === props.value} onClick={() => { props.onChange(option.value); setOpen(false); }}>
+        <Check size={13} weight="bold" /><span>{option.label}</span>
+      </button>)}
+    </div>}
+  </div>;
 }
 
 function BatchesView(props: {
@@ -274,7 +397,6 @@ function BatchesView(props: {
   setModificationRequest: (value: string) => void;
   displayMode: string;
   isPreview: boolean;
-  onSwitchBatch: (id: string) => void;
   applyResult: (result: ToolResult) => void;
   onNotice: (message?: string) => void;
   onOpenSettings: () => void;
@@ -282,9 +404,135 @@ function BatchesView(props: {
   if (!props.batch) return <EmptyBatches configured={props.state.providers.length > 0} onOpenSettings={props.onOpenSettings} />;
   return (
     <section className="batches-layout">
-      {props.state.batches.length > 1 && <div className="batch-strip">{props.state.batches.slice(0, 8).map((batch) => <button key={batch.id} className={batch.id === props.batch?.id ? "is-active" : ""} onClick={() => props.onSwitchBatch(batch.id)}><span className={`batch-dot status-${batch.status}`} /><span><strong>{batch.title}</strong><small>{batch.succeeded}/{batch.total} 完成</small></span></button>)}</div>}
-      <BatchPanel {...props} batch={props.batch} />
+      <BatchPanel key={props.batch.id} {...props} batch={props.batch} offerings={props.state.offerings} />
     </section>
+  );
+}
+
+type BatchLibraryPage = {
+  batches: BatchSnapshot[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+};
+
+function BatchBrowserDialog(props: {
+  activeBatchId: string;
+  applyResult: (result: ToolResult) => void;
+  onSwitchBatch: (id: string) => void;
+  onNotice: (message?: string) => void;
+  onClose: () => void;
+}) {
+  const [requestedPage, setRequestedPage] = useState(1);
+  const [pageData, setPageData] = useState<BatchLibraryPage>({ batches: [], page: 1, pageSize: 8, total: 0, totalPages: 1 });
+  const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [loading, setLoading] = useState(true);
+  const [openingBatchId, setOpeningBatchId] = useState<string>();
+
+  useEffect(() => {
+    let canceled = false;
+    setLoading(true);
+    void bridge.callTool("ui_list_image_batches", { page: requestedPage, pageSize: 8 }).then((result) => {
+      if (canceled) return;
+      const value = result.structuredContent as Partial<BatchLibraryPage> | undefined;
+      const batches = Array.isArray(value?.batches) ? value.batches : [];
+      const normalized = {
+        batches,
+        page: typeof value?.page === "number" ? value.page : requestedPage,
+        pageSize: typeof value?.pageSize === "number" ? value.pageSize : 8,
+        total: typeof value?.total === "number" ? value.total : batches.length,
+        totalPages: typeof value?.totalPages === "number" ? value.totalPages : 1
+      };
+      setPageData(normalized);
+      if (normalized.page !== requestedPage) setRequestedPage(normalized.page);
+    }).catch((error) => {
+      if (!canceled) props.onNotice(errorMessage(error));
+    }).finally(() => {
+      if (!canceled) setLoading(false);
+    });
+    return () => { canceled = true; };
+  }, [requestedPage]);
+
+  useEffect(() => {
+    let canceled = false;
+    const load = async () => {
+      const entries = pageData.batches.flatMap((batch) => batch.jobs
+        .filter((job) => Boolean(job.outputPath))
+        .slice(0, 3)
+        .map((job) => ({ batch, job })));
+      await Promise.all(entries.map(async ({ batch, job }) => {
+        const key = batchPreviewKey(batch.id, job.id);
+        if (previews[key]) return;
+        if (job.previewUrl) {
+          if (!canceled) setPreviews((current) => ({ ...current, [key]: job.previewUrl! }));
+          return;
+        }
+        try {
+          const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: job.id, full: false });
+          const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
+          if (dataUrl && !canceled) setPreviews((current) => ({ ...current, [key]: dataUrl }));
+        } catch { /* A missing cover should not block browsing the batch list. */ }
+      }));
+    };
+    void load();
+    return () => { canceled = true; };
+  }, [pageData.batches]);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") props.onClose(); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [props.onClose]);
+
+  const openBatch = async (batch: BatchSnapshot) => {
+    if (batch.id === props.activeBatchId) { props.onClose(); return; }
+    setOpeningBatchId(batch.id);
+    try {
+      const result = await bridge.callTool("ui_get_batch_state", { batchId: batch.id });
+      props.applyResult(result);
+      props.onSwitchBatch(batch.id);
+      props.onClose();
+    } catch (error) { props.onNotice(errorMessage(error)); }
+    finally { setOpeningBatchId(undefined); }
+  };
+
+  return (
+    <div className="batch-library-backdrop" onClick={props.onClose}>
+      <section className="batch-library-dialog" role="dialog" aria-modal="true" aria-label="浏览全部批次" onClick={(event) => event.stopPropagation()}>
+        <header className="batch-library-header">
+          <div><FolderSimple size={16} /><h2>浏览批次</h2></div>
+          <button onClick={props.onClose} aria-label="关闭批次浏览"><X size={15} /></button>
+        </header>
+        <div className="batch-library-list" aria-live="polite">
+          {loading && !pageData.batches.length ? <div className="batch-library-loading"><span className="spinner" /><span>读取批次</span></div> : pageData.batches.map((batch) => {
+            const coverJobs = batch.jobs.filter((job) => Boolean(job.outputPath)).slice(0, 3);
+            return (
+              <button key={batch.id} className={`batch-library-item ${batch.id === props.activeBatchId ? "is-active" : ""}`} onClick={() => void openBatch(batch)} disabled={Boolean(openingBatchId)} aria-current={batch.id === props.activeBatchId ? "page" : undefined}>
+                <span className={`batch-library-thumbs count-${Math.max(1, coverJobs.length)}`}>
+                  {Array.from({ length: Math.max(1, coverJobs.length) }, (_, index) => {
+                    const job = coverJobs[index];
+                    const preview = job ? previews[batchPreviewKey(batch.id, job.id)] || job.previewUrl : undefined;
+                    return <span className="batch-library-thumb" key={job?.id || index}>{preview ? <img src={preview} alt="" /> : <ImageSquare size={18} />}</span>;
+                  })}
+                </span>
+                <span className="batch-library-copy">
+                  <span className="batch-library-title"><strong>{batch.title}</strong></span>
+                  <time dateTime={batch.updatedAt}>{formatBatchDate(batch.updatedAt)}</time>
+                </span>
+                <span className="batch-library-open" aria-hidden="true">{openingBatchId === batch.id ? <span className="spinner" /> : batch.id === props.activeBatchId ? <Check size={15} weight="bold" /> : <CaretRight size={15} />}</span>
+              </button>
+            );
+          })}
+          {!loading && !pageData.batches.length && <div className="batch-library-loading"><FolderSimple size={18} /><span>还没有批次</span></div>}
+        </div>
+        <footer className="batch-library-pagination">
+          <span>{pageData.page} / {pageData.totalPages}</span>
+          <button onClick={() => setRequestedPage((page) => Math.max(1, page - 1))} disabled={loading || pageData.page <= 1} aria-label="上一页" title="上一页"><CaretLeft size={14} /></button>
+          <button onClick={() => setRequestedPage((page) => Math.min(pageData.totalPages, page + 1))} disabled={loading || pageData.page >= pageData.totalPages} aria-label="下一页" title="下一页"><CaretRight size={14} /></button>
+        </footer>
+      </section>
+    </div>
   );
 }
 
@@ -300,26 +548,74 @@ type ImageAsset = {
 
 type CachedPreview = { path: string; dataUrl: string };
 
-function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "onSwitchBatch" | "onOpenSettings"> & { batch: BatchSnapshot }) {
+type ModificationOffering = Pick<PublicOffering, "id" | "displayName" | "providerName" | "tierName" | "price">;
+
+function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "onOpenSettings"> & { batch: BatchSnapshot; offerings: PublicOffering[] }) {
   const { batch } = props;
+  const modificationTextareaRef = useRef<HTMLTextAreaElement>(null);
   const [previews, setPreviews] = useState<Record<string, CachedPreview>>(() => Object.fromEntries(batch.jobs.filter((job) => job.previewUrl && (job.outputPath || job.inputPath)).map((job) => [job.id, { path: (job.outputPath || job.inputPath)!, dataUrl: job.previewUrl! }])));
   const [previewAsset, setPreviewAsset] = useState<ImageAsset>();
   const [previewFull, setPreviewFull] = useState<string>();
+  const [previewZoom, setPreviewZoom] = useState(initialImageZoom);
+  const [detailAsset, setDetailAsset] = useState<ImageAsset>();
   const [busy, setBusy] = useState<string>();
   const [confirmRetryId, setConfirmRetryId] = useState<string>();
-  const [confirmDeleteBatch, setConfirmDeleteBatch] = useState(false);
+  const modificationOfferings = useMemo<ModificationOffering[]>(() => {
+    const configured = props.offerings
+      .filter((offering) => offering.configured && offering.supportsImageToImage)
+      .map(({ id, displayName, providerName, tierName, price }) => ({ id, displayName, providerName, tierName, price }));
+    if (!configured.some((offering) => offering.id === batch.offering.id)) {
+      configured.unshift({
+        id: batch.offering.id,
+        displayName: batch.offering.displayName,
+        providerName: batch.offering.providerName,
+        tierName: batch.offering.tierName,
+        price: batch.offering.price
+      });
+    }
+    return configured;
+  }, [props.offerings, batch.offering.id]);
+  const [selectedOfferingId, setSelectedOfferingId] = useState(batch.offering.id);
+  const [modelMenuOpen, setModelMenuOpen] = useState(false);
+  const selectedOffering = modificationOfferings.find((offering) => offering.id === selectedOfferingId) || modificationOfferings[0]!;
   const completed = useMemo(() => batch.jobs.filter((job) => job.status === "succeeded" && job.outputPath), [batch.jobs]);
   const selectedCompleted = completed.filter((job) => props.selected.has(job.id));
   const assets = useMemo<ImageAsset[]>(() => batch.jobs.flatMap((job) => [
     { id: job.id, name: job.name, outputPath: job.outputPath, inputPath: job.inputPath, kind: "job" as const, job },
     ...(job.backups || []).map((backup) => ({ id: backup.id, name: backup.name, outputPath: backup.outputPath, kind: "backup" as const, backup }))
   ]), [batch.jobs]);
+  const previewableAssets = useMemo(
+    () => assets.filter((asset) => !asset.job || !isProcessing(asset.job)),
+    [assets],
+  );
   const assetsToShow = props.displayMode === "fullscreen" || document.body.classList.contains("standalone-fullscreen") ? assets : assets.slice(0, 8);
+
+  useLayoutEffect(() => {
+    const textarea = modificationTextareaRef.current;
+    if (!textarea) return;
+    textarea.style.height = "auto";
+    const nextHeight = Math.min(180, Math.max(34, textarea.scrollHeight));
+    textarea.style.height = `${nextHeight}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 180 ? "auto" : "hidden";
+  }, [props.modificationRequest]);
 
   useEffect(() => {
     let canceled = false;
     const load = async () => {
       for (const asset of assetsToShow) {
+        const processingPaths = asset.job ? processingSourcePaths(asset.job) : [];
+        if (processingPaths.length && asset.job && isProcessing(asset.job)) {
+          for (const [sourceIndex, filePath] of processingPaths.slice(0, 4).entries()) {
+            const key = sourcePreviewKey(asset.id, sourceIndex);
+            if (canceled || previews[key]?.path === filePath) continue;
+            try {
+              const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: asset.id, sourceIndex, full: false });
+              const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
+              if (dataUrl && !canceled) setPreviews((current) => ({ ...current, [key]: { path: filePath, dataUrl } }));
+            } catch { /* Keep the reference cell neutral while loading. */ }
+          }
+          continue;
+        }
         const filePath = asset.outputPath || asset.inputPath;
         if (canceled || !filePath || previews[asset.id]?.path === filePath) continue;
         try {
@@ -331,14 +627,40 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     };
     void load();
     return () => { canceled = true; };
-  }, [batch.id, assetsToShow.map((asset) => `${asset.id}:${asset.outputPath || asset.inputPath || ""}`).join("|")]);
+  }, [batch.id, assetsToShow.map((asset) => `${asset.id}:${asset.outputPath || asset.inputPath || ""}:${asset.job ? processingSourcePaths(asset.job).join(",") : ""}`).join("|")]);
+
+  const detailReferencePaths = detailAsset ? referencePathsForAsset(detailAsset) : [];
+  useEffect(() => {
+    if (!detailAsset || !detailReferencePaths.length) return;
+    let canceled = false;
+    const load = async () => {
+      for (const [sourceIndex, filePath] of detailReferencePaths.entries()) {
+        const key = sourcePreviewKey(detailAsset.id, sourceIndex);
+        if (canceled || previews[key]?.path === filePath) continue;
+        try {
+          const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: detailAsset.id, sourceIndex, full: false });
+          const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
+          if (dataUrl && !canceled) setPreviews((current) => ({ ...current, [key]: { path: filePath, dataUrl } }));
+        } catch { /* Keep the path visible when a reference thumbnail is unavailable. */ }
+      }
+    };
+    void load();
+    return () => { canceled = true; };
+  }, [batch.id, detailAsset?.id, detailReferencePaths.join("|")]);
 
   useEffect(() => {
-    if (!previewAsset) return;
-    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setPreviewAsset(undefined); };
-    window.addEventListener("keydown", closeOnEscape);
-    return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [previewAsset]);
+    if (!detailAsset) return;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setDetailAsset(undefined); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [detailAsset?.id]);
+
+  useEffect(() => {
+    if (!modelMenuOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") setModelMenuOpen(false); };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [modelMenuOpen]);
 
   const toggle = (job: JobSnapshot) => {
     if (job.status !== "succeeded" || !job.outputPath) return;
@@ -348,29 +670,45 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       return next;
     });
   };
-  const selectAll = () => props.setSelected(selectedCompleted.length === completed.length && completed.length ? new Set() : new Set(completed.map((job) => job.id)));
   const fullDataUrl = async (asset: ImageAsset) => {
     const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: asset.id, full: true });
     const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
     if (!dataUrl) throw new Error("无法读取本地原图。");
     return dataUrl;
   };
-  const openPreview = async (asset: ImageAsset) => {
-    setPreviewAsset(asset);
+  const openPreview = (asset: ImageAsset) => setPreviewAsset(asset);
+  const previewIndex = previewAsset ? previewableAssets.findIndex((asset) => asset.id === previewAsset.id) : -1;
+  const movePreview = (direction: -1 | 1) => {
+    if (previewIndex < 0 || previewableAssets.length < 2) return;
+    setPreviewAsset(previewableAssets[(previewIndex + direction + previewableAssets.length) % previewableAssets.length]);
+  };
+
+  useEffect(() => {
+    if (!previewAsset) return;
+    let canceled = false;
     setPreviewFull(undefined);
-    try { setPreviewFull(await fullDataUrl(asset)); }
-    catch (error) { props.onNotice(errorMessage(error)); }
+    setPreviewZoom(initialImageZoom);
+    void fullDataUrl(previewAsset).then((dataUrl) => { if (!canceled) setPreviewFull(dataUrl); }).catch((error) => { if (!canceled) props.onNotice(errorMessage(error)); });
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setPreviewAsset(undefined);
+      if (event.key === "ArrowLeft") { event.preventDefault(); movePreview(-1); }
+      if (event.key === "ArrowRight") { event.preventDefault(); movePreview(1); }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => { canceled = true; window.removeEventListener("keydown", onKeyDown); };
+  }, [previewAsset?.id, previewIndex, previewableAssets.length]);
+  const zoomPreview = (event: React.WheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = event.currentTarget.getBoundingClientRect();
+    const pointX = event.clientX - (rect.left + rect.width / 2);
+    const pointY = event.clientY - (rect.top + rect.height / 2);
+    setPreviewZoom((current) => zoomImageAtPoint(current, event.deltaY, pointX, pointY, event.deltaMode, rect.height));
   };
   const saveImage = async (asset: ImageAsset) => {
     try {
-      const dataUrl = await fullDataUrl(asset);
-      const extension = /^data:image\/([^;,]+)/.exec(dataUrl)?.[1]?.replace("jpeg", "jpg") || "png";
-      const anchor = document.createElement("a");
-      anchor.href = dataUrl;
-      anchor.download = `${asset.name}.${extension}`;
-      document.body.appendChild(anchor);
-      anchor.click();
-      anchor.remove();
+      const result = await bridge.callTool("ui_save_image_as", { batchId: batch.id, jobId: asset.id });
+      if (result.structuredContent?.saved) props.onNotice(`已保存到 ${String(result.structuredContent.path || "所选位置")}`);
     } catch (error) { props.onNotice(errorMessage(error)); }
   };
   const retry = async (job: JobSnapshot) => {
@@ -389,14 +727,22 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   };
   const sendSelection = async () => {
     const request = props.modificationRequest.trim();
-    if (!selectedCompleted.length) { props.onNotice("请先勾选至少一张已完成的主图。"); return; }
+    if (!selectedCompleted.length) { props.onNotice("请先双击图片，将它添加到输入框。"); return; }
     if (!request) { props.onNotice("请先填写具体的修改要求。"); return; }
     setBusy("modify");
     const ids = selectedCompleted.map((job) => job.id);
     try {
-      await bridge.updateModelContext(`用户准备修改本地图片批次 ${batch.id} 的 job IDs: ${ids.join(", ")}。修改要求：${request}。修改必须留在同一批次，并为每张原图建立中文版本备份。`);
-      await bridge.sendMessage(`请修改本地图片批次 ${batch.id} 中选中的 ${ids.length} 张图片（job IDs: ${ids.join(", ")}）。修改要求：${request}\n\n请直接调用 modify_selected_images，在同一批次更新主图并保留中文版本备份。`);
-      props.onNotice(`已向 GPT 提交 ${ids.length} 张图片的修改任务。`);
+      const result = await bridge.callTool("modify_selected_images", {
+        batchId: batch.id,
+        jobIds: ids,
+        instructions: request,
+        offeringId: selectedOffering.id,
+        requestKey: modificationRequestKey(batch, selectedCompleted, request, selectedOffering.id)
+      });
+      props.applyResult(result);
+      props.setSelected(new Set());
+      props.setModificationRequest("");
+      props.onNotice(`已开始修改 ${ids.length} 张图片`);
     } catch (error) { props.onNotice(errorMessage(error)); }
     finally { setBusy(undefined); }
   };
@@ -406,57 +752,125 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     catch (error) { props.onNotice(errorMessage(error)); }
     finally { setBusy(undefined); }
   };
-  const deleteBatch = async () => {
-    if (!confirmDeleteBatch) { setConfirmDeleteBatch(true); return; }
-    setBusy("delete-batch");
-    try {
-      props.applyResult(await bridge.callTool("ui_delete_image_batch", { batchId: batch.id }));
-      props.setSelected(new Set());
-      props.onNotice("批次记录、生成图和版本备份已从本机删除。");
-    } catch (error) { props.onNotice(errorMessage(error)); }
-    finally { setBusy(undefined); setConfirmDeleteBatch(false); }
+  const sourcePreviewsFor = (asset: ImageAsset): Array<string | undefined> => {
+    if (!asset.job || !isProcessing(asset.job)) return [];
+    return processingSourcePaths(asset.job).slice(0, 4).map((filePath, sourceIndex) => {
+      const cached = previews[sourcePreviewKey(asset.id, sourceIndex)];
+      return cached?.path === filePath ? cached.dataUrl : undefined;
+    });
   };
 
   return (
     <div className="batch-panel">
-      <header className="batch-heading"><div><span className="eyebrow"><i className="provider-dot" />{batch.offering.providerName}</span><h1>{batch.title}</h1><p>{batch.offering.displayName} · {batch.succeeded}/{batch.total} 完成{batch.running ? ` · ${batch.running} 生成中` : ""}{batch.queued ? ` · ${batch.queued} 排队` : ""}</p></div><div className="batch-heading-actions"><span className={`status-badge status-${batch.status}`}>{batchStatusLabel(batch)}</span><button className={`delete-batch-button ${confirmDeleteBatch ? "confirm" : ""}`} onClick={() => void deleteBatch()} disabled={Boolean(busy) || batch.running > 0 || batch.queued > 0}>{confirmDeleteBatch ? "确认删除" : "删除"}</button></div></header>
-      <details className="batch-details"><summary>任务详情</summary><div><span>{priceLabel(batch)}</span><span>{batch.offering.tierName} · {batch.offering.concurrency} 路并发</span><span className="path-label" title={batch.outputDirectory}>输出：{batch.outputDirectory}</span></div></details>
       <div className={`batch-workspace ${assetsToShow.length === 1 ? "is-single" : ""}`}>
         <section className="gallery-panel" aria-label="批次图片">
-          <div className="selection-bar"><div><strong>图片</strong><span>{selectedCompleted.length ? `已选 ${selectedCompleted.length} 张` : "勾选主图后可修改"}</span></div><button className="text-button" onClick={selectAll} disabled={!completed.length}>{selectedCompleted.length === completed.length && completed.length ? "取消全选" : "全选"}</button></div>
-          <section className="image-grid">{assetsToShow.map((asset) => <JobCard key={asset.id} asset={asset} preview={previews[asset.id]?.path === (asset.outputPath || asset.inputPath) ? previews[asset.id]?.dataUrl : undefined} selected={asset.job ? props.selected.has(asset.job.id) : false} confirmRetry={confirmRetryId === asset.id} busy={busy === `retry:${asset.id}`} onSelect={asset.job ? () => toggle(asset.job!) : undefined} onPreview={() => void openPreview(asset)} onSave={() => void saveImage(asset)} onRetry={asset.job ? () => void retry(asset.job!) : undefined} />)}</section>
+          <div className="selection-bar"><strong>图片</strong></div>
+          <section className="image-grid">{assetsToShow.map((asset) => <JobCard key={asset.id} asset={asset} preview={asset.job && isProcessing(asset.job) ? undefined : previews[asset.id]?.path === (asset.outputPath || asset.inputPath) ? previews[asset.id]?.dataUrl : undefined} sourcePreviews={sourcePreviewsFor(asset)} selected={asset.job ? props.selected.has(asset.job.id) : false} confirmRetry={confirmRetryId === asset.id} busy={busy === `retry:${asset.id}`} onSelect={asset.job ? () => toggle(asset.job!) : undefined} onPreview={() => openPreview(asset)} onDetail={() => setDetailAsset(asset)} onSave={() => void saveImage(asset)} onRetry={asset.job ? () => void retry(asset.job!) : undefined} />)}</section>
           {assets.length > assetsToShow.length && <div className="show-more">展开后可查看全部 {assets.length} 张图片</div>}
         </section>
-        <section className="modify-composer" aria-label="修改所选图片">
-          <div className="modify-heading"><div><strong>修改所选图片</strong><span>写清楚要改什么，原图会自动保留为版本备份。</span></div><b>{selectedCompleted.length ? `${selectedCompleted.length} 张` : "未选择"}</b></div>
-          <textarea value={props.modificationRequest} onChange={(event) => props.setModificationRequest(event.target.value)} placeholder="例如：只保留一支向日葵，其他构图和光线不变。" rows={4} maxLength={1200} aria-label="修改要求" />
-          <div className="modify-actions"><span>{!selectedCompleted.length ? "先在图片右上角勾选" : !props.modificationRequest.trim() ? "请输入修改要求" : "已准备好提交"}</span><button className="primary-button" onClick={() => void sendSelection()} disabled={!selectedCompleted.length || !props.modificationRequest.trim() || Boolean(busy)}>{busy === "modify" ? "正在提交…" : "开始修改"}</button></div>
+        <section className="modify-composer" aria-label="修改选定图片">
+          <div className="modify-entry">
+            {selectedCompleted.length > 0 && <div className="modify-attachments" aria-label="待修改图片">
+              {selectedCompleted.map((job) => {
+                const attachmentPreview = previews[job.id]?.dataUrl;
+                return <div className="modify-attachment" key={job.id} title={job.name}>
+                  {attachmentPreview ? <img src={attachmentPreview} alt={job.name} /> : <ImageSquare size={18} />}
+                  <button type="button" onClick={() => toggle(job)} aria-label={`移除 ${job.name}`} title="移除"><X size={10} weight="bold" /></button>
+                </div>;
+              })}
+            </div>}
+            <textarea ref={modificationTextareaRef} value={props.modificationRequest} onChange={(event) => props.setModificationRequest(event.target.value)} placeholder={selectedCompleted.length ? "描述你希望如何修改这些图片…" : "双击图片添加到这里…"} rows={1} maxLength={1200} aria-label="修改要求" />
+          </div>
+          <div className="modify-toolbar">
+            <div className="modify-model-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setModelMenuOpen(false); }}>
+              <button type="button" className="modify-model-trigger" onClick={() => setModelMenuOpen((open) => !open)} aria-haspopup="listbox" aria-expanded={modelMenuOpen} aria-label={`选择生图模型，当前 ${selectedOffering.displayName}，${offeringPriceLabel(selectedOffering.price)}`} disabled={Boolean(busy)}>
+                <Lightning size={13} weight="fill" /><span>{selectedOffering.displayName}</span><small>{offeringPriceLabel(selectedOffering.price)}</small><CaretDown size={12} />
+              </button>
+              {modelMenuOpen && <div className="modify-model-menu" role="listbox" aria-label="选择生图模型">
+                {modificationOfferings.map((offering) => <button type="button" role="option" aria-selected={offering.id === selectedOffering.id} key={offering.id} onClick={() => { setSelectedOfferingId(offering.id); setModelMenuOpen(false); }}>
+                  <span><strong>{offering.displayName}</strong><small>{offering.providerName} · {offering.tierName}</small></span>
+                  <b>{offeringPriceLabel(offering.price)}</b>
+                  <Check size={13} weight="bold" />
+                </button>)}
+              </div>}
+            </div>
+            <button type="button" className="modify-submit-button" onClick={() => void sendSelection()} disabled={!selectedCompleted.length || !props.modificationRequest.trim() || Boolean(busy)} aria-busy={busy === "modify"}>修改选定图片</button>
+          </div>
         </section>
       </div>
       {batch.queued > 0 && <footer className="batch-actions"><button className="secondary-button" onClick={() => void cancel()} disabled={Boolean(busy)}>取消排队</button></footer>}
-      {previewAsset && <div className="lightbox" role="dialog" aria-modal="true" aria-label={previewAsset.name} onClick={() => setPreviewAsset(undefined)}><button className="lightbox-close" onClick={() => setPreviewAsset(undefined)} aria-label="关闭预览">×</button>{previewFull ? <img src={previewFull} alt={previewAsset.name} onClick={(event) => event.stopPropagation()} /> : <span className="spinner large" />}<div className="lightbox-caption" onClick={(event) => event.stopPropagation()}><strong>{previewAsset.name}</strong><button onClick={() => void saveImage(previewAsset)}>保存原图</button></div></div>}
+      {previewAsset && <div className="lightbox" role="dialog" aria-modal="true" aria-label={previewAsset.name}><button className="lightbox-close" onClick={() => setPreviewAsset(undefined)} aria-label="关闭预览">×</button>{previewableAssets.length > 1 && <><button className="lightbox-nav previous" onClick={() => movePreview(-1)} aria-label="上一张" title="上一张（←）"><CaretLeft size={24} /></button><button className="lightbox-nav next" onClick={() => movePreview(1)} aria-label="下一张" title="下一张（→）"><CaretRight size={24} /></button></>}<div className="lightbox-stage" onClick={() => setPreviewAsset(undefined)} onWheel={zoomPreview}>{previewFull ? <img className={previewZoom.scale > 1.0001 ? "is-zoomed" : ""} src={previewFull} alt={previewAsset.name} style={{ transform: `translate3d(${previewZoom.x}px, ${previewZoom.y}px, 0) scale(${previewZoom.scale})` }} onClick={(event) => event.stopPropagation()} onDoubleClick={() => setPreviewZoom(initialImageZoom)} /> : <span className="spinner large lightbox-spinner" />}</div><div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span><button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div></div>}
+      {detailAsset && <TaskDetailDialog asset={detailAsset} referencePaths={detailReferencePaths} previews={previews} onClose={() => setDetailAsset(undefined)} />}
     </div>
   );
 }
 
-function JobCard(props: { asset: ImageAsset; preview?: string; selected: boolean; confirmRetry: boolean; busy: boolean; onSelect?: () => void; onPreview: () => void; onSave: () => void; onRetry?: () => void }) {
+function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: Array<string | undefined>; selected: boolean; confirmRetry: boolean; busy: boolean; onSelect?: () => void; onPreview: () => void; onDetail: () => void; onSave: () => void; onRetry?: () => void }) {
+  const previewTimer = useRef<number>();
   const job = props.asset.job;
-  const hasImage = Boolean(props.asset.outputPath || props.asset.inputPath);
-  const canSave = Boolean(props.asset.outputPath);
+  const processing = Boolean(job && (job.status === "queued" || job.status === "running"));
+  const hasImage = !processing && Boolean(props.asset.outputPath || props.asset.inputPath);
+  const canSave = !processing && Boolean(props.asset.outputPath);
   const selectable = Boolean(job?.status === "succeeded" && job.outputPath && props.onSelect);
-  const status = props.asset.kind === "backup" ? "备份" : job ? jobStatusLabel(job) : "完成";
-  const statusClass = props.asset.kind === "backup" ? "succeeded" : job?.status || "succeeded";
   const canRetry = job?.status === "failed" && job.retryable && Boolean(props.onRetry);
-  const selectFromCopy = (event: React.KeyboardEvent<HTMLDivElement>) => { if ((event.key === "Enter" || event.key === " ") && props.onSelect) { event.preventDefault(); props.onSelect(); } };
-  return <article className={`job-card ${props.selected ? "is-selected" : ""} ${props.asset.kind === "backup" ? "is-backup" : ""}`}><button className="image-button" disabled={!hasImage} onClick={hasImage ? props.onPreview : undefined} aria-label={hasImage ? `预览 ${props.asset.name}` : props.asset.name}>{props.preview ? <img src={props.preview} alt={props.asset.name} /> : job ? <JobPlaceholder job={job} /> : <div className="placeholder"><span className="spinner" /><strong>读取备份</strong></div>}</button><div className="card-overlay"><span className={`status-pill status-${statusClass}`}>{status}</span>{selectable && <label className="select-control" onClick={(event) => event.stopPropagation()}><input type="checkbox" checked={props.selected} onChange={props.onSelect} aria-label={`选择 ${props.asset.name}`} /><span>{props.selected ? "已选" : "选择"}</span></label>}</div>{(canSave || canRetry) && <div className="card-tools">{canSave && <button onClick={(event) => { event.stopPropagation(); props.onSave(); }}>保存</button>}{canRetry && <button className={props.confirmRetry ? "confirm" : ""} onClick={(event) => { event.stopPropagation(); props.onRetry?.(); }} disabled={props.busy}>{props.busy ? "重试中…" : props.confirmRetry ? "确认重试" : "重试"}</button>}</div>}<div className={`card-copy ${selectable ? "is-selectable" : ""}`} onClick={selectable ? props.onSelect : undefined} onKeyDown={selectable ? selectFromCopy : undefined} role={selectable ? "button" : undefined} tabIndex={selectable ? 0 : undefined} aria-pressed={selectable ? props.selected : undefined}><strong title={props.asset.name}>{props.asset.name}</strong><span>{props.asset.kind === "backup" ? "历史版本" : job?.durationMs ? `${Math.round(job.durationMs / 1000)} 秒` : job?.status === "queued" ? "等待并发位" : job?.status === "running" ? "处理中" : `第 ${job?.attempt || 1} 次`}</span></div>{job?.error && <p className="error-copy" title={job.error}>{job.error}</p>}</article>;
+  useEffect(() => () => { if (previewTimer.current !== undefined) window.clearTimeout(previewTimer.current); }, []);
+  const previewOnSingleClick = () => {
+    if (!hasImage) return;
+    if (previewTimer.current !== undefined) window.clearTimeout(previewTimer.current);
+    previewTimer.current = window.setTimeout(() => { previewTimer.current = undefined; props.onPreview(); }, selectable ? 280 : 0);
+  };
+  const attachOnDoubleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
+    if (!selectable || !props.onSelect) return;
+    event.preventDefault();
+    if (previewTimer.current !== undefined) window.clearTimeout(previewTimer.current);
+    previewTimer.current = undefined;
+    props.onSelect();
+  };
+  const attachmentAction = props.selected ? "从修改输入框移除" : "添加到修改输入框";
+  return <article className={`job-card ${props.asset.kind === "backup" ? "is-backup" : ""}`}>
+    <button className={`image-button ${selectable ? "is-attachable" : ""}`} disabled={!hasImage} onClick={previewOnSingleClick} onDoubleClick={attachOnDoubleClick} aria-label={hasImage ? selectable ? `预览 ${props.asset.name}；双击${attachmentAction}` : `预览 ${props.asset.name}` : props.asset.name} title={selectable ? `双击${attachmentAction}` : undefined}>{processing && job ? <ProcessingPreview job={job} previews={props.sourcePreviews} /> : props.preview ? <img src={props.preview} alt={props.asset.name} /> : job ? <JobPlaceholder job={job} /> : <div className="placeholder"><span className="spinner" /><strong>读取备份</strong></div>}</button>
+    <div className="card-tools">
+      <button className="card-icon-button" onClick={(event) => { event.stopPropagation(); props.onDetail(); }} aria-label={`查看 ${props.asset.name} 详情`} title="任务详情"><Info size={13} /></button>
+      {canSave && <button className="card-icon-button" onClick={(event) => { event.stopPropagation(); props.onSave(); }} aria-label={`保存 ${props.asset.name}`} title="保存图片"><DownloadSimple size={13} /></button>}
+      {canRetry && <button className={props.confirmRetry ? "confirm" : ""} onClick={(event) => { event.stopPropagation(); props.onRetry?.(); }} disabled={props.busy}>{props.busy ? "重试中…" : props.confirmRetry ? "确认重试" : "重试"}</button>}
+    </div>
+    <div className="card-copy"><strong title={props.asset.name}>{props.asset.name}</strong></div>
+    {job?.error && <p className="error-copy" title={job.error}>{job.error}</p>}
+  </article>;
+}
+
+function TaskDetailDialog({ asset, referencePaths, previews, onClose }: { asset: ImageAsset; referencePaths: string[]; previews: Record<string, CachedPreview>; onClose: () => void }) {
+  const prompt = asset.job?.prompt || asset.backup?.prompt || "未记录 Prompt";
+  const status = asset.backup ? "历史版本" : asset.job ? jobStatusLabel(asset.job) : "任务";
+  const offering = asset.job?.offering || asset.backup?.offering;
+  return <div className="task-detail-backdrop" onClick={onClose}>
+    <section className="task-detail-dialog" role="dialog" aria-modal="true" aria-label={`${asset.name} 任务详情`} onClick={(event) => event.stopPropagation()}>
+      <header className="task-detail-header"><div><span className="eyebrow">任务详情</span><h2>{asset.name}</h2></div><button onClick={onClose} aria-label="关闭任务详情">×</button></header>
+      <div className="task-detail-meta"><span>{status}</span>{offering && <span>{offering.displayName} · {offeringPriceLabel(offering.price)}</span>}{asset.job && <><span>第 {asset.job.attempt} 次</span><span>{referencePaths.length} 张参考图</span></>}</div>
+      <section className="task-detail-section"><strong>Prompt</strong><p>{prompt}</p></section>
+      <section className="task-detail-section"><strong>参考图</strong>
+        {referencePaths.length ? <div className="task-reference-grid">{referencePaths.map((filePath, index) => {
+          const cached = previews[sourcePreviewKey(asset.id, index)];
+          const preview = cached?.path === filePath ? cached.dataUrl : undefined;
+          return <article key={`${filePath}:${index}`}><div className="task-reference-image">{preview ? <img src={preview} alt={`参考图 ${index + 1}`} /> : <ImageSquare size={22} />}</div><div><b>参考图 {index + 1}</b><span title={filePath}>{fileName(filePath)}</span><code title={filePath}>{filePath}</code></div></article>;
+        })}</div> : <div className="task-reference-empty"><ImageSquare size={20} /><span>无参考图，使用纯文本生成</span></div>}
+      </section>
+    </section>
+  </div>;
 }
 
 function JobPlaceholder({ job }: { job: JobSnapshot }) {
-  return <div className="placeholder">{job.status === "running" ? <span className="spinner" /> : <span className="placeholder-symbol">{job.status === "failed" ? "!" : "…"}</span>}<strong>{jobStatusLabel(job)}</strong>{job.status === "running" && <span>{Math.max(15, job.progress)}%</span>}</div>;
+  return <div className="placeholder"><span className="placeholder-symbol">{job.status === "failed" ? "!" : "…"}</span><strong>{jobStatusLabel(job)}</strong></div>;
+}
+
+function ProcessingPreview({ job, previews }: { job: JobSnapshot; previews: Array<string | undefined> }) {
+  const modifying = Boolean(job.generationInputPath || job.generationInputPaths?.length);
+  const cells = previews.length ? previews : [undefined];
+  return <div className="processing-preview"><div className={`reference-grid count-${Math.min(4, cells.length)}`}>{cells.map((preview, index) => <span className={`reference-cell ${preview ? "" : "is-loading"}`} key={index}>{preview && <img src={preview} alt={`参考图 ${index + 1}`} />}</span>)}</div><div className="processing-mask"><span className="spinner processing-spinner" /><strong>{modifying ? "修改中" : job.status === "queued" ? "等待生成" : "生成中"}</strong>{job.status === "running" && <span>{Math.max(15, job.progress)}%</span>}</div></div>;
 }
 
 function EmptyBatches({ configured, onOpenSettings }: { configured: boolean; onOpenSettings: () => void }) {
-  return <div className="empty-state"><span className="empty-art"><ImageIcon /></span><h1>{configured ? "还没有图片任务" : "先配置一个 Provider"}</h1><p>{configured ? "告诉 GPT 要处理的本地文件夹和修改目标，任务会在这里并行运行。" : "API Key 只会写入这台电脑的安全存储，不会进入聊天内容。"}</p>{!configured && <button className="primary-button" onClick={onOpenSettings}>配置 Provider</button>}</div>;
+  return <div className="empty-state"><span className="empty-art"><ImageSquare size={28} /></span><h1>{configured ? "还没有图片任务" : "先配置一个 Provider"}</h1><p>{configured ? "告诉 GPT 要处理的本地文件夹和修改目标，任务会在这里并行运行。" : "API Key 只会写入这台电脑的安全存储，不会进入聊天内容。"}</p>{!configured && <button className="primary-button" onClick={onOpenSettings}>配置 Provider</button>}</div>;
 }
 
 function Field({ label, hint, wide, children }: { label: string; hint?: string; wide?: boolean; children: React.ReactNode }) {
@@ -489,19 +903,29 @@ function blankOffering(): OfferingConfig {
   return { id: "", canonicalModelId: "", providerModelId: "", displayName: "", price: { mode: "unknown", currency: "CNY" }, supportsTextToImage: true, supportsImageToImage: true, sizes: [], qualities: [] };
 }
 
-function priceLabel(batch: BatchSnapshot): string {
-  if (typeof batch.estimatedCost === "number") return `预计 ${batch.currency === "CNY" ? "¥" : ""}${batch.estimatedCost.toFixed(3)}`;
-  if (batch.offering.price.mode === "token") return "按 Token 计费";
-  return "价格未配置";
+function offeringPriceLabel(price: OfferingConfig["price"]): string {
+  if (price.mode === "per_request" && typeof price.amount === "number") {
+    const symbol = price.currency === "CNY" ? "¥" : price.currency === "USD" ? "$" : `${price.currency} `;
+    return `${symbol}${price.amount.toLocaleString("zh-CN", { maximumFractionDigits: 4 })}/次`;
+  }
+  if (price.mode === "token") return "Token 计费";
+  return "价格未知";
 }
 
-function batchStatusLabel(batch: BatchSnapshot): string {
-  if (batch.status === "completed") return "全部完成";
-  if (batch.status === "partial") return "部分完成";
-  if (batch.status === "failed") return "任务失败";
-  if (batch.status === "canceled") return "已取消";
-  if (batch.status === "queued") return "等待并发位";
-  return "正在并行生成";
+function formatBatchDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+function batchPreviewKey(batchId: string, jobId: string): string {
+  return `${batchId}:${jobId}`;
 }
 
 function jobStatusLabel(job: JobSnapshot): string {
@@ -512,15 +936,46 @@ function jobStatusLabel(job: JobSnapshot): string {
   return "已取消";
 }
 
+function isProcessing(job: JobSnapshot): boolean {
+  return job.status === "queued" || job.status === "running";
+}
+
+function processingSourcePaths(job: JobSnapshot): string[] {
+  if (job.referenceImagePaths?.length) return [...new Set(job.referenceImagePaths)];
+  if (job.generationInputPaths?.length) return [...new Set(job.generationInputPaths)];
+  if (job.generationInputPath) return [job.generationInputPath];
+  if (job.inputPaths?.length) return [...new Set(job.inputPaths)];
+  return job.inputPath ? [job.inputPath] : [];
+}
+
+function referencePathsForAsset(asset: ImageAsset): string[] {
+  if (asset.job) return processingSourcePaths(asset.job);
+  return [...new Set(asset.backup?.referenceImagePaths || [])];
+}
+
+function fileName(filePath: string): string {
+  return filePath.split(/[\\/]/).filter(Boolean).pop() || filePath;
+}
+
+function sourcePreviewKey(jobId: string, sourceIndex: number): string {
+  return `${jobId}:source:${sourceIndex}`;
+}
+
 function errorMessage(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (error && typeof error === "object" && "message" in error) return String((error as { message: unknown }).message);
   return "本地插件操作失败。";
 }
 
-function ImageIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m5.5 18 5-5 3.2 3 2.3-2.2 2.5 4.2"/></svg>; }
-function ExpandIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 3H3v5M16 3h5v5M21 16v5h-5M3 16v5h5"/></svg>; }
-function LockIcon() { return <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>; }
+function modificationRequestKey(batch: BatchSnapshot, jobs: JobSnapshot[], request: string, offeringId: string): string {
+  const source = [batch.id, offeringId, ...jobs.map((job) => `${job.id}:${job.outputPath || ""}`), request].join("|");
+  let hash = 2166136261;
+  for (let index = 0; index < source.length; index += 1) {
+    hash ^= source.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return `widget-modify-${batch.id}-${(hash >>> 0).toString(16).padStart(8, "0")}`;
+}
 
 const root = document.getElementById("root");
 if (!root) throw new Error("Missing #root element");

@@ -4,6 +4,8 @@ import { build } from "esbuild";
 
 const root = process.cwd();
 const mcpDir = path.join(root, "mcp");
+const manifest = JSON.parse(await readFile(path.join(root, ".codex-plugin", "plugin.json"), "utf8"));
+if (typeof manifest.version !== "string" || !manifest.version) throw new Error("plugin.json must contain a version.");
 await mkdir(mcpDir, { recursive: true });
 
 const widgetResult = await build({
@@ -39,6 +41,7 @@ await build({
   outfile: path.join(mcpDir, "server.cjs"),
   minify: false,
   sourcemap: false,
+  define: { __ESSE_VERSION__: JSON.stringify(manifest.version) },
   banner: { js: "#!/usr/bin/env node" }
 });
 
@@ -49,4 +52,4 @@ await writeFile(
   "utf8"
 );
 
-console.log("Built mcp/server.cjs, mcp/widget.html, and web/preview.html");
+console.log(`Built Esse ${manifest.version}: mcp/server.cjs, mcp/widget.html, and web/preview.html`);

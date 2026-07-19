@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readdir, rm } from "node:fs/promises";
+import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -69,27 +69,71 @@ test("persistent local batch respects profile concurrency and writes unique outp
   }
 });
 
+test("each child task keeps its own prompt and zero-to-many reference images", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-references-"));
+  try {
+    const referencePaths = await Promise.all(Array.from({ length: 4 }, async (_, index) => {
+      const filePath = path.join(root, `reference-${index + 1}.png`);
+      await writeFile(filePath, Buffer.from(onePixelPng, "base64"));
+      return filePath;
+    }));
+    const requests: Array<{ prompt?: string; image?: unknown[] }> = [];
+    const { manager } = await createManager(root, async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body || "{}")) as { prompt?: string; image?: unknown[] });
+      return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const created = await manager.create({
+      offeringId: "offer-default",
+      prompt: "batch fallback",
+      jobs: [
+        { prompt: "text-only child", referenceImagePaths: [] },
+        { prompt: "four-reference child", referenceImagePaths: referencePaths }
+      ]
+    });
+    const completed = await waitForBatch(manager, created.id);
+    assert.deepEqual(completed.jobs.map((job) => job.prompt), ["text-only child", "four-reference child"]);
+    assert.equal(completed.jobs[0]?.inputPaths?.length || 0, 0);
+    assert.deepEqual(completed.jobs[1]?.inputPaths, referencePaths);
+    assert.deepEqual(completed.jobs[1]?.referenceImagePaths, referencePaths);
+    assert.equal(requests.find((request) => request.prompt === "text-only child")?.image, undefined);
+    assert.equal(requests.find((request) => request.prompt === "four-reference child")?.image?.length, 4);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("in-place modification keeps the batch, refreshes the main image, and creates Chinese backups", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-edit-"));
   try {
-    const { manager } = await createManager(root, async () => new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    const requestedModels: string[] = [];
+    const { manager } = await createManager(root, async (_input, init) => {
+      requestedModels.push(String((JSON.parse(String(init?.body || "{}")) as { model?: string }).model || ""));
+      return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
+    });
     const created = await manager.create({ offeringId: "offer-default", prompt: "original", count: 1, requestKey: "edit-source" });
     const original = await waitForBatch(manager, created.id);
     const originalJob = onlyJob(original);
     const originalPath = originalJob.outputPath!;
     assert.equal(originalJob.name, "图1");
+    assert.equal(originalJob.offering?.id, "offer-default");
 
-    const editing = await manager.modifyInPlace({ batchId: created.id, jobIds: [originalJob.id], instructions: "只保留一支向日葵", requestKey: "edit-once" });
+    const editing = await manager.modifyInPlace({ batchId: created.id, jobIds: [originalJob.id], instructions: "只保留一支向日葵", offeringId: "offer-alternate", requestKey: "edit-once" });
     assert.equal(editing.id, created.id);
     const editingJob = onlyJob(editing);
     assert.equal(editingJob.backups?.[0]?.name, "图1-1");
+    assert.equal(editingJob.backups?.[0]?.offering?.id, "offer-default");
+    assert.equal(editingJob.offering?.id, "offer-alternate");
     const backupPath = editingJob.backups![0]!.outputPath;
+    assert.deepEqual(editingJob.referenceImagePaths, [backupPath]);
     await access(backupPath);
 
     const modified = await waitForBatch(manager, created.id);
     const modifiedJob = onlyJob(modified);
     assert.equal(modifiedJob.status, "succeeded");
+    assert.equal(modifiedJob.offering?.id, "offer-alternate");
+    assert.deepEqual(requestedModels, ["gpt-image-2", "alternate-image-model"]);
     assert.notEqual(modifiedJob.outputPath, originalPath);
+    assert.deepEqual(modifiedJob.referenceImagePaths, [backupPath]);
     await access(modifiedJob.outputPath!);
     await assert.rejects(access(originalPath));
     const duplicate = await manager.modifyInPlace({ batchId: created.id, jobIds: [modifiedJob.id], instructions: "不会重复提交", requestKey: "edit-once" });
@@ -149,6 +193,33 @@ test("deleting a terminal batch removes its managed images and record", async ()
   }
 });
 
+test("batch library pages all records by most recent activity", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-library-"));
+  try {
+    const { manager } = await createManager(root, async () => new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    const created = [];
+    for (let index = 0; index < 5; index += 1) {
+      const batch = await manager.create({ offeringId: "offer-default", title: `batch-${index + 1}`, prompt: `prompt-${index + 1}`, count: 1 });
+      created.push(await waitForBatch(manager, batch.id));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const oldest = created[0]!;
+    const refreshed = await manager.modifyInPlace({ batchId: oldest.id, jobIds: [oldest.jobs[0]!.id], instructions: "recently modified" });
+    await waitForBatch(manager, refreshed.id);
+
+    assert.equal(manager.listRecent(1)[0]?.id, oldest.id);
+    const firstPage = manager.listPage(1, 4);
+    const secondPage = manager.listPage(2, 4);
+    assert.equal(firstPage.total, 5);
+    assert.equal(firstPage.totalPages, 2);
+    assert.equal(firstPage.batches.length, 4);
+    assert.equal(secondPage.batches.length, 1);
+    assert.equal(new Set([...firstPage.batches, ...secondPage.batches].map((batch) => batch.id)).size, 5);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 async function createManager(root: string, fetchImpl: typeof fetch) {
   const paths = resolveDataPaths({ ESSE_DATA_DIR: root }, process.platform);
   await ensureDataPaths(paths);
@@ -167,6 +238,16 @@ async function createManager(root: string, fetchImpl: typeof fetch) {
       providerModelId: "gpt-image-2",
       displayName: "GPT-Image 2",
       price: { mode: "per_request", currency: "USD", amount: 0.05 },
+      supportsTextToImage: true,
+      supportsImageToImage: true,
+      sizes: [],
+      qualities: []
+    }, {
+      id: "offer-alternate",
+      canonicalModelId: "alternate-image-model",
+      providerModelId: "alternate-image-model",
+      displayName: "Alternate Image",
+      price: { mode: "per_request", currency: "USD", amount: 0.08 },
       supportsTextToImage: true,
       supportsImageToImage: true,
       sizes: [],

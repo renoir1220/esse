@@ -1,4 +1,5 @@
 import type { ToolResult } from "./types";
+import { compactToolArgs } from "./tool-args";
 
 type Pending = { resolve: (value: unknown) => void; reject: (reason: unknown) => void };
 type Listener = (result: ToolResult) => void;
@@ -23,14 +24,19 @@ class HostBridge {
   }
 
   async callTool(name: string, args: Record<string, unknown>): Promise<ToolResult> {
-    if (window.__ESSE_PREVIEW__) return previewCall(name, args);
-    if (window.openai?.callTool) return window.openai.callTool(name, args);
+    const cleanArgs = compactToolArgs(args);
+    if (window.__ESSE_PREVIEW__) return previewCall(name, cleanArgs);
+    if (window.openai?.callTool) return window.openai.callTool(name, cleanArgs);
     await this.ensureInitialized();
-    return this.request("tools/call", { name, arguments: args }) as Promise<ToolResult>;
+    return this.request("tools/call", { name, arguments: cleanArgs }) as Promise<ToolResult>;
   }
 
   persistState(state: Record<string, unknown>): void {
-    window.openai?.setWidgetState?.(state);
+    // Codex currently rejects widget-state persistence for a docked MCP App and
+    // surfaces a host error banner. Keep this best-effort state inside the
+    // iframe session instead of asking the host to persist it.
+    try { window.sessionStorage.setItem("esse:widget-state", JSON.stringify(state)); }
+    catch { /* Session persistence is optional. */ }
   }
 
   async updateModelContext(text: string): Promise<void> {
@@ -50,15 +56,20 @@ class HostBridge {
       return;
     }
     await this.ensureInitialized();
-    this.notify("ui/message", { role: "user", content: [{ type: "text", text }] });
+    await this.request("ui/message", { role: "user", content: [{ type: "text", text }] });
   }
 
   async requestFullscreen(): Promise<void> {
+    if (window.__ESSE_PREVIEW__) {
+      document.body.classList.toggle("standalone-fullscreen");
+      return;
+    }
     if (window.openai?.requestDisplayMode) {
       await window.openai.requestDisplayMode({ mode: "fullscreen" });
       return;
     }
-    document.body.classList.toggle("standalone-fullscreen");
+    await this.ensureInitialized();
+    await this.request("ui/request-display-mode", { mode: "fullscreen" });
   }
 
   private ensureInitialized(): Promise<void> {
@@ -109,13 +120,68 @@ class HostBridge {
 
 async function previewCall(name: string, args: Record<string, unknown>): Promise<ToolResult> {
   const state = window.__ESSE_PREVIEW__!;
+  if (name === "ui_list_image_batches") {
+    const pageSize = Math.max(4, Math.min(20, Number(args.pageSize) || 8));
+    const sorted = [...state.batches].sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+    const totalPages = Math.max(1, Math.ceil(sorted.length / pageSize));
+    const page = Math.max(1, Math.min(totalPages, Number(args.page) || 1));
+    return { structuredContent: { batches: sorted.slice((page - 1) * pageSize, page * pageSize), page, pageSize, total: sorted.length, totalPages } };
+  }
+  if (name === "ui_get_batch_state") {
+    const batch = state.batches.find((entry) => entry.id === args.batchId);
+    return { structuredContent: { batch } };
+  }
   if (name === "ui_get_image_preview") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);
     const job = batch?.jobs.find((entry) => entry.id === args.jobId);
-    return { structuredContent: { available: Boolean(job?.previewUrl) }, _meta: { dataUrl: job?.previewUrl } };
+    const sourceIndex = typeof args.sourceIndex === "number" ? args.sourceIndex : undefined;
+    const dataUrl = sourceIndex === undefined ? job?.previewUrl : job?.referencePreviewUrls?.[sourceIndex] || (sourceIndex === 0 ? job?.previewUrl : undefined);
+    return { structuredContent: { available: Boolean(dataUrl), sourceIndex }, _meta: { dataUrl } };
   }
   if (name === "ui_test_provider_profile") {
     return { structuredContent: { ok: true, modelCount: 3 }, _meta: { models: ["gpt-image-2", "nano-banana-2", "gemini-3.1-flash-image-preview"] } };
+  }
+  if (name === "ui_set_default_offering") {
+    state.defaultOfferingId = String(args.offeringId || "");
+    return { structuredContent: { state } };
+  }
+  if (name === "ui_save_image_as") {
+    return { structuredContent: { saved: true, canceled: false, path: `C:\\Users\\demo\\Pictures\\${String(args.jobId || "image")}.png` } };
+  }
+  if (name === "modify_selected_images") {
+    const batch = state.batches.find((entry) => entry.id === args.batchId);
+    const ids = Array.isArray(args.jobIds) ? new Set(args.jobIds) : new Set<unknown>();
+    const selectedOffering = state.offerings.find((offering) => offering.id === args.offeringId);
+    if (batch) {
+      for (const job of batch.jobs) {
+        if (!ids.has(job.id)) continue;
+        job.generationInputPath = job.outputPath;
+        if (selectedOffering) {
+          job.offering = {
+            id: selectedOffering.id,
+            providerProfileId: selectedOffering.providerProfileId,
+            providerName: selectedOffering.providerName,
+            tierName: selectedOffering.tierName,
+            adapterId: selectedOffering.adapterId,
+            canonicalModelId: selectedOffering.canonicalModelId,
+            providerModelId: selectedOffering.providerModelId,
+            displayName: selectedOffering.displayName,
+            concurrency: selectedOffering.concurrency,
+            price: selectedOffering.price
+          };
+        }
+        job.prompt = String(args.instructions || job.prompt);
+        job.status = "running";
+        job.progress = 15;
+        job.chargeState = "unknown";
+        job.durationMs = undefined;
+      }
+      batch.running = batch.jobs.filter((job) => job.status === "running").length;
+      batch.succeeded = batch.jobs.filter((job) => job.status === "succeeded").length;
+      batch.status = "running";
+      state.activeBatch = batch;
+      return { structuredContent: { batch } };
+    }
   }
   return { structuredContent: { state } };
 }

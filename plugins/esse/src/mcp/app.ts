@@ -1,14 +1,16 @@
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
 import type { BatchManager } from "../jobs/batch-manager.js";
 import { scanImageFolder } from "../files/image-files.js";
 import { fileDataUrl } from "../files/output-files.js";
+import { saveFileAs } from "../files/save-file-dialog.js";
 import type { Thumbnailer } from "../files/thumbnailer.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SettingsStore } from "../storage/settings-store.js";
-import type { AdapterId, BatchSnapshot, OfferingConfig } from "../types.js";
+import type { AdapterId, BatchSnapshot, JobRecord, OfferingConfig } from "../types.js";
 
 export const WIDGET_URI = "ui://esse/local-v1.html";
 
@@ -34,18 +36,24 @@ const offeringInputSchema = z.object({
   qualities: z.array(z.string()).max(20).default([])
 });
 
+const existingImageReferenceSchema = z.object({
+  batchId: z.string().min(1).describe("ID of the existing Esse batch that owns the reference image."),
+  image: z.string().min(1).describe("Exact image name such as 图1 or 图1-1, or its returned job/backup ID.")
+});
+
 export function createLocalEsseServer(options: {
   widgetHtml: string;
   settings: SettingsStore;
   registry: ProviderRegistry;
   batches: BatchManager;
   thumbnailer: Thumbnailer;
+  saveFileAs?: typeof saveFileAs;
 }): McpServer {
   const server = new McpServer(
     { name: "esse", version: "0.1.0" },
     {
       instructions:
-        "esse runs local parallel image batches. Inspect local folders before image-aware work, create one batch for many images, and keep each offering's provider, credential, price tier, and adapter together. Routine tools are headless so an already docked sidebar keeps its layout. modify_selected_images updates jobs in the same batch and preserves Chinese-named backups."
+        "esse runs local parallel image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Inspect local folders before image-aware work, create one batch for many images, and keep each offering's provider, credential, price tier, and adapter together. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Routine tools are headless so an already docked sidebar keeps its layout. modify_selected_images updates jobs in the same batch and preserves Chinese-named backups."
     }
   );
 
@@ -71,7 +79,7 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "list_image_offerings", {
     title: "List local image offerings",
-    description: "Lists configured provider profile, credential tier, model, price, adapter, and concurrency combinations. The same model can appear more than once with different API contracts.",
+    description: "Lists configured offerings only when the user explicitly asks to inspect or override the default model. Do not use this list to choose a model on the user's behalf.",
     inputSchema: {},
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: { ui: { visibility: ["model", "app"] } }
@@ -125,15 +133,22 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "create_image_batch", {
     title: "Create local parallel image batch",
-    description: "Creates a local persistent batch from a folder, explicit image paths, or text-only generation count. Files are sent to the selected external provider and outputs are saved locally without overwriting sources.",
+    description: "Creates a local persistent batch using the configured default model when offeringId is omitted. Each jobs[] item has its own prompt and zero or more references. For existing Esse results such as 图1, use referenceImages with batchId + image so Esse resolves and uploads the real output file; never mention the label only in the prompt. Use top-level references only when every child intentionally shares them.",
     inputSchema: {
       title: z.string().max(120).optional(),
-      offeringId: z.string().min(1),
-      prompt: z.string().min(1).max(5000),
+      offeringId: z.string().min(1).optional(),
+      prompt: z.string().min(1).max(5000).optional(),
       perImagePrompts: z.record(z.string()).optional(),
       folderPath: z.string().optional(),
       recursive: z.boolean().default(false),
       imagePaths: z.array(z.string()).max(50).optional(),
+      referenceImagePaths: z.array(z.string()).max(20).optional(),
+      referenceImages: z.array(existingImageReferenceSchema).max(20).optional(),
+      jobs: z.array(z.object({
+        prompt: z.string().min(1).max(5000),
+        referenceImagePaths: z.array(z.string()).max(20).default([]),
+        referenceImages: z.array(existingImageReferenceSchema).max(20).default([])
+      })).min(1).max(50).optional(),
       maxImages: z.number().int().min(1).max(50).default(50),
       outputDirectory: z.string().optional(),
       count: z.number().int().min(1).max(50).optional(),
@@ -144,18 +159,35 @@ export function createLocalEsseServer(options: {
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async (input) => {
+    if (!input.prompt && !input.jobs?.length) throw new Error("请提供批次 prompt，或为每个 jobs[] 子任务分别提供 prompt。");
     let imagePaths = input.imagePaths || [];
     if (input.folderPath) {
       const scanned = await scanImageFolder({ folderPath: input.folderPath, recursive: input.recursive, maxImages: input.maxImages });
       imagePaths = [...imagePaths, ...scanned.files.map((file) => file.path)];
     }
     imagePaths = [...new Set(imagePaths)].slice(0, input.maxImages);
+    const settings = await options.settings.load();
+    const offeringId = input.offeringId || settings.defaultOfferingId;
+    if (!offeringId) throw new Error("请先在 Esse 设置中选择默认模型；未明确指定时不会由 Agent 代替你选择。");
+    const referenceImagePaths = [
+      ...(input.referenceImagePaths || []),
+      ...resolveExistingImagePaths(options.batches, input.referenceImages)
+    ];
+    const jobs = input.jobs?.map((job) => ({
+      prompt: job.prompt,
+      referenceImagePaths: [
+        ...(job.referenceImagePaths || []),
+        ...resolveExistingImagePaths(options.batches, job.referenceImages)
+      ]
+    }));
     const batch = await options.batches.create({
       title: input.title,
-      offeringId: input.offeringId,
-      prompt: input.prompt,
+      offeringId,
+      prompt: input.prompt || "各子任务使用独立 Prompt",
       perImagePrompts: input.perImagePrompts,
       imagePaths,
+      referenceImagePaths,
+      jobs,
       inputDirectory: input.folderPath,
       outputDirectory: input.outputDirectory,
       count: input.count,
@@ -164,6 +196,20 @@ export function createLocalEsseServer(options: {
       requestKey: input.requestKey
     });
     return batchResult(batch, `已创建 ${batch.total} 个本地任务，${batch.offering.concurrency} 路并发，结果目录：${batch.outputDirectory}`);
+  });
+
+  registerAppTool(server, "list_image_batches", {
+    title: "List recent local image batches",
+    description: "Lists recent Esse batch IDs, titles, image names, IDs, and statuses. Use this when the user refers to an earlier result such as 图1 but its batchId is not already known.",
+    inputSchema: { limit: z.number().int().min(1).max(30).default(10) },
+    annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    _meta: headlessToolMeta()
+  }, async ({ limit }) => {
+    const batches = options.batches.list(limit);
+    const text = batches.length
+      ? batches.map((batch) => `${batch.title} (${batch.id}): ${batch.jobs.map((job) => `${job.name}=${job.id} [${job.status}]`).join(", ")}`).join("\n")
+      : "No local image batches exist yet.";
+    return { structuredContent: { batches }, content: [{ type: "text" as const, text }] };
   });
 
   registerAppTool(server, "get_image_batch", {
@@ -184,7 +230,7 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "modify_selected_images", {
     title: "Modify selected local images",
-    description: "Modifies completed job IDs inside their existing batch. Each previous result is preserved as 图1-1, 图1-2, and so on. Reuses the original exact offering.",
+    description: "Modifies completed job IDs inside their existing batch. Each previous result is preserved as 图1-1, 图1-2, and so on. Uses offeringId when the user explicitly selects a model; otherwise reuses the batch offering.",
     inputSchema: {
       batchId: z.string().min(1),
       jobIds: z.array(z.string()).min(1).max(50),
@@ -212,6 +258,31 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     _meta: appOnly
   }, async ({ batchId }) => appResult(await uiState(options, "batches", batchId)));
 
+  registerAppTool(server, "ui_get_batch_state", {
+    title: "Get one local batch state",
+    description: "Widget-only lightweight refresh for the currently selected batch.",
+    inputSchema: { batchId: z.string().min(1) },
+    annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId }) => batchResult(options.batches.get(batchId)));
+
+  registerAppTool(server, "ui_list_image_batches", {
+    title: "Browse local image batches",
+    description: "Widget-only paginated batch library ordered by recent activity.",
+    inputSchema: {
+      page: z.number().int().min(1).default(1),
+      pageSize: z.number().int().min(4).max(20).default(8)
+    },
+    annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ page, pageSize }) => {
+    const result = options.batches.listPage(page, pageSize);
+    return {
+      structuredContent: result,
+      content: [{ type: "text", text: `Loaded batch page ${result.page} of ${result.totalPages}.` }]
+    };
+  });
+
   registerAppTool(server, "ui_save_provider_profile", {
     title: "Save local provider profile",
     description: "Widget-only provider settings. API keys go directly to local secure storage and are never returned.",
@@ -223,8 +294,7 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
       adapterId: z.enum(["tuzi-json-images", "openai-images"]),
       concurrency: z.number().int().min(1).max(12),
       apiKey: z.string().max(1000).optional(),
-      offerings: z.array(offeringInputSchema).min(1).max(50),
-      makeDefault: z.boolean().default(false)
+      offerings: z.array(offeringInputSchema).min(1).max(50)
     },
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
@@ -270,18 +340,40 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
   registerAppTool(server, "ui_get_image_preview", {
     title: "Get local image preview",
     description: "Widget-only image preview bytes. Image data is not exposed to the model.",
-    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), full: z.boolean().default(false) },
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), full: z.boolean().default(false), sourceIndex: z.number().int().min(0).max(19).optional() },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
-  }, async ({ batchId, jobId, full }) => {
+  }, async ({ batchId, jobId, full, sourceIndex }) => {
     const batch = options.batches.get(batchId);
     const job = batch.jobs.find((entry) => entry.id === jobId);
     const backup = batch.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === jobId);
-    const filePath = backup?.outputPath || job?.outputPath || job?.inputPath;
+    const sourcePaths = job ? previewSourcePaths(job) : backup?.referenceImagePaths || [];
+    const filePath = sourceIndex === undefined ? backup?.outputPath || job?.outputPath || job?.inputPath : sourcePaths[sourceIndex];
     if (!filePath) throw new Error("This image has no local file to preview.");
     const dataUrl = full ? await fileDataUrl(filePath).catch(() => options.thumbnailer.dataUrl(filePath, 1600)) : await options.thumbnailer.dataUrl(filePath, 640);
     if (!dataUrl) throw new Error("Could not create a local preview.");
-    return { structuredContent: { batchId, jobId, available: true }, content: [{ type: "text", text: "Local image preview ready." }], _meta: { dataUrl } };
+    return { structuredContent: { batchId, jobId, sourceIndex, available: true }, content: [{ type: "text", text: "Local image preview ready." }], _meta: { dataUrl } };
+  });
+
+  registerAppTool(server, "ui_save_image_as", {
+    title: "Save local image as",
+    description: "Widget-only native Save As dialog for a generated image or preserved version.",
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId, jobId }) => {
+    const batch = options.batches.get(batchId);
+    const job = batch.jobs.find((entry) => entry.id === jobId);
+    const backup = batch.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === jobId);
+    const filePath = backup?.outputPath || job?.outputPath;
+    if (!filePath) throw new Error("This image has no completed local file to save.");
+    const extension = path.extname(filePath) || ".png";
+    const suggestedName = `${backup?.name || job?.name || path.basename(filePath, extension)}${extension}`;
+    const savedPath = await (options.saveFileAs || saveFileAs)(filePath, suggestedName);
+    return {
+      structuredContent: { saved: Boolean(savedPath), canceled: !savedPath, path: savedPath },
+      content: [{ type: "text", text: savedPath ? `Image saved to ${savedPath}` : "Image save canceled." }]
+    };
   });
 
   registerAppTool(server, "ui_cancel_queued_jobs", {
@@ -323,7 +415,7 @@ async function uiState(options: Parameters<typeof createLocalEsseServer>[0], tab
     providers,
     offerings,
     defaultOfferingId: settings.defaultOfferingId,
-    batches: options.batches.list(30),
+    batches: options.batches.listRecent(8),
     activeBatch: batchId ? options.batches.get(batchId) : undefined,
     platform: process.platform,
     secureStorage: process.platform === "win32" ? "Windows DPAPI" : process.platform === "darwin" ? "macOS Keychain" : "Unavailable"
@@ -341,6 +433,30 @@ function widgetToolMeta(invoking: string, invoked: string) {
 
 function headlessToolMeta() {
   return { ui: { visibility: ["model", "app"] as Array<"model" | "app"> } };
+}
+
+function previewSourcePaths(job: JobRecord): string[] {
+  if (job.referenceImagePaths?.length) return [...new Set(job.referenceImagePaths)];
+  if (job.generationInputPaths?.length) return [...new Set(job.generationInputPaths)];
+  if (job.generationInputPath) return [job.generationInputPath];
+  if (job.inputPaths?.length) return [...new Set(job.inputPaths)];
+  return job.inputPath ? [job.inputPath] : [];
+}
+
+function resolveExistingImagePaths(
+  batches: BatchManager,
+  references: Array<{ batchId: string; image: string }> | undefined
+): string[] {
+  return (references || []).map((reference) => {
+    const batch = batches.get(reference.batchId);
+    const selector = reference.image.trim();
+    const job = batch.jobs.find((entry) => entry.id === selector || entry.name === selector);
+    const backup = batch.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === selector || entry.name === selector);
+    const outputPath = backup?.outputPath || job?.outputPath;
+    if (!job && !backup) throw new Error(`批次“${batch.title}”中找不到图片“${selector}”。请使用 list_image_batches 返回的准确名称或 ID。`);
+    if (!outputPath) throw new Error(`批次“${batch.title}”中的“${selector}”尚未生成完成，暂时不能作为参考图。`);
+    return outputPath;
+  });
 }
 
 function appResult(state: unknown) {

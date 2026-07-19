@@ -6,6 +6,11 @@ plugins/esse/bin/
 plugins/esse/mcp/server.cjs
 plugins/esse/mcp/widget.html
 release/
+inputs/
+outputs/
+docs/previews/
+HANDOFF.md
+design-qa.md
 .env
 .env.local
 *.log

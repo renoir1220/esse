@@ -13,10 +13,14 @@ export interface ResolvedOffering {
 export class ProviderRegistry {
   constructor(private readonly settings: SettingsStore, private readonly fetchImpl: FetchLike = fetch) {}
 
-  async listOfferings(): Promise<Array<OfferingSnapshot & { configured: boolean }>> {
+  async listOfferings(): Promise<Array<OfferingSnapshot & Pick<OfferingConfig, "supportsTextToImage" | "supportsImageToImage" | "sizes" | "qualities"> & { configured: boolean }>> {
     const profiles = await this.settings.listProfiles();
     return profiles.flatMap((profile) => profile.offerings.map((offering) => ({
       ...snapshotFor(profile, offering),
+      supportsTextToImage: offering.supportsTextToImage,
+      supportsImageToImage: offering.supportsImageToImage,
+      sizes: [...offering.sizes],
+      qualities: [...offering.qualities],
       configured: profile.hasApiKey
     })));
   }

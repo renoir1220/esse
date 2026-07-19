@@ -8,17 +8,20 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "selftest": "node mcp/server.cjs --self-test",
     "smoke:stdio": "node scripts/smoke-stdio.mjs",
     "preview": "node scripts/preview-server.mjs",
-    "package:releases": "node scripts/package-releases.mjs",
+    "package:releases": "npm run build && node scripts/package-releases.mjs",
+    "verify:release": "node scripts/verify-release.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/**/*.test.ts",
-    "check": "npm run typecheck && npm test && npm run build && npm run smoke:stdio",
+    "check": "npm run typecheck && npm test && npm run build && npm run selftest && npm run smoke:stdio && npm run verify:release",
     "start:stdio": "node mcp/server.cjs"
   },
   "dependencies": {
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.20.2",
+    "@phosphor-icons/react": "^2.1.10",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zod": "^3.25.76"

@@ -1,4 +1,4 @@
 interface:
   display_name: "esse"
-  short_description: "Inspect local images and run parallel generation batches"
-  default_prompt: "Use $batch-generate-images with esse to add vases to every flower photo in a local folder."
+  short_description: "Per-job prompts and real refs; default model; submit then stop"
+  default_prompt: "Use $batch-generate-images with esse. Use jobs with each child's prompt and references; attach prior Esse results through referenceImages with batchId and image, omit offeringId unless I name a model, and do not poll after a successful submission."

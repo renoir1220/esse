@@ -22,7 +22,10 @@ try {
   const names = tools.tools.map((tool) => tool.name);
   assert(names.includes("open_esse"));
   assert(names.includes("create_image_batch"));
+  assert(names.includes("list_image_batches"));
+  assert(names.includes("ui_get_batch_state"));
   assert(names.includes("ui_save_provider_profile"));
+  assert(names.includes("ui_save_image_as"));
   const resources = await client.listResources();
   assert(resources.resources.some((resource) => resource.uri === "ui://esse/local-v1.html"));
   const opened = await client.callTool({ name: "open_esse", arguments: { tab: "settings" } });

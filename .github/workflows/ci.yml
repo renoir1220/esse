@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: plugins/esse
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/esse/package-lock.json
+      - run: npm ci
+      - run: npm run check
+      - name: Parse Windows installer
+        shell: pwsh
+        working-directory: .
+        run: |
+          $null = [scriptblock]::Create((Get-Content -Raw -Encoding UTF8 .\install.ps1))
+      - name: Parse macOS installer
+        shell: bash
+        working-directory: .
+        run: bash -n ./install.sh

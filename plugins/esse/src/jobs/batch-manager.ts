@@ -15,6 +15,8 @@ export interface CreateBatchInput {
   offeringId: string;
   prompt: string;
   imagePaths?: string[];
+  referenceImagePaths?: string[];
+  jobs?: Array<{ prompt: string; referenceImagePaths?: string[] }>;
   inputDirectory?: string;
   outputDirectory?: string;
   count?: number;
@@ -85,10 +87,13 @@ export class BatchManager {
     const resolved = await this.registry.resolveOffering(input.offeringId);
     if (!resolved.profile.hasApiKey) throw new Error(`Provider ${resolved.profile.displayName} · ${resolved.profile.tierName} has no API key.`);
     const imagePaths = (input.imagePaths || []).map((value) => path.resolve(value));
-    const count = imagePaths.length || Math.max(1, Math.trunc(input.count || 1));
+    const referenceImagePaths = [...new Set((input.referenceImagePaths || []).map((value) => path.resolve(value)))];
+    const jobInputs = (input.jobs || []).slice(0, 50);
+    const count = jobInputs.length || imagePaths.length || Math.max(1, Math.trunc(input.count || 1));
     if (count > 50) throw new Error("A batch can contain at most 50 jobs.");
-    if (imagePaths.length && !resolved.offering.supportsImageToImage) throw new Error(`${resolved.offering.displayName} does not support image editing.`);
-    if (!imagePaths.length && !resolved.offering.supportsTextToImage) throw new Error(`${resolved.offering.displayName} does not support text-to-image generation.`);
+    const hasReferenceImages = Boolean(imagePaths.length || referenceImagePaths.length || jobInputs.some((job) => job.referenceImagePaths?.length));
+    if (hasReferenceImages && !resolved.offering.supportsImageToImage) throw new Error(`${resolved.offering.displayName} does not support image editing.`);
+    if (!hasReferenceImages && !resolved.offering.supportsTextToImage) throw new Error(`${resolved.offering.displayName} does not support text-to-image generation.`);
 
     const id = randomUUID();
     const now = new Date().toISOString();
@@ -98,12 +103,17 @@ export class BatchManager {
       const inputPath = imagePaths[index];
       const sourceName = inputPath ? path.basename(inputPath) : `generation-${index + 1}.png`;
       const name = `图${index + 1}`;
+      const jobReferencePaths = (jobInputs[index]?.referenceImagePaths || []).map((value) => path.resolve(value));
+      const inputPaths = [...new Set([...(inputPath ? [inputPath] : []), ...referenceImagePaths, ...jobReferencePaths])];
       return {
         id: randomUUID(),
         index,
         name,
-        inputPath,
-        prompt: promptFor(input, inputPath, sourceName, index),
+        inputPath: inputPaths[0],
+        inputPaths: inputPaths.length ? inputPaths : undefined,
+        referenceImagePaths: inputPaths.length ? inputPaths : undefined,
+        offering: resolved.snapshot,
+        prompt: jobInputs[index]?.prompt.trim() || promptFor(input, inputPath, sourceName, index),
         status: "queued",
         progress: 0,
         attempt: 1,
@@ -142,20 +152,31 @@ export class BatchManager {
   }): Promise<BatchSnapshot> {
     const source = this.requireBatch(options.batchId);
     if (options.requestKey && source.modificationKeys?.[options.requestKey]) return snapshot(source);
-    if (options.offeringId && options.offeringId !== source.offering.id) throw new Error("同批次修改必须沿用原来的 Provider Offering。");
     const selected = source.jobs.filter((job) => options.jobIds.includes(job.id));
     if (!selected.length) throw new Error("No matching image jobs were selected.");
     if (selected.some((job) => job.status !== "succeeded" || !job.outputPath)) throw new Error("Only completed images can be modified.");
-    const resolved = await this.registry.resolveOffering(source.offering.id);
+    const resolved = await this.registry.resolveOffering(options.offeringId || source.offering.id);
+    if (!resolved.profile.hasApiKey) throw new Error(`Provider ${resolved.profile.displayName} · ${resolved.profile.tierName} has no API key.`);
+    if (!resolved.offering.supportsImageToImage) throw new Error(`${resolved.offering.displayName} does not support image editing.`);
     const now = new Date().toISOString();
     for (const job of selected) {
       const version = (job.backups?.length || 0) + 1;
       const backupName = `${job.name}-${version}`;
       const currentOutput = job.outputPath!;
       const backupPath = await backupImageVersion({ sourcePath: currentOutput, outputDirectory: source.outputDirectory, displayName: backupName });
-      job.backups = [...(job.backups || []), { id: randomUUID(), name: backupName, outputPath: backupPath, prompt: job.prompt, createdAt: now }];
+      job.backups = [...(job.backups || []), {
+        id: randomUUID(),
+        name: backupName,
+        outputPath: backupPath,
+        prompt: job.prompt,
+        referenceImagePaths: job.referenceImagePaths || job.inputPaths || (job.inputPath ? [job.inputPath] : undefined),
+        offering: job.offering || source.offering,
+        createdAt: now
+      }];
       Object.assign(job, {
         generationInputPath: currentOutput,
+        referenceImagePaths: [backupPath],
+        offering: resolved.snapshot,
         prompt: options.instructions,
         status: "queued",
         progress: 0,
@@ -185,6 +206,27 @@ export class BatchManager {
       .map(snapshot);
   }
 
+  listRecent(limit = 20): BatchSnapshot[] {
+    return this.sortedByRecentActivity()
+      .slice(0, Math.max(1, Math.min(100, limit)))
+      .map(snapshot);
+  }
+
+  listPage(page = 1, pageSize = 8): { batches: BatchSnapshot[]; page: number; pageSize: number; total: number; totalPages: number } {
+    const safePageSize = Math.max(1, Math.min(20, Math.trunc(pageSize)));
+    const total = this.batches.size;
+    const totalPages = Math.max(1, Math.ceil(total / safePageSize));
+    const safePage = Math.max(1, Math.min(totalPages, Math.trunc(page)));
+    const offset = (safePage - 1) * safePageSize;
+    return {
+      batches: this.sortedByRecentActivity().slice(offset, offset + safePageSize).map(snapshot),
+      page: safePage,
+      pageSize: safePageSize,
+      total,
+      totalPages
+    };
+  }
+
   get(id: string): BatchSnapshot {
     return snapshot(this.requireBatch(id));
   }
@@ -203,7 +245,6 @@ export class BatchManager {
 
   async retry(batchId: string, jobIds: string[], allowUnknownCharge = false): Promise<BatchSnapshot> {
     const batch = this.requireBatch(batchId);
-    const resolved = await this.registry.resolveOffering(batch.offering.id);
     for (const job of batch.jobs) {
       if (!jobIds.includes(job.id) || job.status !== "failed" || !job.retryable) continue;
       if (job.chargeState === "unknown" && !allowUnknownCharge) continue;
@@ -218,6 +259,7 @@ export class BatchManager {
         durationMs: undefined,
         attempt: job.attempt + 1
       });
+      const resolved = await this.registry.resolveOffering(job.offering?.id || batch.offering.id);
       this.schedule(batch, job, resolved);
     }
     batch.updatedAt = new Date().toISOString();
@@ -232,6 +274,7 @@ export class BatchManager {
     for (const job of batch.jobs) {
       if (job.outputPath) managedPaths.add(job.outputPath);
       if (job.generationInputPath) managedPaths.add(job.generationInputPath);
+      for (const filePath of job.generationInputPaths || []) managedPaths.add(filePath);
       for (const backup of job.backups || []) managedPaths.add(backup.outputPath);
     }
     for (const filePath of managedPaths) {
@@ -262,8 +305,8 @@ export class BatchManager {
     let autoRetry = false;
     try {
       const adapter = await this.registry.adapterFor(resolved.profile);
-      const generationInput = job.generationInputPath || job.inputPath;
-      const images = generationInput ? [await imageFileToDataUrl(generationInput)] : [];
+      const generationInputs = generationInputsFor(job);
+      const images = await Promise.all(generationInputs.map((filePath) => imageFileToDataUrl(filePath)));
       const runtime = this.runtimeOptions.get(batch.id) || {};
       const result = await adapter.generate({
         model: resolved.offering.providerModelId,
@@ -273,16 +316,19 @@ export class BatchManager {
         quality: runtime.quality,
         responseFormat: "url"
       });
-      const previousOutput = job.generationInputPath;
+      const previousOutputs = job.generationInputPaths?.length ? job.generationInputPaths : job.generationInputPath ? [job.generationInputPath] : [];
       job.outputPath = await saveGeneratedImage({ result, outputDirectory: batch.outputDirectory, sourceName: job.name });
-      if (previousOutput) await rm(previousOutput, { force: true }).catch(() => undefined);
+      for (const previousOutput of previousOutputs) {
+        if (isInside(batch.outputDirectory, previousOutput)) await rm(previousOutput, { force: true }).catch(() => undefined);
+      }
       Object.assign(job, {
         status: "succeeded",
         progress: 100,
         retryable: false,
         chargeState: "charged",
         providerRequestId: result.providerRequestId,
-        generationInputPath: undefined
+        generationInputPath: undefined,
+        generationInputPaths: undefined
       });
     } catch (error) {
       const providerError = error instanceof ProviderError ? error as ProviderRequestError : undefined;
@@ -332,6 +378,13 @@ export class BatchManager {
     return batch;
   }
 
+  private sortedByRecentActivity(): BatchRecord[] {
+    return [...this.batches.values()].sort((a, b) => {
+      const activityOrder = b.updatedAt.localeCompare(a.updatedAt);
+      return activityOrder || b.createdAt.localeCompare(a.createdAt);
+    });
+  }
+
   private persist(batch: BatchRecord): Promise<void> {
     const previous = this.saveChains.get(batch.id) || Promise.resolve();
     const next = previous.catch(() => undefined).then(() => this.store.save(batch));
@@ -368,6 +421,13 @@ function deriveStatus(counts: { queued: number; running: number; succeeded: numb
   if (counts.failed === total) return "failed";
   if (counts.canceled === total) return "canceled";
   return "partial";
+}
+
+function generationInputsFor(job: JobRecord): string[] {
+  if (job.generationInputPaths?.length) return [...new Set(job.generationInputPaths)];
+  if (job.generationInputPath) return [job.generationInputPath];
+  if (job.inputPaths?.length) return [...new Set(job.inputPaths)];
+  return job.inputPath ? [job.inputPath] : [];
 }
 
 function promptFor(input: CreateBatchInput, inputPath: string | undefined, name: string, index: number): string {

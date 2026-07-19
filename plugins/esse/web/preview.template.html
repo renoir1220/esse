@@ -5,18 +5,37 @@
 <div id="root"></div>
 <script>
 const now = new Date().toISOString();
+const fixture = (url) => `/fixture-image?url=${encodeURIComponent(url)}`;
 const offering = { id:"offer-gpt-default", providerProfileId:"provider-rabbit-default", providerName:"兔子", tierName:"default", adapterId:"tuzi-json-images", canonicalModelId:"gpt-image-2", providerModelId:"gpt-image-2", displayName:"GPT-Image 2", concurrency:3, price:{mode:"per_request",amount:0.035,currency:"CNY",observedAt:"2026-07-18"} };
+const offering2 = { id:"offer-nano-default", providerProfileId:"provider-rabbit-default", providerName:"兔子", tierName:"default", adapterId:"tuzi-json-images", canonicalModelId:"nano-banana-2", providerModelId:"nano-banana-2", displayName:"Nano Banana 2", concurrency:3, price:{mode:"per_request",amount:0.286,currency:"CNY",observedAt:"2026-07-18"} };
 const allJobs = [
-  {id:"job-1",index:0,name:"图1",inputPath:"C:\\Photos\\Flowers\\rose.jpg",outputPath:"C:\\Photos\\Flowers\\esse Output\\rose-generated.png",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"succeeded",progress:100,attempt:1,retryable:false,chargeState:"charged",durationMs:30200,previewUrl:"https://images.unsplash.com/photo-1490750967868-88aa4486c946?auto=format&fit=crop&w=900&q=80"},
-  {id:"job-2",index:1,name:"图2",inputPath:"C:\\Photos\\Flowers\\tulip.jpg",outputPath:"C:\\Photos\\Flowers\\esse Output\\tulip-generated.png",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"succeeded",progress:100,attempt:1,retryable:false,chargeState:"charged",durationMs:34100,previewUrl:"https://images.unsplash.com/photo-1520763185298-1b434c919102?auto=format&fit=crop&w=900&q=80"},
-  {id:"job-3",index:2,name:"图3",inputPath:"C:\\Photos\\Flowers\\daisy.jpg",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"running",progress:15,attempt:1,retryable:false,chargeState:"unknown"},
-  {id:"job-4",index:3,name:"图4",inputPath:"C:\\Photos\\Flowers\\peony.jpg",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"queued",progress:0,attempt:1,retryable:false,chargeState:"not_charged"}
+  {id:"job-1",index:0,name:"图1",inputPath:"C:\\Photos\\Flowers\\rose.jpg",outputPath:"C:\\Photos\\Flowers\\esse Output\\rose-generated.png",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"succeeded",progress:100,attempt:1,retryable:false,chargeState:"charged",durationMs:30200,previewUrl:fixture("https://images.unsplash.com/photo-1490750967868-88aa4486c946?auto=format&fit=crop&w=900&q=80")},
+  {id:"job-2",index:1,name:"图2",inputPath:"C:\\Photos\\Flowers\\tulip.jpg",outputPath:"C:\\Photos\\Flowers\\esse Output\\tulip-generated.png",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"succeeded",progress:100,attempt:1,retryable:false,chargeState:"charged",durationMs:34100,previewUrl:fixture("https://images.unsplash.com/photo-1520763185298-1b434c919102?auto=format&fit=crop&w=900&q=80")},
+  {id:"job-3",index:2,name:"图3",inputPath:"C:\\Photos\\Flowers\\daisy.jpg",outputPath:"C:\\Photos\\Flowers\\esse Output\\daisy-generated.png",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"succeeded",progress:100,attempt:1,retryable:false,chargeState:"charged",durationMs:28800,previewUrl:fixture("https://images.unsplash.com/photo-1455659817273-f96807779a8a?auto=format&fit=crop&w=900&q=80")},
+  {id:"job-4",index:3,name:"图4",inputPath:"C:\\Photos\\Flowers\\peony.jpg",outputPath:"C:\\Photos\\Flowers\\esse Output\\peony-generated.png",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",status:"succeeded",progress:100,attempt:1,retryable:false,chargeState:"charged",durationMs:31900,previewUrl:fixture("https://images.unsplash.com/photo-1497250681960-ef046c08a56e?auto=format&fit=crop&w=900&q=80")}
 ];
-const singlePreview = new URLSearchParams(location.search).get("mode") === "single";
+const previewMode = new URLSearchParams(location.search).get("mode");
+const singlePreview = previewMode === "single";
+if (previewMode === "processing") Object.assign(allJobs[0], {
+  inputPath:"C:\\Photos\\References\\reference-1.jpg",
+  inputPaths:["C:\\Photos\\References\\reference-1.jpg","C:\\Photos\\References\\reference-2.jpg","C:\\Photos\\References\\reference-3.jpg","C:\\Photos\\References\\reference-4.jpg"],
+  outputPath:undefined,status:"running",progress:43,chargeState:"unknown",durationMs:undefined,
+  referencePreviewUrls:[allJobs[0].previewUrl,allJobs[1].previewUrl,allJobs[2].previewUrl,allJobs[3].previewUrl]
+});
 const jobs = singlePreview ? allJobs.slice(0, 1) : allJobs;
-const batch = {id:"batch-preview",title:singlePreview?"向日葵商品图":"鲜花照片加花瓶",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",inputDirectory:"C:\\Photos\\Flowers",outputDirectory:"C:\\Photos\\Flowers\\esse Output\\batch-preview",offering,jobs,status:singlePreview?"completed":"running",total:jobs.length,queued:singlePreview?0:1,running:singlePreview?0:1,succeeded:singlePreview?1:2,failed:0,canceled:0,estimatedCost:singlePreview ? .035 : .14,currency:"CNY",createdAt:now,updatedAt:now};
-const profile = {id:"provider-rabbit-default",displayName:"兔子",tierName:"default",baseUrl:"https://api.tu-zi.com",adapterId:"tuzi-json-images",concurrency:3,hasApiKey:true,offerings:[{id:offering.id,canonicalModelId:offering.canonicalModelId,providerModelId:offering.providerModelId,displayName:offering.displayName,price:offering.price,supportsTextToImage:true,supportsImageToImage:true,sizes:["auto","1024x1024"],qualities:["auto","high"]}],createdAt:now,updatedAt:now};
-window.__ESSE_PREVIEW__={view:{tab:location.hash==="#settings"?"settings":"batches",batchId:batch.id},providers:[profile],offerings:[{...profile.offerings[0],providerProfileId:profile.id,providerName:profile.displayName,tierName:profile.tierName,adapterId:profile.adapterId,concurrency:3,configured:true}],defaultOfferingId:offering.id,batches:[batch],activeBatch:batch,platform:"win32",secureStorage:"Windows DPAPI"};
+const processingPreview = previewMode === "processing";
+const batch = {id:"batch-preview",title:singlePreview?"向日葵商品图":"鲜花照片加花瓶",prompt:"保留鲜花和构图，自然加入白色陶瓷花瓶",inputDirectory:"C:\\Photos\\Flowers",outputDirectory:"C:\\Photos\\Flowers\\esse Output\\batch-preview",offering,jobs,status:processingPreview?"running":"completed",total:jobs.length,queued:0,running:processingPreview?1:0,succeeded:processingPreview?jobs.length-1:jobs.length,failed:0,canceled:0,estimatedCost:singlePreview ? .035 : .14,currency:"CNY",createdAt:now,updatedAt:now};
+const libraryTitles = ["德文短毛猫风格组", "夏日饮品海报", "白色家居产品图", "城市夜景概念稿", "咖啡包装探索", "秋季服装画册", "植物标本系列", "运动鞋场景图", "极简腕表广告", "酒店空间氛围", "儿童绘本角色", "海边旅行封面"];
+const libraryBatches = libraryTitles.map((title, batchIndex) => {
+  const count = batchIndex % 4 + 1;
+  const historyJobs = allJobs.slice(0, count).map((job, jobIndex) => ({...job,id:`history-${batchIndex}-${jobIndex}`,name:`图${jobIndex + 1}`,status:"succeeded",progress:100,outputPath:`C:\\Photos\\History\\${batchIndex + 1}-${jobIndex + 1}.png`}));
+  const updatedAt = new Date(Date.now() - (batchIndex + 1) * 86400000 - batchIndex * 3600000).toISOString();
+  return {...batch,id:`batch-history-${batchIndex + 1}`,title,jobs:historyJobs,status:"completed",total:count,queued:0,running:0,succeeded:count,failed:0,canceled:0,createdAt:updatedAt,updatedAt,estimatedCost:Number((count * .035).toFixed(3))};
+});
+const previewBatches = [batch, ...libraryBatches];
+const profileOfferings = [offering,offering2].map((entry) => ({id:entry.id,canonicalModelId:entry.canonicalModelId,providerModelId:entry.providerModelId,displayName:entry.displayName,price:entry.price,supportsTextToImage:true,supportsImageToImage:true,sizes:["auto","1024x1024"],qualities:["auto","high"]}));
+const profile = {id:"provider-rabbit-default",displayName:"兔子",tierName:"default",baseUrl:"https://api.tu-zi.com",adapterId:"tuzi-json-images",concurrency:3,hasApiKey:true,offerings:profileOfferings,createdAt:now,updatedAt:now};
+window.__ESSE_PREVIEW__={view:{tab:location.hash==="#settings"?"settings":"batches",batchId:batch.id},providers:[profile],offerings:profileOfferings.map((entry) => ({...entry,providerProfileId:profile.id,providerName:profile.displayName,tierName:profile.tierName,adapterId:profile.adapterId,concurrency:3,configured:true})),defaultOfferingId:offering.id,batches:previewBatches,activeBatch:batch,platform:"win32",secureStorage:"Windows DPAPI"};
 </script>
 <script type="module">/*__WIDGET_JS__*/</script>
 </body>
