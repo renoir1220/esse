@@ -3,7 +3,7 @@ import path from "node:path";
 import { mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import type { DataPaths } from "../paths.js";
 import { imageFileToDataUrl } from "../files/image-files.js";
-import { backupImageVersion, saveGeneratedImage } from "../files/output-files.js";
+import { backupImageVersion, importGeneratedImage, saveGeneratedImage } from "../files/output-files.js";
 import type { BatchRecord, BatchSnapshot, BatchStatus, JobRecord, ProviderRequestError } from "../types.js";
 import { ProviderRequestError as ProviderError } from "../types.js";
 import type { BatchStore } from "../storage/batch-store.js";
@@ -35,6 +35,7 @@ export class BatchManager {
   private readonly semaphores = new Map<string, Semaphore>();
   private readonly runtimeOptions = new Map<string, RuntimeJobOptions>();
   private readonly saveChains = new Map<string, Promise<void>>();
+  private readonly agentCompletionChains = new Map<string, Promise<BatchSnapshot>>();
 
   constructor(
     private readonly store: BatchStore,
@@ -52,21 +53,27 @@ export class BatchManager {
           changed = true;
         }
         if (job.status === "running") {
+          const agentGenerated = (job.offering || batch.offering).adapterId === "agent-generation";
           Object.assign(job, {
             status: "failed",
             progress: 100,
-            retryable: true,
+            retryable: !agentGenerated,
             chargeState: "unknown",
-            error: "The local plugin stopped while this provider request was running. Review billing before retrying.",
+            error: agentGenerated
+              ? "当前 Agent 在返回图片前中断了。请重新向 Agent 发起这项生成任务。"
+              : "The local plugin stopped while this provider request was running. Review billing before retrying.",
             finishedAt: new Date().toISOString()
           });
           changed = true;
         } else if (job.status === "queued") {
+          const agentGenerated = (job.offering || batch.offering).adapterId === "agent-generation";
           Object.assign(job, {
             status: "canceled",
             progress: 0,
             chargeState: "not_charged",
-            error: "Canceled because the local plugin restarted before this job began.",
+            error: agentGenerated
+              ? "本地插件重启前，当前 Agent 尚未开始这项生成任务。"
+              : "Canceled because the local plugin restarted before this job began.",
             finishedAt: new Date().toISOString()
           });
           changed = true;
@@ -85,7 +92,7 @@ export class BatchManager {
     const existingId = input.requestKey ? this.requestKeys.get(input.requestKey) : undefined;
     if (existingId) return this.get(existingId);
     const resolved = await this.registry.resolveOffering(input.offeringId);
-    if (!resolved.profile.hasApiKey) throw new Error(`Provider ${resolved.profile.displayName} · ${resolved.profile.tierName} has no API key.`);
+    if (!isAgentGeneration(resolved) && !resolved.profile.hasApiKey) throw new Error(`Provider ${resolved.profile.displayName} · ${resolved.profile.tierName} has no API key.`);
     const imagePaths = (input.imagePaths || []).map((value) => path.resolve(value));
     const referenceImagePaths = [...new Set((input.referenceImagePaths || []).map((value) => path.resolve(value)))];
     const jobInputs = (input.jobs || []).slice(0, 50);
@@ -138,7 +145,7 @@ export class BatchManager {
     if (input.requestKey) this.requestKeys.set(input.requestKey, id);
     this.runtimeOptions.set(id, { size: input.size, quality: input.quality });
     await this.store.save(batch);
-    for (const job of jobs) this.schedule(batch, job, resolved);
+    if (!isAgentGeneration(resolved)) for (const job of jobs) this.schedule(batch, job, resolved);
     return snapshot(batch);
   }
 
@@ -156,7 +163,7 @@ export class BatchManager {
     if (!selected.length) throw new Error("No matching image jobs were selected.");
     if (selected.some((job) => job.status !== "succeeded" || !job.outputPath)) throw new Error("Only completed images can be modified.");
     const resolved = await this.registry.resolveOffering(options.offeringId || source.offering.id);
-    if (!resolved.profile.hasApiKey) throw new Error(`Provider ${resolved.profile.displayName} · ${resolved.profile.tierName} has no API key.`);
+    if (!isAgentGeneration(resolved) && !resolved.profile.hasApiKey) throw new Error(`Provider ${resolved.profile.displayName} · ${resolved.profile.tierName} has no API key.`);
     if (!resolved.offering.supportsImageToImage) throw new Error(`${resolved.offering.displayName} does not support image editing.`);
     const now = new Date().toISOString();
     for (const job of selected) {
@@ -195,8 +202,57 @@ export class BatchManager {
     }
     source.updatedAt = now;
     await this.persist(source);
-    for (const job of selected) this.schedule(source, job, resolved);
+    if (!isAgentGeneration(resolved)) for (const job of selected) this.schedule(source, job, resolved);
     return snapshot(source);
+  }
+
+  async startAgentJob(batchId: string, jobId: string): Promise<BatchSnapshot> {
+    const batch = this.requireBatch(batchId);
+    const job = this.requireAgentJob(batch, jobId);
+    if (job.status === "succeeded") return snapshot(batch);
+    if (job.status === "failed" || job.status === "canceled") throw new Error(`${job.name} is already ${job.status}.`);
+    if (job.status === "queued") {
+      Object.assign(job, {
+        status: "running",
+        progress: 15,
+        chargeState: "unknown",
+        startedAt: new Date().toISOString(),
+        error: undefined
+      });
+      batch.updatedAt = new Date().toISOString();
+      await this.persist(batch);
+    }
+    return snapshot(batch);
+  }
+
+  completeAgentJob(batchId: string, jobId: string, imagePath: string): Promise<BatchSnapshot> {
+    const key = `${batchId}:${jobId}`;
+    const existing = this.agentCompletionChains.get(key);
+    if (existing) return existing;
+    const operation = this.completeAgentJobOnce(batchId, jobId, imagePath).finally(() => this.agentCompletionChains.delete(key));
+    this.agentCompletionChains.set(key, operation);
+    return operation;
+  }
+
+  async failAgentJob(batchId: string, jobId: string, error: string): Promise<BatchSnapshot> {
+    const batch = this.requireBatch(batchId);
+    const job = this.requireAgentJob(batch, jobId);
+    if (job.status === "failed") return snapshot(batch);
+    if (job.status === "succeeded" || job.status === "canceled") throw new Error(`${job.name} is already ${job.status}.`);
+    const finished = Date.now();
+    const started = job.startedAt ? new Date(job.startedAt).getTime() : finished;
+    Object.assign(job, {
+      status: "failed",
+      progress: 100,
+      retryable: false,
+      chargeState: "unknown",
+      error: error.trim() || "当前 Agent 无法生成这张图片。",
+      finishedAt: new Date(finished).toISOString(),
+      durationMs: Math.max(0, finished - started)
+    });
+    batch.updatedAt = new Date().toISOString();
+    await this.persist(batch);
+    return snapshot(batch);
   }
 
   list(limit = 20): BatchSnapshot[] {
@@ -260,7 +316,7 @@ export class BatchManager {
         attempt: job.attempt + 1
       });
       const resolved = await this.registry.resolveOffering(job.offering?.id || batch.offering.id);
-      this.schedule(batch, job, resolved);
+      if (!isAgentGeneration(resolved)) this.schedule(batch, job, resolved);
     }
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
@@ -287,6 +343,57 @@ export class BatchManager {
     if (batch.requestKey) this.requestKeys.delete(batch.requestKey);
     this.runtimeOptions.delete(batch.id);
     this.saveChains.delete(batch.id);
+  }
+
+  private async completeAgentJobOnce(batchId: string, jobId: string, imagePath: string): Promise<BatchSnapshot> {
+    const batch = this.requireBatch(batchId);
+    const job = this.requireAgentJob(batch, jobId);
+    if (job.status === "succeeded") return snapshot(batch);
+    if (job.status === "failed" || job.status === "canceled") throw new Error(`${job.name} is already ${job.status}.`);
+    const started = job.startedAt ? new Date(job.startedAt).getTime() : Date.now();
+    Object.assign(job, {
+      status: "running",
+      progress: 90,
+      chargeState: "unknown",
+      startedAt: job.startedAt || new Date(started).toISOString(),
+      error: undefined
+    });
+    batch.updatedAt = new Date().toISOString();
+    await this.persist(batch);
+    try {
+      const previousOutputs = job.generationInputPaths?.length ? job.generationInputPaths : job.generationInputPath ? [job.generationInputPath] : [];
+      job.outputPath = await importGeneratedImage({ sourcePath: imagePath, outputDirectory: batch.outputDirectory, sourceName: job.name });
+      for (const previousOutput of previousOutputs) {
+        if (isInside(batch.outputDirectory, previousOutput)) await rm(previousOutput, { force: true }).catch(() => undefined);
+      }
+      const finished = Date.now();
+      Object.assign(job, {
+        status: "succeeded",
+        progress: 100,
+        retryable: false,
+        chargeState: "charged",
+        generationInputPath: undefined,
+        generationInputPaths: undefined,
+        finishedAt: new Date(finished).toISOString(),
+        durationMs: Math.max(0, finished - started)
+      });
+    } catch (error) {
+      const finished = Date.now();
+      Object.assign(job, {
+        status: "failed",
+        progress: 100,
+        retryable: false,
+        chargeState: "unknown",
+        error: error instanceof Error ? error.message : "Could not import the Agent-generated image.",
+        finishedAt: new Date(finished).toISOString(),
+        durationMs: Math.max(0, finished - started)
+      });
+      throw error;
+    } finally {
+      batch.updatedAt = new Date().toISOString();
+      await this.persist(batch);
+    }
+    return snapshot(batch);
   }
 
   private schedule(batch: BatchRecord, job: JobRecord, resolved: ResolvedOffering): void {
@@ -378,6 +485,15 @@ export class BatchManager {
     return batch;
   }
 
+  private requireAgentJob(batch: BatchRecord, jobId: string): JobRecord {
+    const job = batch.jobs.find((entry) => entry.id === jobId);
+    if (!job) throw new Error(`Unknown image job: ${jobId}`);
+    if ((job.offering || batch.offering).adapterId !== "agent-generation") {
+      throw new Error(`${job.name} is not configured for Codex generation.`);
+    }
+    return job;
+  }
+
   private sortedByRecentActivity(): BatchRecord[] {
     return [...this.batches.values()].sort((a, b) => {
       const activityOrder = b.updatedAt.localeCompare(a.updatedAt);
@@ -428,6 +544,10 @@ function generationInputsFor(job: JobRecord): string[] {
   if (job.generationInputPath) return [job.generationInputPath];
   if (job.inputPaths?.length) return [...new Set(job.inputPaths)];
   return job.inputPath ? [job.inputPath] : [];
+}
+
+function isAgentGeneration(resolved: ResolvedOffering): boolean {
+  return resolved.profile.adapterId === "agent-generation";
 }
 
 function promptFor(input: CreateBatchInput, inputPath: string | undefined, name: string, index: number): string {

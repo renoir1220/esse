@@ -1,4 +1,4 @@
 interface:
   display_name: "esse"
-  short_description: "Per-job prompts and real refs; default model; submit then stop"
-  default_prompt: "Use $batch-generate-images with esse. Use jobs with each child's prompt and references; attach prior Esse results through referenceImages with batchId and image, omit offeringId unless I name a model, and do not poll after a successful submission."
+  short_description: "使用默认模型批量生图，保留独立提示词、参考图并回传 Agent 结果"
+  default_prompt: "Use $batch-generate-images with Esse to create image jobs using my configured default model and return every Agent-generated result to the workbench."

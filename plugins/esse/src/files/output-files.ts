@@ -31,6 +31,24 @@ export async function saveGeneratedImage(options: {
   return writeUnique(options.outputDirectory, `${baseName}-generated`, extension, bytes);
 }
 
+export async function importGeneratedImage(options: {
+  sourcePath: string;
+  outputDirectory: string;
+  sourceName: string;
+}): Promise<string> {
+  const sourcePath = path.resolve(options.sourcePath);
+  const fileStat = await stat(sourcePath);
+  if (!fileStat.isFile()) throw new Error("Agent output is not a file.");
+  if (fileStat.size > 60 * 1024 * 1024) throw new Error("Agent output exceeds the 60 MB image limit.");
+  const bytes = await readFile(sourcePath);
+  if (!looksLikeImage(bytes)) throw new Error("Agent output is not a recognized image file.");
+  await mkdir(options.outputDirectory, { recursive: true });
+  const mime = mimeForBytes(bytes, path.extname(sourcePath));
+  const extension = extensionForMime(mime, bytes);
+  const baseName = sanitizeBaseName(path.parse(options.sourceName).name || "generated");
+  return writeUnique(options.outputDirectory, `${baseName}-generated`, extension, bytes);
+}
+
 export async function fileDataUrl(filePath: string, maxBytes = 30 * 1024 * 1024): Promise<string> {
   const fileStat = await stat(filePath);
   if (fileStat.size > maxBytes) throw new Error("Image is too large to preview in the widget.");

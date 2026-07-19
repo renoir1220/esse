@@ -1,4 +1,12 @@
-import type { AdapterId, OfferingConfig, OfferingSnapshot, ProviderAdapter, ProviderProfile } from "../types.js";
+import {
+  CODEX_GENERATION_OFFERING_ID,
+  CODEX_GENERATION_PROFILE_ID,
+  type AdapterId,
+  type OfferingConfig,
+  type OfferingSnapshot,
+  type ProviderAdapter,
+  type ProviderProfile
+} from "../types.js";
 import type { SettingsStore } from "../storage/settings-store.js";
 import { OpenAiImagesAdapter } from "./openai-images.js";
 import { TuziJsonImagesAdapter } from "./tuzi-json-images.js";
@@ -15,17 +23,24 @@ export class ProviderRegistry {
 
   async listOfferings(): Promise<Array<OfferingSnapshot & Pick<OfferingConfig, "supportsTextToImage" | "supportsImageToImage" | "sizes" | "qualities"> & { configured: boolean }>> {
     const profiles = await this.settings.listProfiles();
-    return profiles.flatMap((profile) => profile.offerings.map((offering) => ({
+    return [publicOffering(CODEX_GENERATION_PROFILE, CODEX_GENERATION_OFFERING, true), ...profiles.flatMap((profile) => profile.offerings.map((offering) => ({
       ...snapshotFor(profile, offering),
       supportsTextToImage: offering.supportsTextToImage,
       supportsImageToImage: offering.supportsImageToImage,
       sizes: [...offering.sizes],
       qualities: [...offering.qualities],
       configured: profile.hasApiKey
-    })));
+    })))];
   }
 
   async resolveOffering(id: string): Promise<ResolvedOffering> {
+    if (id === CODEX_GENERATION_OFFERING_ID) {
+      return {
+        profile: CODEX_GENERATION_PROFILE,
+        offering: CODEX_GENERATION_OFFERING,
+        snapshot: snapshotFor(CODEX_GENERATION_PROFILE, CODEX_GENERATION_OFFERING)
+      };
+    }
     const profiles = await this.settings.listProfiles();
     for (const profile of profiles) {
       const offering = profile.offerings.find((entry) => entry.id === id);
@@ -35,6 +50,9 @@ export class ProviderRegistry {
   }
 
   async adapterFor(profile: ProviderProfile): Promise<ProviderAdapter> {
+    if (profile.adapterId === "agent-generation") {
+      throw new Error("Codex generation is performed by the current Agent and does not have a local Provider adapter.");
+    }
     const apiKey = await this.settings.getApiKey(profile.id);
     const options = { baseUrl: profile.baseUrl, apiKey, fetchImpl: this.fetchImpl };
     if (profile.adapterId === "tuzi-json-images") return new TuziJsonImagesAdapter(options);
@@ -75,10 +93,46 @@ function snapshotFor(profile: ProviderProfile, offering: OfferingConfig): Offeri
   };
 }
 
+function publicOffering(profile: ProviderProfile, offering: OfferingConfig, configured: boolean) {
+  return {
+    ...snapshotFor(profile, offering),
+    supportsTextToImage: offering.supportsTextToImage,
+    supportsImageToImage: offering.supportsImageToImage,
+    sizes: [...offering.sizes],
+    qualities: [...offering.qualities],
+    configured
+  };
+}
+
+const CODEX_GENERATION_OFFERING: OfferingConfig = {
+  id: CODEX_GENERATION_OFFERING_ID,
+  canonicalModelId: "agent-image-generation",
+  providerModelId: "agent-image-generation",
+  displayName: "Codex 生成",
+  price: { mode: "model_quota", currency: "MODEL" },
+  supportsTextToImage: true,
+  supportsImageToImage: true,
+  sizes: [],
+  qualities: []
+};
+
+const CODEX_GENERATION_PROFILE: ProviderProfile = {
+  id: CODEX_GENERATION_PROFILE_ID,
+  displayName: "Codex",
+  tierName: "内置",
+  baseUrl: "",
+  adapterId: "agent-generation",
+  concurrency: 1,
+  hasApiKey: true,
+  offerings: [CODEX_GENERATION_OFFERING],
+  createdAt: new Date(0).toISOString(),
+  updatedAt: new Date(0).toISOString()
+};
+
 function assertNever(value: never): never {
   throw new Error(`Unsupported provider adapter: ${String(value)}`);
 }
 
 export function isAdapterId(value: string): value is AdapterId {
-  return value === "tuzi-json-images" || value === "openai-images";
+  return value === "tuzi-json-images" || value === "openai-images" || value === "agent-generation";
 }

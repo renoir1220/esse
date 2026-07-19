@@ -4,7 +4,7 @@ This file is the installation contract for an Agent given only this repository U
 
 ## Required outcome
 
-Install the latest stable Esse GitHub Release into the current user's profile, register the `esse-local` marketplace, install and enable `esse`, verify the result, then guide the user through restart and UI-only Provider setup.
+Install the latest stable Esse GitHub Release into the current user's profile, register the `esse-local` marketplace, install and enable `esse`, verify the result, then guide the user through restart and UI-only default model setup.
 
 Do not ask the user to download an archive manually. Do not ask for a Provider API key in chat.
 
@@ -49,7 +49,7 @@ After verification, report the installed version and say:
 1. Completely restart the Codex/ChatGPT desktop app.
 2. Start a new task.
 3. Say `打开 Esse 设置` or type `@esse` and ask it to open settings.
-4. In the Esse UI, add a Provider, paste the API Key there, test the connection, choose a default image model, and save.
+4. In the Esse UI, choose `Codex 生成` as the default model, or add a Provider, paste the API Key there, test the connection, choose one of its image models, and save.
 
 Explicitly remind the user that the API Key belongs only in the Esse settings UI and should never be pasted into chat.
 

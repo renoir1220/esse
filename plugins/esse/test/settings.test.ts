@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 import { SettingsStore } from "../src/storage/settings-store.js";
 import { createSecretStore, MemorySecretStore } from "../src/storage/secret-store.js";
+import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 
 const offering = {
   id: "offer-default",
@@ -38,6 +39,17 @@ test("provider keys stay out of settings JSON", async () => {
     const raw = await readFile(settingsPath, "utf8");
     assert(!raw.includes("secret-test-key"));
     assert.equal(JSON.parse(raw).providers[0].baseUrl, "https://api.tu-zi.com");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex generation can be selected as the default without a Provider profile", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-codex-default-"));
+  try {
+    const store = new SettingsStore(path.join(root, "settings.json"), new MemorySecretStore());
+    await store.setDefaultOffering(CODEX_GENERATION_OFFERING_ID);
+    assert.equal((await store.load()).defaultOfferingId, CODEX_GENERATION_OFFERING_ID);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

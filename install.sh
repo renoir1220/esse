@@ -202,7 +202,7 @@ EOF
 
 echo "Esse $VERSION installed and enabled."
 echo "Restart the Codex/ChatGPT desktop app, start a new task, and say: 打开 Esse 设置"
-echo "Enter the Provider API Key only inside the Esse settings UI, never in chat."
+echo "Choose Codex 生成, or configure an optional Provider in the Esse settings UI. Never paste a Provider API Key into chat."
 printf 'ESSE_INSTALL_RESULT={"status":"installed","version":"%s","marketplace":"%s","installRoot":"%s","restartRequired":true}\n' "$VERSION" "$MARKETPLACE_NAME" "$INSTALL_ROOT"
 RESULT_EMITTED=1
 exit 0

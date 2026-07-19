@@ -15,7 +15,7 @@ import type { AdapterId, BatchSnapshot, JobRecord, OfferingConfig } from "../typ
 export const WIDGET_URI = "ui://esse/local-v1.html";
 
 const priceSchema = z.object({
-  mode: z.enum(["per_request", "token", "unknown"]),
+  mode: z.enum(["per_request", "token", "model_quota", "unknown"]),
   currency: z.string().min(1).max(8).default("CNY"),
   amount: z.number().nonnegative().optional(),
   inputPerMillion: z.number().nonnegative().optional(),
@@ -53,7 +53,7 @@ export function createLocalEsseServer(options: {
     { name: "esse", version: "0.1.0" },
     {
       instructions:
-        "esse runs local parallel image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Inspect local folders before image-aware work, create one batch for many images, and keep each offering's provider, credential, price tier, and adapter together. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Routine tools are headless so an already docked sidebar keeps its layout. modify_selected_images updates jobs in the same batch and preserves Chinese-named backups."
+        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Routine tools are headless so an already docked sidebar keeps its layout."
     }
   );
 
@@ -133,7 +133,7 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "create_image_batch", {
     title: "Create local parallel image batch",
-    description: "Creates a local persistent batch using the configured default model when offeringId is omitted. Each jobs[] item has its own prompt and zero or more references. For existing Esse results such as 图1, use referenceImages with batchId + image so Esse resolves and uploads the real output file; never mention the label only in the prompt. Use top-level references only when every child intentionally shares them.",
+    description: "Creates a local persistent batch using the configured default model when offeringId is omitted. Each jobs[] item has its own prompt and zero or more references. If the resolved offering uses agent-generation, the current Agent must generate each job with any image capability and concurrency method it supports, then call start_agent_image_job and complete_agent_image_job or fail_agent_image_job. For existing Esse results such as 图1, use referenceImages with batchId + image so Esse resolves the real output file.",
     inputSchema: {
       title: z.string().max(120).optional(),
       offeringId: z.string().min(1).optional(),
@@ -195,7 +195,46 @@ export function createLocalEsseServer(options: {
       quality: input.quality,
       requestKey: input.requestKey
     });
-    return batchResult(batch, `已创建 ${batch.total} 个本地任务，${batch.offering.concurrency} 路并发，结果目录：${batch.outputDirectory}`);
+    const message = batch.offering.adapterId === "agent-generation"
+      ? `已创建 ${batch.total} 个“Codex 生成”任务。请由当前 Agent 使用自身可用的图像生成能力完成每个 job，并通过 Agent job 接口回传结果；结果目录：${batch.outputDirectory}`
+      : `已创建 ${batch.total} 个本地任务，${batch.offering.concurrency} 路并发，结果目录：${batch.outputDirectory}`;
+    return batchResult(batch, message);
+  });
+
+  registerAppTool(server, "start_agent_image_job", {
+    title: "Start Agent image job",
+    description: "Marks one Codex 生成 job as running and returns its exact prompt and local reference paths. Use only when the batch offering adapterId is agent-generation. The Agent may use subagents, native batching, or any other available generation method; no specific concurrency mechanism is required.",
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    _meta: headlessToolMeta()
+  }, async ({ batchId, jobId }) => {
+    const batch = await options.batches.startAgentJob(batchId, jobId);
+    const job = batch.jobs.find((entry) => entry.id === jobId)!;
+    return agentJobResult(batch, job, `已开始 ${job.name}。请使用返回的准确 Prompt 和参考图生成图片。`);
+  });
+
+  registerAppTool(server, "complete_agent_image_job", {
+    title: "Complete Agent image job",
+    description: "Copies one image produced by the current Agent into the matching Codex 生成 job. Call exactly once after successful generation and pass the real absolute local image path.",
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), imagePath: z.string().min(1) },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    _meta: headlessToolMeta()
+  }, async ({ batchId, jobId, imagePath }) => {
+    const batch = await options.batches.completeAgentJob(batchId, jobId, imagePath);
+    const job = batch.jobs.find((entry) => entry.id === jobId)!;
+    return agentJobResult(batch, job, `${job.name} 已保存到 Esse。`);
+  });
+
+  registerAppTool(server, "fail_agent_image_job", {
+    title: "Fail Agent image job",
+    description: "Marks one Codex 生成 job failed. Use when the current Agent lacks image-generation capability or generation failed; state the actual reason instead of leaving the job pending.",
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), error: z.string().min(1).max(2000) },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    _meta: headlessToolMeta()
+  }, async ({ batchId, jobId, error }) => {
+    const batch = await options.batches.failAgentJob(batchId, jobId, error);
+    const job = batch.jobs.find((entry) => entry.id === jobId)!;
+    return agentJobResult(batch, job, `${job.name} 已记录失败：${job.error}`);
   });
 
   registerAppTool(server, "list_image_batches", {
@@ -241,7 +280,13 @@ export function createLocalEsseServer(options: {
     },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: headlessToolMeta()
-  }, async (input) => batchResult(await options.batches.modifyInPlace(input)));
+  }, async (input) => {
+    const batch = await options.batches.modifyInPlace(input);
+    const message = batch.jobs.some((job) => input.jobIds.includes(job.id) && job.offering?.adapterId === "agent-generation")
+      ? "已建立 Codex 生成修改任务。当前 Agent 必须使用每个 job 返回的参考图完成生成并逐项回传结果。"
+      : undefined;
+    return batchResult(batch, message);
+  });
 
   registerUiTools(server, options);
   return server;
@@ -467,6 +512,23 @@ function batchResult(batch: BatchSnapshot, message?: string) {
   return {
     structuredContent: { batch },
     content: [{ type: "text" as const, text: message || `${batch.title}: ${batch.succeeded}/${batch.total} completed; outputs: ${batch.outputDirectory}` }]
+  };
+}
+
+function agentJobResult(batch: BatchSnapshot, job: JobRecord, message: string) {
+  return {
+    structuredContent: {
+      batch,
+      job: {
+        id: job.id,
+        name: job.name,
+        prompt: job.prompt,
+        referenceImagePaths: previewSourcePaths(job),
+        outputDirectory: batch.outputDirectory,
+        status: job.status
+      }
+    },
+    content: [{ type: "text" as const, text: message }]
   };
 }
 

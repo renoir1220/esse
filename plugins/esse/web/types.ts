@@ -1,8 +1,8 @@
-export type AdapterId = "tuzi-json-images" | "openai-images";
+export type AdapterId = "tuzi-json-images" | "openai-images" | "agent-generation";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 
 export interface PriceConfig {
-  mode: "per_request" | "token" | "unknown";
+  mode: "per_request" | "token" | "model_quota" | "unknown";
   currency: string;
   amount?: number;
   inputPerMillion?: number;

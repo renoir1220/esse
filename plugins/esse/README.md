@@ -8,7 +8,7 @@ Local ChatGPT Work/Codex plugin for parallel image generation and editing. Say `
 ChatGPT desktop Work/Codex
   -> plugin-launched local stdio MCP
      -> local folder inspection and persistent batch queue
-     -> selected Provider API
+     -> current Agent image capability or selected Provider API
      -> local output folder
 ```
 
@@ -16,12 +16,17 @@ There is no public MCP endpoint. The widget calls app-only settings tools so API
 
 One Provider Profile represents one exact credential group, price tier, API contract, and concurrency limit. If the same underlying model is sold through several tiers with different interfaces, configure separate profiles.
 
+`Codex 生成` is a built-in offering. It does not have a Provider profile or credentials: the current Agent uses whatever image-generation capability and concurrency strategy it supports, then submits each local result back to Esse. Its cost label is `模型额度`.
+
 ## Tools
 
 - `open_esse`
 - `list_image_offerings`
 - `inspect_image_folder`
 - `create_image_batch`
+- `start_agent_image_job`
+- `complete_agent_image_job`
+- `fail_agent_image_job`
 - `get_image_batch`
 - `render_image_batch`
 - `modify_selected_images`

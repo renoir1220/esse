@@ -1,5 +1,8 @@
-export type AdapterId = "tuzi-json-images" | "openai-images";
-export type PriceMode = "per_request" | "token" | "unknown";
+export const CODEX_GENERATION_OFFERING_ID = "esse-codex-generation";
+export const CODEX_GENERATION_PROFILE_ID = "esse-codex";
+
+export type AdapterId = "tuzi-json-images" | "openai-images" | "agent-generation";
+export type PriceMode = "per_request" | "token" | "model_quota" | "unknown";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 export type BatchStatus = "queued" | "running" | "completed" | "partial" | "failed" | "canceled";
 export type ChargeState = "not_charged" | "charged" | "unknown";

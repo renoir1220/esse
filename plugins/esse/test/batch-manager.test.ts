@@ -9,6 +9,7 @@ import { MemorySecretStore } from "../src/storage/secret-store.js";
 import { BatchStore } from "../src/storage/batch-store.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
 import { BatchManager } from "../src/jobs/batch-manager.js";
+import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
 
@@ -97,6 +98,63 @@ test("each child task keeps its own prompt and zero-to-many reference images", a
     assert.deepEqual(completed.jobs[1]?.referenceImagePaths, referencePaths);
     assert.equal(requests.find((request) => request.prompt === "text-only child")?.image, undefined);
     assert.equal(requests.find((request) => request.prompt === "four-reference child")?.image?.length, 4);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex generation delegates to the current Agent and imports terminal results", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-agent-generation-"));
+  try {
+    const referencePath = path.join(root, "reference.png");
+    const generatedPath = path.join(root, "agent-result.png");
+    await Promise.all([
+      writeFile(referencePath, Buffer.from(onePixelPng, "base64")),
+      writeFile(generatedPath, Buffer.from(onePixelPng, "base64"))
+    ]);
+    const { manager, registry, settings } = await createManager(root, async () => {
+      throw new Error("Agent generation must not call a local Provider adapter.");
+    });
+    const offerings = await registry.listOfferings();
+    const codex = offerings.find((entry) => entry.id === CODEX_GENERATION_OFFERING_ID);
+    assert.equal(codex?.displayName, "Codex 生成");
+    assert.equal(codex?.adapterId, "agent-generation");
+    assert.equal(codex?.price.mode, "model_quota");
+    assert.equal(codex?.configured, true);
+    await settings.setDefaultOffering(CODEX_GENERATION_OFFERING_ID);
+
+    const created = await manager.create({
+      offeringId: CODEX_GENERATION_OFFERING_ID,
+      prompt: "fallback",
+      jobs: [
+        { prompt: "use the reference", referenceImagePaths: [referencePath] },
+        { prompt: "this Agent cannot finish", referenceImagePaths: [] }
+      ],
+      requestKey: "agent-batch"
+    });
+    assert.equal(created.status, "queued");
+    assert.equal(created.estimatedCost, undefined);
+    assert.equal(created.jobs[0]?.prompt, "use the reference");
+    assert.deepEqual(created.jobs[0]?.referenceImagePaths, [referencePath]);
+
+    const firstJob = created.jobs[0]!;
+    const secondJob = created.jobs[1]!;
+    assert.equal((await manager.startAgentJob(created.id, firstJob.id)).jobs[0]?.status, "running");
+    const completed = await manager.completeAgentJob(created.id, firstJob.id, generatedPath);
+    assert.equal(completed.jobs[0]?.status, "succeeded");
+    assert(completed.jobs[0]?.outputPath?.startsWith(completed.outputDirectory));
+    await access(generatedPath);
+    await access(completed.jobs[0]!.outputPath!);
+    const duplicate = await manager.completeAgentJob(created.id, firstJob.id, generatedPath);
+    assert.equal(duplicate.jobs[0]?.outputPath, completed.jobs[0]?.outputPath);
+    assert.equal((await readdir(completed.outputDirectory)).length, 1);
+
+    await manager.startAgentJob(created.id, secondJob.id);
+    const failed = await manager.failAgentJob(created.id, secondJob.id, "当前 Agent 不支持第二项生成");
+    assert.equal(failed.status, "partial");
+    assert.equal(failed.jobs[1]?.status, "failed");
+    assert.equal(failed.jobs[1]?.retryable, false);
+    assert.equal(failed.jobs[1]?.error, "当前 Agent 不支持第二项生成");
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -255,9 +313,10 @@ async function createManager(root: string, fetchImpl: typeof fetch) {
     }]
   });
   const store = new BatchStore(paths.batchesDir);
-  const manager = new BatchManager(store, new ProviderRegistry(settings, fetchImpl), paths);
+  const registry = new ProviderRegistry(settings, fetchImpl);
+  const manager = new BatchManager(store, registry, paths);
   await manager.initialize();
-  return { manager, store };
+  return { manager, store, registry, settings };
 }
 
 async function waitForBatch(manager: BatchManager, id: string) {

@@ -4,6 +4,7 @@ import { ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, DotsThree, Do
 import { bridge } from "./bridge";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
 import { providerSavePayload } from "./provider-payload";
+import { offeringPriceLabel } from "./pricing";
 import { batchPollDelay, keepSelectedBatchId, mergeBatchWithoutReordering } from "./workbench-state";
 import type { BatchSnapshot, JobBackupSnapshot, JobSnapshot, OfferingConfig, ProviderDraft, ProviderProfile, PublicOffering, ToolResult, WorkbenchState } from "./types";
 import "./styles.css";
@@ -309,7 +310,12 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
           value={props.state.defaultOfferingId || ""}
           options={[
             ...(!props.state.defaultOfferingId ? [{ value: "", label: "请选择默认模型" }] : []),
-            ...props.state.offerings.map((offering) => ({ value: offering.id, label: `${offering.displayName} · ${offering.providerName}/${offering.tierName}` }))
+            ...props.state.offerings.map((offering) => ({
+              value: offering.id,
+              label: offering.adapterId === "agent-generation"
+                ? `${offering.displayName} · ${offeringPriceLabel(offering.price)}`
+                : `${offering.displayName} · ${offering.providerName}/${offering.tierName}`
+            }))
           ]}
           onChange={(value) => void setDefaultOffering(value)}
           disabled={!props.state.offerings.length || Boolean(busy)}
@@ -548,7 +554,7 @@ type ImageAsset = {
 
 type CachedPreview = { path: string; dataUrl: string };
 
-type ModificationOffering = Pick<PublicOffering, "id" | "displayName" | "providerName" | "tierName" | "price">;
+type ModificationOffering = Pick<PublicOffering, "id" | "displayName" | "providerName" | "tierName" | "adapterId" | "price">;
 
 function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "onOpenSettings"> & { batch: BatchSnapshot; offerings: PublicOffering[] }) {
   const { batch } = props;
@@ -563,13 +569,14 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   const modificationOfferings = useMemo<ModificationOffering[]>(() => {
     const configured = props.offerings
       .filter((offering) => offering.configured && offering.supportsImageToImage)
-      .map(({ id, displayName, providerName, tierName, price }) => ({ id, displayName, providerName, tierName, price }));
+      .map(({ id, displayName, providerName, tierName, adapterId, price }) => ({ id, displayName, providerName, tierName, adapterId, price }));
     if (!configured.some((offering) => offering.id === batch.offering.id)) {
       configured.unshift({
         id: batch.offering.id,
         displayName: batch.offering.displayName,
         providerName: batch.offering.providerName,
         tierName: batch.offering.tierName,
+        adapterId: batch.offering.adapterId,
         price: batch.offering.price
       });
     }
@@ -732,6 +739,14 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     setBusy("modify");
     const ids = selectedCompleted.map((job) => job.id);
     try {
+      if (selectedOffering.adapterId === "agent-generation") {
+        const names = selectedCompleted.map((job) => `${job.name} (${job.id})`).join("、");
+        await bridge.sendMessage(`请使用 Esse 的“Codex 生成”（offeringId: ${selectedOffering.id}）修改批次 ${batch.id} 中的 ${names}。修改要求：${request}`);
+        props.setSelected(new Set());
+        props.setModificationRequest("");
+        props.onNotice(`已将 ${ids.length} 张图片的修改要求交给当前 Agent`);
+        return;
+      }
       const result = await bridge.callTool("modify_selected_images", {
         batchId: batch.id,
         jobIds: ids,
@@ -901,15 +916,6 @@ function rabbitOffering(): OfferingConfig {
 
 function blankOffering(): OfferingConfig {
   return { id: "", canonicalModelId: "", providerModelId: "", displayName: "", price: { mode: "unknown", currency: "CNY" }, supportsTextToImage: true, supportsImageToImage: true, sizes: [], qualities: [] };
-}
-
-function offeringPriceLabel(price: OfferingConfig["price"]): string {
-  if (price.mode === "per_request" && typeof price.amount === "number") {
-    const symbol = price.currency === "CNY" ? "¥" : price.currency === "USD" ? "$" : `${price.currency} `;
-    return `${symbol}${price.amount.toLocaleString("zh-CN", { maximumFractionDigits: 4 })}/次`;
-  }
-  if (price.mode === "token") return "Token 计费";
-  return "价格未知";
 }
 
 function formatBatchDate(value: string): string {

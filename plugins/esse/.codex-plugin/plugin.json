@@ -1,7 +1,7 @@
 {
   "name": "esse",
-  "version": "0.1.4",
-  "description": "Run parallel image generation and editing from local folders.",
+  "version": "0.1.5",
+  "description": "Run image generation and editing with the current Agent or local Providers.",
   "author": {
     "name": "Renoir"
   },
@@ -20,7 +20,7 @@
   "interface": {
     "displayName": "esse",
     "shortDescription": "Parallel local-folder image generation and editing",
-    "longDescription": "Inspect local image folders, let GPT prepare prompts, run provider requests in parallel, monitor progress, preview results, and select one or many images for another editing pass. Provider credentials stay on this computer.",
+    "longDescription": "Inspect local image folders, let GPT prepare prompts, generate with the current Agent or local Providers, monitor progress, preview results, and select one or many images for another editing pass. Provider credentials stay on this computer.",
     "developerName": "Renoir",
     "category": "Productivity",
     "capabilities": [
@@ -29,7 +29,7 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Open esse and configure my image provider",
+      "Open Esse settings and choose my default image model",
       "Inspect a local image folder and prepare a parallel generation batch",
       "Show my recent image batches"
     ],

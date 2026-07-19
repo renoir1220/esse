@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AdapterId, OfferingConfig, ProviderProfile, SettingsDocument, StoredProviderProfile } from "../types.js";
+import { CODEX_GENERATION_OFFERING_ID, type AdapterId, type OfferingConfig, type ProviderProfile, type SettingsDocument, type StoredProviderProfile } from "../types.js";
 import { readJsonFile, writeJsonFile } from "./atomic-json.js";
 import type { SecretStore } from "./secret-store.js";
 
@@ -70,7 +70,7 @@ export class SettingsStore {
     const removedOfferingIds = new Set(settings.providers.find((entry) => entry.id === id)?.offerings.map((entry) => entry.id) || []);
     settings.providers = settings.providers.filter((entry) => entry.id !== id);
     if (settings.defaultOfferingId && removedOfferingIds.has(settings.defaultOfferingId)) {
-      settings.defaultOfferingId = settings.providers[0]?.offerings[0]?.id;
+      settings.defaultOfferingId = settings.providers[0]?.offerings[0]?.id || CODEX_GENERATION_OFFERING_ID;
     }
     settings.updatedAt = new Date().toISOString();
     await this.secrets.delete(id);
@@ -79,7 +79,7 @@ export class SettingsStore {
 
   async setDefaultOffering(id: string): Promise<void> {
     const settings = await this.load();
-    const exists = settings.providers.some((profile) => profile.offerings.some((offering) => offering.id === id));
+    const exists = id === CODEX_GENERATION_OFFERING_ID || settings.providers.some((profile) => profile.offerings.some((offering) => offering.id === id));
     if (!exists) throw new Error(`Unknown offering: ${id}`);
     settings.defaultOfferingId = id;
     settings.updatedAt = new Date().toISOString();

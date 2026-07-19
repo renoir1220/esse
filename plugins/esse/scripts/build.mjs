@@ -46,9 +46,13 @@ await build({
 });
 
 const previewTemplate = await readFile(path.join(root, "web", "preview.template.html"), "utf8");
+const previewHtml = previewTemplate.replace("/*__WIDGET_CSS__*/", () => css).replace("/*__WIDGET_JS__*/", () => javascript);
+if (previewHtml.includes("/*__WIDGET_CSS__*/") || previewHtml.includes("/*__WIDGET_JS__*/")) {
+  throw new Error("Preview build left an unreplaced widget placeholder.");
+}
 await writeFile(
   path.join(root, "web", "preview.html"),
-  previewTemplate.replace("/*__WIDGET_CSS__*/", css).replace("/*__WIDGET_JS__*/", javascript),
+  previewHtml,
   "utf8"
 );
 
