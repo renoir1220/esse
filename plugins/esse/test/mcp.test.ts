@@ -12,7 +12,7 @@ import { BatchStore } from "../src/storage/batch-store.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
 import { BatchManager } from "../src/jobs/batch-manager.js";
 import { Thumbnailer } from "../src/files/thumbnailer.js";
-import { createLocalEsseServer, widgetUriFor } from "../src/mcp/app.js";
+import { createLocalEsseServer, WIDGET_URI, widgetUriFor } from "../src/mcp/app.js";
 import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
@@ -76,9 +76,16 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     }
     const resources = await client.listResources();
     assert(resources.resources.some((resource) => resource.uri === widgetUri));
-    assert.notEqual(widgetUri, widgetUriFor("http://localhost:4568"), "a new media origin must get a cache-busting widget URI");
+    const priorProcessWidgetUri = widgetUriFor("http://localhost:4568");
+    assert.notEqual(widgetUri, priorProcessWidgetUri, "a new media origin must get a cache-busting widget URI");
     const widget = await client.readResource({ uri: widgetUri });
     assert.deepEqual((widget.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined)?.ui?.csp?.resourceDomains, [mediaServer.origin]);
+    const legacyWidget = await client.readResource({ uri: WIDGET_URI });
+    assert.equal(legacyWidget.contents[0]?.uri, WIDGET_URI);
+    assert.deepEqual((legacyWidget.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined)?.ui?.csp?.resourceDomains, [mediaServer.origin], "the pre-v2 Widget URI must resolve with the current process CSP after an upgrade");
+    const priorProcessWidget = await client.readResource({ uri: priorProcessWidgetUri });
+    assert.equal(priorProcessWidget.contents[0]?.uri, priorProcessWidgetUri);
+    assert.deepEqual((priorProcessWidget.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined)?.ui?.csp?.resourceDomains, [mediaServer.origin], "a cached URI from another MCP process must resolve with the current process CSP");
     const open = await client.callTool({ name: "open_esse", arguments: { tab: "settings" } });
     assert.equal((open.structuredContent as { state?: { providers?: unknown[] } }).state?.providers?.length, 0);
     const update = await client.callTool({ name: "ui_check_for_updates", arguments: {} });

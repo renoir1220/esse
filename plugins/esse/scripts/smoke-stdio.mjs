@@ -36,6 +36,11 @@ try {
   assert.match(widgetUri || "", /^ui:\/\/esse\/local-v2-[0-9a-f]{16}\.html$/);
   const resources = await client.listResources();
   assert(resources.resources.some((resource) => resource.uri === widgetUri));
+  for (const compatibleUri of [widgetUri, "ui://esse/local-v1.html", "ui://esse/local-v2-0000000000000000.html"]) {
+    const widget = await client.readResource({ uri: compatibleUri });
+    assert.equal(widget.contents[0]?.uri, compatibleUri);
+    assert.match(widget.contents[0]?._meta?.ui?.csp?.resourceDomains?.[0] || "", /^http:\/\/localhost:\d+$/);
+  }
   const opened = await client.callTool({ name: "open_esse", arguments: { tab: "settings" } });
   assert.equal(opened.isError, undefined);
   console.log(JSON.stringify({ transport: "stdio", runtime: compiledBinary ? "compiled" : "node", tools: names.length, widget: "ok", localState: "ok" }, null, 2));
