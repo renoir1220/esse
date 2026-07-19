@@ -233,7 +233,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .card-copy strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-control); }
 .error-copy { margin: -4px 8px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--danger); font-size: var(--font-size-meta); }
 .show-more { margin-top: 8px; padding: 8px; border: 1px dashed var(--border); border-radius: 9px; color: var(--muted); text-align: center; font-size: var(--font-size-meta); }
-.modify-composer { position: sticky; z-index: 14; bottom: 0; min-width: 0; min-height: 116px; max-height: min(320px, calc(100vh - 120px)); display: grid; grid-template-rows: minmax(0, auto) auto; overflow: visible; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 9px 28px rgba(16,20,16,.08), 0 2px 8px rgba(16,20,16,.05); }
+.modify-composer { position: sticky; z-index: 14; bottom: 0; min-width: 0; min-height: 100px; max-height: min(320px, calc(100vh - 120px)); display: grid; grid-template-rows: minmax(0, auto) auto; overflow: visible; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 9px 28px rgba(16,20,16,.08), 0 2px 8px rgba(16,20,16,.05); }
 .modify-entry { min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 10px 12px 3px; }
 .modify-attachments { flex: none; width: 100%; max-width: 100%; display: flex; gap: 6px; overflow-x: auto; overflow-y: hidden; padding: 6px 7px 3px 1px; scrollbar-width: none; }
 .modify-attachments::-webkit-scrollbar { display: none; }
@@ -355,7 +355,7 @@ button { -webkit-tap-highlight-color: transparent; }
 }
 
 @media (min-width: 760px) {
-  .app-shell { --app-shell-bottom: 24px; max-width: 1160px; margin: 0 auto; padding: 0 18px var(--app-shell-bottom); }
+  .app-shell { --app-shell-bottom: 18px; max-width: 1160px; margin: 0 auto; padding: 0 18px var(--app-shell-bottom); }
   .settings-layout { grid-template-columns: 190px minmax(0, 1fr); align-items: start; }
   .provider-list { position: sticky; top: 64px; }
   .provider-editor { padding-left: 20px; }
