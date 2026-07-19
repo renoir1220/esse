@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, Copy, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
+import { ArrowUpRight, ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, Copy, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
 import { bridge } from "./bridge";
 import { shouldSubmitComposerKey } from "./composer-keyboard";
 import { contextMenuPoint } from "./context-menu";
@@ -21,7 +21,7 @@ import {
 import { imagesMentionedInRequest, selectableImages, selectionModelContext } from "./selection-context";
 import type { SelectableImage } from "./selection-context";
 import { batchIdAfterStateRefresh, batchIdAfterUpdate, batchPollDelay, hasNewBatchActivation, isStaleStateRefresh, mergeBatchWithoutReordering } from "./workbench-state";
-import type { BatchSnapshot, JobBackupSnapshot, JobCallSnapshot, JobSnapshot, OfferingConfig, ProviderDraft, ProviderProfile, PublicOffering, ToolResult, WorkbenchState } from "./types";
+import type { BatchSnapshot, JobBackupSnapshot, JobCallSnapshot, JobSnapshot, OfferingConfig, ProviderDraft, ProviderProfile, PublicOffering, ToolResult, UpdateStatus, WorkbenchState } from "./types";
 import "./styles.css";
 
 type Tab = "batches" | "settings";
@@ -64,6 +64,8 @@ function App() {
   const [modificationRequest, setModificationRequest] = useState(() => persistedState.modificationRequest || "");
   const [displayMode, setDisplayMode] = useState(window.openai?.displayMode || "inline");
   const [notice, setNotice] = useState<string>();
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>();
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string>();
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [batchSwitcherOpen, setBatchSwitcherOpen] = useState(false);
   const [batchMenuOpen, setBatchMenuOpen] = useState(false);
@@ -115,6 +117,14 @@ function App() {
   useEffect(() => {
     if (isPreview) return;
     void bridge.callTool("ui_get_local_state", { batchId: activeBatchId }).then(applyResult).catch((error) => setNotice(errorMessage(error)));
+  }, []);
+
+  useEffect(() => {
+    let canceled = false;
+    void bridge.callTool("ui_check_for_updates", {}).then((result) => {
+      if (!canceled && result.structuredContent?.update) setUpdateStatus(result.structuredContent.update);
+    }).catch(() => undefined);
+    return () => { canceled = true; };
   }, []);
 
   useEffect(() => {
@@ -315,6 +325,12 @@ function App() {
       </header>
 
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice(undefined)} aria-label="关闭">×</button></div>}
+
+      {updateStatus?.updateAvailable && updateStatus.latestVersion !== dismissedUpdateVersion && updateStatus.releaseUrl && <div className="update-notice" role="status">
+        <div><strong>Esse {updateStatus.latestVersion} 已发布</strong><span>当前版本 {updateStatus.currentVersion}</span></div>
+        <a href={updateStatus.releaseUrl} target="_blank" rel="noopener noreferrer">查看更新<ArrowUpRight size={14} /></a>
+        <button type="button" onClick={() => setDismissedUpdateVersion(updateStatus.latestVersion)} aria-label="暂时关闭更新提示"><X size={14} /></button>
+      </div>}
 
       {tab === "settings" ? (
         <SettingsView state={state} applyResult={applyResult} onNotice={setNotice} />

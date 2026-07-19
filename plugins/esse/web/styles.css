@@ -105,6 +105,14 @@ button { -webkit-tap-highlight-color: transparent; }
 
 .notice { position: fixed; z-index: 42; top: 62px; right: 16px; max-width: min(360px, calc(100vw - 32px)); display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 10px 30px rgba(0,0,0,.13); font-size: var(--font-size-control); }
 .notice button { width: 20px; height: 20px; padding: 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; font-size: var(--font-size-base); line-height: 1; }
+.update-notice { min-height: 42px; display: flex; align-items: center; gap: 12px; margin: -4px 0 12px; padding: 7px 8px 7px 11px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--border)); border-radius: 9px; background: color-mix(in srgb, var(--accent-soft) 62%, var(--surface)); }
+.update-notice > div { min-width: 0; flex: 1; display: flex; align-items: baseline; gap: 8px; }
+.update-notice strong { font-size: var(--font-size-control); font-weight: var(--font-weight-semibold); }
+.update-notice span { color: var(--muted); font-size: var(--font-size-meta); }
+.update-notice a { height: 28px; display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; border-radius: 7px; color: var(--accent); text-decoration: none; font-size: var(--font-size-control); font-weight: var(--font-weight-medium); }
+.update-notice a:hover, .update-notice a:focus-visible { background: color-mix(in srgb, var(--accent) 9%, transparent); outline: 0; }
+.update-notice > button { width: 28px; height: 28px; display: grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
+.update-notice > button:hover, .update-notice > button:focus-visible { background: color-mix(in srgb, var(--accent) 9%, transparent); color: var(--text); outline: 0; }
 
 .settings-layout { width: 100%; display: grid; gap: 0; }
 .default-model-panel { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 16px; padding: 4px 0 16px; border-bottom: 1px solid var(--border); }
@@ -432,6 +440,9 @@ button { -webkit-tap-highlight-color: transparent; }
   .header-actions { gap: 1px; }
   .header-actions > button { width: 32px; padding: 0; }
   .header-actions > button span { display: none; }
+  .update-notice { gap: 5px; padding-left: 9px; }
+  .update-notice > div { display: grid; gap: 0; }
+  .update-notice a { padding-inline: 5px; }
   .form-grid, .offering-fields { grid-template-columns: 1fr; }
   .field.wide { grid-column: auto; }
   .secret-input { grid-template-columns: 1fr; }

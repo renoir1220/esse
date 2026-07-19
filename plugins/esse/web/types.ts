@@ -151,8 +151,17 @@ export interface WorkbenchState {
   secureStorage: string;
 }
 
+export interface UpdateStatus {
+  currentVersion: string;
+  latestVersion?: string;
+  updateAvailable: boolean;
+  checked: boolean;
+  checkedAt: string;
+  releaseUrl?: string;
+}
+
 export interface ToolResult {
-  structuredContent?: { state?: WorkbenchState; batch?: BatchSnapshot; activateBatchId?: string; [key: string]: unknown };
+  structuredContent?: { state?: WorkbenchState; batch?: BatchSnapshot; update?: UpdateStatus; activateBatchId?: string; [key: string]: unknown };
   content?: Array<{ type: string; text?: string }>;
   _meta?: Record<string, unknown>;
 }

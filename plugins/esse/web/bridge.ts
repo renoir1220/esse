@@ -165,6 +165,9 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
     const batch = state.batches.find((entry) => entry.id === args.batchId);
     return { structuredContent: { batch } };
   }
+  if (name === "ui_check_for_updates") {
+    return { structuredContent: { update: { currentVersion: "0.2.0", latestVersion: "0.2.0", updateAvailable: false, checked: true, checkedAt: new Date().toISOString(), releaseUrl: "https://github.com/renoir1220/esse/releases/tag/v0.2.0" } } };
+  }
   if (name === "ui_get_image_preview") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);
     const job = batch?.jobs.find((entry) => entry.id === args.jobId);
