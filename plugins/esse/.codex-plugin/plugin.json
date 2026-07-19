@@ -34,8 +34,8 @@
       "Show my recent image batches"
     ],
     "brandColor": "#10A37F",
-    "composerIcon": "./assets/icon.svg",
-    "logo": "./assets/logo.svg",
+    "composerIcon": "./assets/batchimager-esse-icon.png",
+    "logo": "./assets/batchimager-esse-icon.png",
     "screenshots": [
       "./assets/batch-sidebar.png",
       "./assets/batch-fullscreen.png",
