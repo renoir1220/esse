@@ -15,17 +15,17 @@ jobs:
       run:
         working-directory: plugins/esse
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: plugins/esse/package-lock.json
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          bun-version: 1.3.11
       - run: npm ci
       - run: npm run check
       - name: Verify tag and release metadata
