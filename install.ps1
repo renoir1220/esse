@@ -141,8 +141,18 @@ try {
     $env:ESSE_DATA_DIR = $selfTestData
     Push-Location $pluginSource
     try {
-      $selfTestOutput = (& $packageBinary --self-test 2>&1 | Out-String).Trim()
-      if ($LASTEXITCODE -ne 0 -or $selfTestOutput -notmatch '"status"\s*:\s*"ok"') { throw "Esse runtime self-test failed: $selfTestOutput" }
+      $previousErrorActionPreference = $ErrorActionPreference
+      try {
+        # Windows PowerShell 5 turns native stderr into non-terminating ErrorRecord
+        # objects. Esse logs its readiness message to stderr during self-test, so
+        # capture both streams and judge the native process by its exit code.
+        $ErrorActionPreference = "Continue"
+        $selfTestOutput = (& $packageBinary --self-test 2>&1 | ForEach-Object { "$_" } | Out-String).Trim()
+        $selfTestExitCode = $LASTEXITCODE
+      } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+      }
+      if ($selfTestExitCode -ne 0 -or $selfTestOutput -notmatch '"status"\s*:\s*"ok"') { throw "Esse runtime self-test failed: $selfTestOutput" }
     } finally {
       Pop-Location
     }
