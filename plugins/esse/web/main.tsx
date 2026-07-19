@@ -771,6 +771,7 @@ type ImageAsset = {
 
 type CachedPreview = { signature: string; dataUrl: string };
 type ImageContextMenu = { asset: ImageAsset; scope: "thumbnail" | "lightbox"; left: number; top: number };
+type PreviewTransport = "idle" | "direct-loading" | "direct" | "error";
 
 type ModificationOffering = Pick<PublicOffering, "id" | "displayName" | "providerName" | "tierName" | "adapterId" | "price">;
 
@@ -780,6 +781,9 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   const [previews, setPreviews] = useState<Record<string, CachedPreview>>(() => Object.fromEntries(batch.jobs.filter((job) => job.previewUrl && (job.outputPath || job.inputPath)).map((job) => [job.id, { signature: jobFileSignature(job, (job.outputPath || job.inputPath)!), dataUrl: job.previewUrl! }])));
   const [previewAsset, setPreviewAsset] = useState<ImageAsset>();
   const [previewFull, setPreviewFull] = useState<string>();
+  const [previewTransport, setPreviewTransport] = useState<PreviewTransport>("idle");
+  const [previewError, setPreviewError] = useState<string>();
+  const [previewLoadAttempt, setPreviewLoadAttempt] = useState(0);
   const [previewZoom, setPreviewZoom] = useState(initialImageZoom);
   const [detailAsset, setDetailAsset] = useState<ImageAsset>();
   const [detailMetadata, setDetailMetadata] = useState<ImageMetadata>();
@@ -962,17 +966,11 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       return next;
     });
   };
-  const fullDataUrl = async (asset: ImageAsset) => {
-    const filePath = asset.outputPath || asset.inputPath;
-    if (!filePath) throw new Error("无法读取本地原图。");
-    const cacheKey = previewMemoryKey(batch.id, asset.id, filePath, true, undefined, assetFileSignature(asset, filePath));
-    const cached = previewDataUrlCache.get(cacheKey);
-    if (cached) return cached;
-    const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: asset.id, full: true });
-    const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
-    if (!dataUrl) throw new Error("无法读取本地原图。");
-    previewDataUrlCache.set(cacheKey, dataUrl);
-    return dataUrl;
+  const directMediaUrl = async (asset: ImageAsset) => {
+    const result = await bridge.callTool("ui_get_direct_image_url", { batchId: batch.id, jobId: asset.id });
+    const mediaUrl = typeof result._meta?.mediaUrl === "string" ? result._meta.mediaUrl : undefined;
+    if (!mediaUrl) throw new Error("Esse 未返回本机原图地址。");
+    return mediaUrl;
   };
   const openImageContextMenu = (event: React.MouseEvent, asset: ImageAsset, scope: ImageContextMenu["scope"]) => {
     if (!(asset.outputPath || asset.inputPath) || asset.job && isProcessing(asset.job)) return;
@@ -1016,11 +1014,20 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   useEffect(() => {
     if (!previewAsset) return;
     let canceled = false;
-    const filePath = previewAsset.outputPath || previewAsset.inputPath;
-    const cached = filePath ? previewDataUrlCache.get(previewMemoryKey(batch.id, previewAsset.id, filePath, true, undefined, assetFileSignature(previewAsset, filePath))) : undefined;
-    setPreviewFull(cached);
+    setPreviewFull(undefined);
+    setPreviewError(undefined);
+    setPreviewTransport("direct-loading");
     setPreviewZoom(initialImageZoom);
-    if (!cached) void fullDataUrl(previewAsset).then((dataUrl) => { if (!canceled) setPreviewFull(dataUrl); }).catch((error) => { if (!canceled) props.onNotice(errorMessage(error)); });
+    void directMediaUrl(previewAsset).then((mediaUrl) => {
+      if (canceled) return;
+      setPreviewFull(mediaUrl);
+    }).catch((error) => {
+      if (canceled) return;
+      const message = `原图直读失败：${errorMessage(error)} 请完全重启 Codex/ChatGPT 后重试。`;
+      setPreviewTransport("error");
+      setPreviewError(message);
+      props.onNotice(message);
+    });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setPreviewAsset(undefined);
       if (event.key === "ArrowLeft") { event.preventDefault(); movePreview(-1); }
@@ -1028,7 +1035,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     };
     window.addEventListener("keydown", onKeyDown);
     return () => { canceled = true; window.removeEventListener("keydown", onKeyDown); };
-  }, [previewAsset?.id, previewIndex, previewableAssets.length]);
+  }, [previewAsset?.id, previewIndex, previewableAssets.length, previewLoadAttempt]);
   const zoomPreview = (event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1136,7 +1143,38 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
         </section>
       </div>
       {batch.queued > 0 && <footer className="batch-actions"><button className="secondary-button" onClick={() => void cancel()} disabled={Boolean(busy)}>取消排队</button></footer>}
-      {previewAsset && <div className="lightbox" role="dialog" aria-modal="true" aria-label={previewAsset.name}><button className="lightbox-close" onClick={() => setPreviewAsset(undefined)} aria-label="关闭预览">×</button>{previewableAssets.length > 1 && <><button className="lightbox-nav previous" onClick={() => movePreview(-1)} aria-label="上一张" title="上一张（←）"><CaretLeft size={24} /></button><button className="lightbox-nav next" onClick={() => movePreview(1)} aria-label="下一张" title="下一张（→）"><CaretRight size={24} /></button></>}<div className="lightbox-stage" onClick={() => setPreviewAsset(undefined)} onWheel={zoomPreview}>{previewFull ? <img className={previewZoom.scale > 1.0001 ? "is-zoomed" : ""} src={previewFull} alt={previewAsset.name} style={{ transform: `translate3d(${previewZoom.x}px, ${previewZoom.y}px, 0) scale(${previewZoom.scale})` }} onClick={(event) => event.stopPropagation()} onContextMenu={(event) => openImageContextMenu(event, previewAsset, "lightbox")} onDoubleClick={() => setPreviewZoom(initialImageZoom)} /> : <span className="spinner large lightbox-spinner" />}</div><div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span><button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div></div>}
+      {previewAsset && <div className="lightbox" role="dialog" aria-modal="true" aria-label={previewAsset.name}>
+        <button className="lightbox-close" onClick={() => setPreviewAsset(undefined)} aria-label="关闭预览">×</button>
+        {previewableAssets.length > 1 && <>
+          <button className="lightbox-nav previous" onClick={() => movePreview(-1)} aria-label="上一张" title="上一张（←）"><CaretLeft size={24} /></button>
+          <button className="lightbox-nav next" onClick={() => movePreview(1)} aria-label="下一张" title="下一张（→）"><CaretRight size={24} /></button>
+        </>}
+        <div className="lightbox-stage" onClick={() => setPreviewAsset(undefined)} onWheel={zoomPreview}>
+          {previewFull ? <img
+            className={previewZoom.scale > 1.0001 ? "is-zoomed" : ""}
+            src={previewFull}
+            alt={previewAsset.name}
+            style={{ transform: `translate3d(${previewZoom.x}px, ${previewZoom.y}px, 0) scale(${previewZoom.scale})` }}
+            onLoad={() => { if (previewTransport === "direct-loading") setPreviewTransport("direct"); }}
+            onError={() => {
+              if (previewTransport !== "direct-loading") return;
+              const message = "原图直读连接失败。请确认 Codex/ChatGPT 可以访问 localhost，然后完全重启桌面应用。";
+              setPreviewFull(undefined);
+              setPreviewTransport("error");
+              setPreviewError(message);
+              props.onNotice(message);
+            }}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => openImageContextMenu(event, previewAsset, "lightbox")}
+            onDoubleClick={() => setPreviewZoom(initialImageZoom)}
+          /> : previewTransport === "error" ? <div className="lightbox-error" onClick={(event) => event.stopPropagation()}>
+            <strong>无法打开原图</strong>
+            <span>{previewError}</span>
+            <button type="button" onClick={() => setPreviewLoadAttempt((value) => value + 1)}>重试</button>
+          </div> : <span className="spinner large lightbox-spinner" />}
+        </div>
+        <div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span>{previewTransport === "direct" && <span title="浏览器从 Esse 本机服务读取原始图片">原图直读</span>}<button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div>
+      </div>}
       {detailAsset && <TaskDetailDialog asset={detailAsset} metadata={detailMetadata} referencePaths={detailReferencePaths} previews={previews} onClose={() => setDetailAsset(undefined)} />}
       {contextMenu && <ImageContextMenuView menu={contextMenu} selected={Boolean(contextMenu.asset.selectableImage && props.selected.has(contextMenu.asset.selectableImage.id))} onSelect={contextMenu.asset.selectableImage ? () => { toggle(contextMenu.asset.selectableImage!); setContextMenu(undefined); } : undefined} onCopy={() => void copyImage(contextMenu.asset)} onDelete={contextMenu.scope === "thumbnail" ? () => void deleteImage(contextMenu.asset) : undefined} />}
     </div>

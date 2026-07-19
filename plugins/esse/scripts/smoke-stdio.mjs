@@ -30,8 +30,12 @@ try {
   assert(names.includes("ui_open_batch_folder"));
   assert(names.includes("ui_save_provider_profile"));
   assert(names.includes("ui_save_image_as"));
+  assert(!names.includes("get_local_media_status"));
+  const openTool = tools.tools.find((tool) => tool.name === "open_esse");
+  const widgetUri = openTool?._meta?.ui?.resourceUri;
+  assert.match(widgetUri || "", /^ui:\/\/esse\/local-v2-[0-9a-f]{16}\.html$/);
   const resources = await client.listResources();
-  assert(resources.resources.some((resource) => resource.uri === "ui://esse/local-v1.html"));
+  assert(resources.resources.some((resource) => resource.uri === widgetUri));
   const opened = await client.callTool({ name: "open_esse", arguments: { tab: "settings" } });
   assert.equal(opened.isError, undefined);
   console.log(JSON.stringify({ transport: "stdio", runtime: compiledBinary ? "compiled" : "node", tools: names.length, widget: "ok", localState: "ok" }, null, 2));

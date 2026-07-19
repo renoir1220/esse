@@ -176,6 +176,9 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
     const dataUrl = sourceIndex === undefined ? backup?.previewUrl || job?.previewUrl : job?.referencePreviewUrls?.[sourceIndex] || (sourceIndex === 0 ? job?.previewUrl : undefined);
     return { structuredContent: { available: Boolean(dataUrl), sourceIndex }, _meta: { dataUrl } };
   }
+  if (name === "ui_get_direct_image_url") {
+    return { structuredContent: { available: false } };
+  }
   if (name === "ui_get_image_previews") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);
     const items = Array.isArray(args.items) ? args.items as Array<{ jobId?: unknown; sourceIndex?: unknown; full?: unknown }> : [];

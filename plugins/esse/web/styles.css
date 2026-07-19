@@ -388,6 +388,9 @@ button { -webkit-tap-highlight-color: transparent; }
 .lightbox-nav.previous { left: 18px; }
 .lightbox-nav.next { right: 18px; }
 .lightbox-spinner { border-color: rgba(255,255,255,.32); border-top-color: white; }
+.lightbox-error { width: min(460px, calc(100vw - 48px)); display: grid; justify-items: center; gap: 9px; padding: 20px; border: 1px solid rgba(255,255,255,.22); border-radius: 12px; background: rgba(18,18,18,.82); color: white; text-align: center; box-shadow: var(--shadow); }
+.lightbox-error span { color: rgba(255,255,255,.72); font-size: var(--font-size-control); line-height: 1.55; }
+.lightbox-error button { height: 32px; padding: 0 13px; border: 1px solid rgba(255,255,255,.34); border-radius: 8px; background: rgba(255,255,255,.14); color: white; cursor: pointer; }
 .lightbox-caption { position: fixed; z-index: 3; bottom: 16px; left: 20px; right: 20px; display: flex; align-items: center; justify-content: center; gap: 9px; color: white; text-align: center; pointer-events: none; }
 .lightbox-caption strong { font-size: var(--font-size-meta); }
 .lightbox-caption > span { color: rgba(255,255,255,.72); font-size: var(--font-size-meta); }

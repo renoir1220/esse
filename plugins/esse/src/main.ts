@@ -8,12 +8,13 @@ import { BatchStore } from "./storage/batch-store.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { BatchManager } from "./jobs/batch-manager.js";
 import { Thumbnailer } from "./files/thumbnailer.js";
+import { describeLocalMediaStartupError, LocalMediaServer } from "./files/local-media-server.js";
 import { createLocalEsseServer } from "./mcp/app.js";
 
 declare const __ESSE_VERSION__: string;
 
 async function runSelfTest(): Promise<void> {
-  const pluginRoot = process.cwd();
+  const pluginRoot = resolvePluginRoot();
   const paths = resolveDataPaths();
   await ensureDataPaths(paths);
   const [widgetHtml, manifestText] = await Promise.all([
@@ -23,7 +24,7 @@ async function runSelfTest(): Promise<void> {
   const manifest = JSON.parse(manifestText) as { name?: string; version?: string };
   if (manifest.name !== "esse") throw new Error("Plugin manifest name is not esse.");
   if (manifest.version !== __ESSE_VERSION__) throw new Error(`Runtime version ${__ESSE_VERSION__} does not match manifest ${manifest.version}.`);
-  if (!widgetHtml.includes("ui://esse/local-v1.html") && widgetHtml.length < 10_000) throw new Error("Compiled Esse widget is missing or incomplete.");
+  if (widgetHtml.length < 10_000) throw new Error("Compiled Esse widget is missing or incomplete.");
   process.stdout.write(JSON.stringify({
     status: "ok",
     version: __ESSE_VERSION__,
@@ -53,10 +54,17 @@ async function main(): Promise<void> {
   const batches = new BatchManager(batchStore, registry, paths);
   await batches.initialize();
   const thumbnailer = new Thumbnailer(paths);
-  const widgetHtml = await readFile(path.join(process.cwd(), "mcp", "widget.html"), "utf8");
-  const server = createLocalEsseServer({ version: __ESSE_VERSION__, widgetHtml, settings, registry, batches, thumbnailer });
+  const mediaServer = await LocalMediaServer.start().catch((error) => {
+    throw describeLocalMediaStartupError(error);
+  });
+  const widgetHtml = await readFile(path.join(resolvePluginRoot(), "mcp", "widget.html"), "utf8");
+  const server = createLocalEsseServer({ version: __ESSE_VERSION__, widgetHtml, settings, registry, batches, thumbnailer, mediaServer });
   await server.connect(new StdioServerTransport());
-  process.stderr.write(`esse local MCP ${__ESSE_VERSION__} ready. Data: ${paths.root}\n`);
+  process.stderr.write(`esse local MCP ${__ESSE_VERSION__} ready. Data: ${paths.root}. Media: ${mediaServer.origin}\n`);
+}
+
+function resolvePluginRoot(): string {
+  return path.resolve(process.env.ESSE_PLUGIN_ROOT || process.cwd());
 }
 
 main().catch((error) => {
