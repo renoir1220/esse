@@ -387,6 +387,12 @@ button { -webkit-tap-highlight-color: transparent; }
 .lightbox-caption strong { font-size: var(--font-size-meta); }
 .lightbox-caption > span { color: rgba(255,255,255,.72); font-size: var(--font-size-meta); }
 .lightbox-caption button { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 1px solid rgba(255,255,255,.38); border-radius: 8px; background: rgba(255,255,255,.14); color: white; cursor: pointer; pointer-events: auto; }
+.image-context-menu { position: fixed; z-index: 80; width: 184px; display: grid; gap: 2px; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: color-mix(in srgb, var(--surface) 97%, transparent); box-shadow: 0 16px 42px rgba(0,0,0,.20), 0 3px 10px rgba(0,0,0,.08); color: var(--text); backdrop-filter: blur(18px) saturate(1.05); animation: batch-menu-in 90ms cubic-bezier(.2,.75,.25,1); }
+.image-context-menu button { width: 100%; min-height: 34px; display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 7px; padding: 0 9px; border: 0; border-radius: 7px; outline: 0; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.image-context-menu button:hover, .image-context-menu button:focus-visible { background: var(--surface-2); }
+.image-context-menu button > svg { color: var(--muted); }
+.image-context-menu button.is-danger { color: var(--danger); }
+.image-context-menu button.is-danger > svg { color: var(--danger); }
 .empty-state { min-height: 310px; display: grid; place-items: center; align-content: center; gap: 8px; padding: 26px; text-align: center; }
 .empty-batches-layout { min-height: calc(100vh - 82px); display: grid; grid-template-rows: minmax(220px, 1fr) auto; gap: 12px; }
 .empty-batches-layout .empty-state { min-height: 220px; }

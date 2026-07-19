@@ -8,6 +8,7 @@ import { scanImageFolder } from "../files/image-files.js";
 import { readImageFileMetadata } from "../files/image-metadata.js";
 import { saveFileAs } from "../files/save-file-dialog.js";
 import { openLocalFolder } from "../files/open-folder.js";
+import { copyImageFileToClipboard } from "../files/system-image-clipboard.js";
 import type { Thumbnailer } from "../files/thumbnailer.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SettingsStore } from "../storage/settings-store.js";
@@ -51,6 +52,7 @@ export function createLocalEsseServer(options: {
   batches: BatchManager;
   thumbnailer: Thumbnailer;
   saveFileAs?: typeof saveFileAs;
+  copyImageToClipboard?: typeof copyImageFileToClipboard;
   openFolder?: typeof openLocalFolder;
 }): McpServer {
   const server = new McpServer(
@@ -524,6 +526,22 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     };
   });
 
+  registerAppTool(server, "ui_copy_image_to_clipboard", {
+    title: "Copy local image to clipboard",
+    description: "Widget-only native clipboard copy for an exact generated image, failed-job source, or preserved version.",
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId, jobId }) => {
+    const batch = options.batches.get(batchId);
+    const filePath = previewFilePath(batch, jobId);
+    await (options.copyImageToClipboard || copyImageFileToClipboard)(filePath);
+    return {
+      structuredContent: { batchId, jobId, copied: true },
+      content: [{ type: "text", text: "Image copied to the system clipboard." }]
+    };
+  });
+
   registerAppTool(server, "ui_cancel_queued_jobs", {
     title: "Cancel local queued jobs",
     description: "Widget-only cancellation for jobs not yet sent to a provider.",
@@ -539,6 +557,14 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobIds, allowUnknownCharge }) => batchResult(await options.batches.retry(batchId, jobIds, allowUnknownCharge)));
+
+  registerAppTool(server, "ui_delete_esse_images", {
+    title: "Delete local Esse images",
+    description: "Widget-only deletion of exact current-image or backup IDs from one local batch. Active jobs cannot be deleted.",
+    inputSchema: { batchId: z.string().min(1), imageIds: z.array(z.string()).min(1).max(50) },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+    _meta: appOnly
+  }, async ({ batchId, imageIds }) => batchResult(await options.batches.deleteImages(batchId, imageIds)));
 
   registerAppTool(server, "ui_delete_image_batch", {
     title: "Delete local image batch",

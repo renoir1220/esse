@@ -202,9 +202,28 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
   if (name === "ui_save_image_as") {
     return { structuredContent: { saved: true, canceled: false, path: `C:\\Users\\demo\\Pictures\\${String(args.jobId || "image")}.png` } };
   }
+  if (name === "ui_copy_image_to_clipboard") {
+    return { structuredContent: { batchId: args.batchId, jobId: args.jobId, copied: true } };
+  }
   if (name === "ui_open_batch_folder") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);
     return { structuredContent: { opened: Boolean(batch), path: batch?.outputDirectory } };
+  }
+  if (name === "ui_delete_esse_images") {
+    const batch = state.batches.find((entry) => entry.id === args.batchId);
+    const imageIds = new Set(Array.isArray(args.imageIds) ? args.imageIds.map(String) : []);
+    if (batch) {
+      batch.jobs = batch.jobs
+        .filter((job) => !imageIds.has(job.id))
+        .map((job) => ({ ...job, backups: job.backups?.filter((backup) => !imageIds.has(backup.id)) }));
+      batch.total = batch.jobs.length;
+      batch.queued = batch.jobs.filter((job) => job.status === "queued").length;
+      batch.running = batch.jobs.filter((job) => job.status === "running").length;
+      batch.succeeded = batch.jobs.filter((job) => job.status === "succeeded").length;
+      batch.failed = batch.jobs.filter((job) => job.status === "failed").length;
+      state.activeBatch = batch;
+      return { structuredContent: { batch } };
+    }
   }
   if (name === "modify_selected_images") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);
