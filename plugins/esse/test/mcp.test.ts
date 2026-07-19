@@ -12,7 +12,8 @@ import { BatchStore } from "../src/storage/batch-store.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
 import { BatchManager } from "../src/jobs/batch-manager.js";
 import { Thumbnailer } from "../src/files/thumbnailer.js";
-import { createLocalEsseServer, WIDGET_URI, widgetUriFor } from "../src/mcp/app.js";
+import { createLocalEsseServer, WIDGET_URI } from "../src/mcp/app.js";
+import { ORIGINAL_IMAGE_RESOURCE_TEMPLATE } from "../src/files/original-image-registry.js";
 import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
@@ -31,13 +32,6 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     let nativeSaveSource: string | undefined;
     let nativeClipboardSource: string | undefined;
     let openedFolder: string | undefined;
-    let directMediaSource: string | undefined;
-    const mediaServer = {
-      origin: "http://localhost:4567",
-      urlFor: async (sourcePath: string) => { directMediaSource = sourcePath; return "http://localhost:4567/media/test/image.png"; },
-      close: async () => undefined
-    };
-    const widgetUri = widgetUriFor(mediaServer.origin);
     const server = createLocalEsseServer({
       version: "0.2.0",
       widgetHtml: "<html><body><div id=\"root\"></div></body></html>",
@@ -45,7 +39,6 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
       registry,
       batches,
       thumbnailer: new Thumbnailer(paths),
-      mediaServer,
       saveFileAs: async (sourcePath) => { nativeSaveSource = sourcePath; return path.join(root, "saved.png"); },
       copyImageToClipboard: async (sourcePath) => { nativeClipboardSource = sourcePath; },
       openFolder: async (folderPath) => { openedFolder = folderPath; },
@@ -55,14 +48,14 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await client.connect(clientTransport);
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
-    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_check_for_updates", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_direct_image_url", "ui_get_image_metadata", "ui_save_image_as", "ui_copy_image_to_clipboard", "ui_delete_esse_images", "ui_delete_image_batch"]) {
+    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_check_for_updates", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_original_image_resource", "ui_get_image_metadata", "ui_save_image_as", "ui_copy_image_to_clipboard", "ui_delete_esse_images", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
     }
     assert(!names.includes("get_local_media_status"), "PoC-only media diagnostics must not be published");
     const settingsTool = tools.tools.find((tool) => tool.name === "ui_save_provider_profile");
     assert.deepEqual((settingsTool?._meta as { ui?: { visibility?: string[] } })?.ui?.visibility, ["app"]);
     const openTool = tools.tools.find((tool) => tool.name === "open_esse");
-    assert.equal((openTool?._meta as { ui?: { resourceUri?: string } })?.ui?.resourceUri, widgetUri);
+    assert.equal((openTool?._meta as { ui?: { resourceUri?: string } })?.ui?.resourceUri, WIDGET_URI);
     const createTool = tools.tools.find((tool) => tool.name === "create_image_batch");
     assert(!((createTool?.inputSchema as { required?: string[] })?.required || []).includes("offeringId"), "create_image_batch must use the configured default when offeringId is omitted");
     assert((createTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.referenceImages, "create_image_batch must accept existing Esse image references");
@@ -75,17 +68,16 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
       assert.equal((headless?._meta as { ui?: { resourceUri?: string } })?.ui?.resourceUri, undefined, `${headlessName} must not reopen an inline widget`);
     }
     const resources = await client.listResources();
-    assert(resources.resources.some((resource) => resource.uri === widgetUri));
-    const priorProcessWidgetUri = widgetUriFor("http://localhost:4568");
-    assert.notEqual(widgetUri, priorProcessWidgetUri, "a new media origin must get a cache-busting widget URI");
-    const widget = await client.readResource({ uri: widgetUri });
-    assert.deepEqual((widget.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined)?.ui?.csp?.resourceDomains, [mediaServer.origin]);
-    const legacyWidget = await client.readResource({ uri: WIDGET_URI });
-    assert.equal(legacyWidget.contents[0]?.uri, WIDGET_URI);
-    assert.deepEqual((legacyWidget.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined)?.ui?.csp?.resourceDomains, [mediaServer.origin], "the pre-v2 Widget URI must resolve with the current process CSP after an upgrade");
+    assert(resources.resources.some((resource) => resource.uri === WIDGET_URI));
+    const templates = await client.listResourceTemplates();
+    assert(templates.resourceTemplates.some((resource) => resource.uriTemplate === ORIGINAL_IMAGE_RESOURCE_TEMPLATE));
+    const widget = await client.readResource({ uri: WIDGET_URI });
+    assert.equal((widget.contents[0]?._meta as { ui?: { csp?: unknown } } | undefined)?.ui?.csp, undefined, "the widget must not request localhost CSP access");
+    const legacyWidget = await client.readResource({ uri: "ui://esse/local-v1.html" });
+    assert.equal(legacyWidget.contents[0]?.uri, "ui://esse/local-v1.html");
+    const priorProcessWidgetUri = "ui://esse/local-v2-0123456789abcdef.html";
     const priorProcessWidget = await client.readResource({ uri: priorProcessWidgetUri });
     assert.equal(priorProcessWidget.contents[0]?.uri, priorProcessWidgetUri);
-    assert.deepEqual((priorProcessWidget.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined)?.ui?.csp?.resourceDomains, [mediaServer.origin], "a cached URI from another MCP process must resolve with the current process CSP");
     const open = await client.callTool({ name: "open_esse", arguments: { tab: "settings" } });
     assert.equal((open.structuredContent as { state?: { providers?: unknown[] } }).state?.providers?.length, 0);
     const update = await client.callTool({ name: "ui_check_for_updates", arguments: {} });
@@ -155,10 +147,15 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert(previewItems.every((preview) => preview.dataUrl?.startsWith("data:image/")));
     assert.deepEqual(previewItems.map((preview) => preview.full), [false, true]);
     assert(!JSON.stringify(imagePreviews.structuredContent).includes("data:image/"), "preview bytes must remain hidden from model-visible structured content");
-    const directMedia = await client.callTool({ name: "ui_get_direct_image_url", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
-    assert.equal((directMedia._meta as { mediaUrl?: string } | undefined)?.mediaUrl, "http://localhost:4567/media/test/image.png");
-    assert.equal(directMediaSource, completedOutputPath);
-    assert(!JSON.stringify(directMedia.structuredContent).includes("http://"), "direct media URL must remain hidden from model-visible structured content");
+    const originalImage = await client.callTool({ name: "ui_get_original_image_resource", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
+    const originalImageUri = (originalImage._meta as { resourceUri?: string } | undefined)?.resourceUri;
+    assert(originalImageUri?.startsWith("esse-image://original/"));
+    assert(!JSON.stringify(originalImage.structuredContent).includes("esse-image://"), "original image URI must remain hidden from model-visible structured content");
+    const originalImageBytes = await client.readResource({ uri: originalImageUri! });
+    const originalImageContent = originalImageBytes.contents[0];
+    assert.equal(originalImageContent?.mimeType, "image/png");
+    assert("blob" in originalImageContent!);
+    assert.deepEqual(Buffer.from(originalImageContent.blob!, "base64"), Buffer.from(onePixelPng, "base64"));
     const imageMetadata = await client.callTool({ name: "ui_get_image_metadata", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
     assert.deepEqual(imageMetadata.structuredContent, { batchId: createdBatch?.id, jobId: completedJobId, available: true, width: 1, height: 1, sizeBytes: Buffer.from(onePixelPng, "base64").length });
     const listed = await client.callTool({ name: "list_image_batches", arguments: { limit: 5 } });

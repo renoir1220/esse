@@ -8,7 +8,6 @@ import { BatchStore } from "./storage/batch-store.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { BatchManager } from "./jobs/batch-manager.js";
 import { Thumbnailer } from "./files/thumbnailer.js";
-import { describeLocalMediaStartupError, LocalMediaServer } from "./files/local-media-server.js";
 import { createLocalEsseServer } from "./mcp/app.js";
 
 declare const __ESSE_VERSION__: string;
@@ -54,13 +53,10 @@ async function main(): Promise<void> {
   const batches = new BatchManager(batchStore, registry, paths);
   await batches.initialize();
   const thumbnailer = new Thumbnailer(paths);
-  const mediaServer = await LocalMediaServer.start().catch((error) => {
-    throw describeLocalMediaStartupError(error);
-  });
   const widgetHtml = await readFile(path.join(resolvePluginRoot(), "mcp", "widget.html"), "utf8");
-  const server = createLocalEsseServer({ version: __ESSE_VERSION__, widgetHtml, settings, registry, batches, thumbnailer, mediaServer });
+  const server = createLocalEsseServer({ version: __ESSE_VERSION__, widgetHtml, settings, registry, batches, thumbnailer });
   await server.connect(new StdioServerTransport());
-  process.stderr.write(`esse local MCP ${__ESSE_VERSION__} ready. Data: ${paths.root}. Media: ${mediaServer.origin}\n`);
+  process.stderr.write(`esse local MCP ${__ESSE_VERSION__} ready. Data: ${paths.root}.\n`);
 }
 
 function resolvePluginRoot(): string {

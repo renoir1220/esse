@@ -7,6 +7,7 @@ import { contextMenuPoint } from "./context-menu";
 import { formatImageFileSize, formatImageResolution } from "./image-metadata";
 import type { ImageMetadata } from "./image-metadata";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
+import { originalImageDataUrl } from "./original-image-resource";
 import { providerSavePayload } from "./provider-payload";
 import { DataUrlLruCache, jobFileSignature, jobPreviewRevision, versionedPreviewSignature } from "./preview-cache";
 import { offeringPriceLabel } from "./pricing";
@@ -771,7 +772,7 @@ type ImageAsset = {
 
 type CachedPreview = { signature: string; dataUrl: string };
 type ImageContextMenu = { asset: ImageAsset; scope: "thumbnail" | "lightbox"; left: number; top: number };
-type PreviewTransport = "idle" | "direct-loading" | "direct" | "error";
+type PreviewTransport = "idle" | "resource-loading" | "resource" | "error";
 
 type ModificationOffering = Pick<PublicOffering, "id" | "displayName" | "providerName" | "tierName" | "adapterId" | "price">;
 
@@ -966,11 +967,11 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       return next;
     });
   };
-  const directMediaUrl = async (asset: ImageAsset) => {
-    const result = await bridge.callTool("ui_get_direct_image_url", { batchId: batch.id, jobId: asset.id });
-    const mediaUrl = typeof result._meta?.mediaUrl === "string" ? result._meta.mediaUrl : undefined;
-    if (!mediaUrl) throw new Error("Esse 未返回本机原图地址。");
-    return mediaUrl;
+  const originalImageUrl = async (asset: ImageAsset) => {
+    const result = await bridge.callTool("ui_get_original_image_resource", { batchId: batch.id, jobId: asset.id });
+    const resourceUri = typeof result._meta?.resourceUri === "string" ? result._meta.resourceUri : undefined;
+    if (!resourceUri) throw new Error("Esse 未返回原图资源地址。");
+    return originalImageDataUrl(await bridge.readResource(resourceUri));
   };
   const openImageContextMenu = (event: React.MouseEvent, asset: ImageAsset, scope: ImageContextMenu["scope"]) => {
     if (!(asset.outputPath || asset.inputPath) || asset.job && isProcessing(asset.job)) return;
@@ -1016,14 +1017,14 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     let canceled = false;
     setPreviewFull(undefined);
     setPreviewError(undefined);
-    setPreviewTransport("direct-loading");
+    setPreviewTransport("resource-loading");
     setPreviewZoom(initialImageZoom);
-    void directMediaUrl(previewAsset).then((mediaUrl) => {
+    void originalImageUrl(previewAsset).then((dataUrl) => {
       if (canceled) return;
-      setPreviewFull(mediaUrl);
+      setPreviewFull(dataUrl);
     }).catch((error) => {
       if (canceled) return;
-      const message = `原图直读失败：${errorMessage(error)} 请完全重启 Codex/ChatGPT 后重试。`;
+      const message = `原图读取失败：${errorMessage(error)}`;
       setPreviewTransport("error");
       setPreviewError(message);
       props.onNotice(message);
@@ -1034,7 +1035,10 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       if (event.key === "ArrowRight") { event.preventDefault(); movePreview(1); }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => { canceled = true; window.removeEventListener("keydown", onKeyDown); };
+    return () => {
+      canceled = true;
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [previewAsset?.id, previewIndex, previewableAssets.length, previewLoadAttempt]);
   const zoomPreview = (event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -1155,10 +1159,10 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
             src={previewFull}
             alt={previewAsset.name}
             style={{ transform: `translate3d(${previewZoom.x}px, ${previewZoom.y}px, 0) scale(${previewZoom.scale})` }}
-            onLoad={() => { if (previewTransport === "direct-loading") setPreviewTransport("direct"); }}
+            onLoad={() => { if (previewTransport === "resource-loading") setPreviewTransport("resource"); }}
             onError={() => {
-              if (previewTransport !== "direct-loading") return;
-              const message = "原图直读连接失败。请确认 Codex/ChatGPT 可以访问 127.0.0.1，然后完全重启桌面应用。";
+              if (previewTransport !== "resource-loading") return;
+              const message = "原图数据无法显示，请重试。";
               setPreviewFull(undefined);
               setPreviewTransport("error");
               setPreviewError(message);
@@ -1173,7 +1177,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
             <button type="button" onClick={() => setPreviewLoadAttempt((value) => value + 1)}>重试</button>
           </div> : <span className="spinner large lightbox-spinner" />}
         </div>
-        <div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span>{previewTransport === "direct" && <span title="浏览器从 Esse 本机服务读取原始图片">原图直读</span>}<button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div>
+        <div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span>{previewTransport === "resource" && <span title="通过 MCP Apps 资源读取本地原始图片">原图</span>}<button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div>
       </div>}
       {detailAsset && <TaskDetailDialog asset={detailAsset} metadata={detailMetadata} referencePaths={detailReferencePaths} previews={previews} onClose={() => setDetailAsset(undefined)} />}
       {contextMenu && <ImageContextMenuView menu={contextMenu} selected={Boolean(contextMenu.asset.selectableImage && props.selected.has(contextMenu.asset.selectableImage.id))} onSelect={contextMenu.asset.selectableImage ? () => { toggle(contextMenu.asset.selectableImage!); setContextMenu(undefined); } : undefined} onCopy={() => void copyImage(contextMenu.asset)} onDelete={contextMenu.scope === "thumbnail" ? () => void deleteImage(contextMenu.asset) : undefined} />}

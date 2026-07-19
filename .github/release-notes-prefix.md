@@ -2,27 +2,27 @@
 
 ## 简体中文
 
-### Esse 0.2.2-beta.3
+### Esse 0.2.2-beta.4
 
-- 修复 macOS 原图直读失败：Node 在 macOS 上可能把 `localhost` 仅绑定到 IPv6 `::1`，而嵌入式图片加载器通过 IPv4 访问。Esse 现在明确监听并返回 `127.0.0.1` 地址，Widget CSP 也与该地址保持一致。
-- 保持单一原图直读路径，不增加 2400px Base64 或 MCP 高清回退。连接问题仍会明确报错。
-- 保留 beta.2 对旧 Widget URI 的兼容，避免 MCP 进程切换后出现资源读取失败。
+- 原图预览改用标准 MCP Apps `resources/read` 二进制资源，完全移除本地 HTTP 服务，规避 macOS Chromium 对嵌入式页面访问回环地址的限制。
+- 原始文件字节和 MIME 类型会原样传输并显示，不缩放、不转码，也不增加 2400px Base64 或 MCP 高清回退。
+- macOS 与 Windows 统一使用同一条资源通道，并保留旧 Widget URI 兼容；资源令牌短期有效，读取时会校验文件大小、修改时间和 60 MB 上限。
 
-beta.3 取代 beta.1 和 beta.2，恢复 macOS 预发布测试。多缩略图冷加载优化继续在 [#15](../../issues/15) 跟踪。
+该方案已通过 macOS Codex 桌面端真实用户链路验证。多缩略图冷加载优化继续在 [#15](../../issues/15) 跟踪。
 
-[查看 v0.2.2-beta.2...v0.2.2-beta.3 完整变更](../../compare/v0.2.2-beta.2...v0.2.2-beta.3)
+[查看 v0.2.2-beta.3...v0.2.2-beta.4 完整变更](../../compare/v0.2.2-beta.3...v0.2.2-beta.4)
 
 ## English
 
-### Esse 0.2.2-beta.3
+### Esse 0.2.2-beta.4
 
-- Fixed direct original-image access on macOS. Node could bind `localhost` only to IPv6 `::1` while the embedded image loader connected over IPv4. Esse now explicitly listens on and returns `127.0.0.1`, with matching Widget CSP metadata.
-- Kept one direct-original path. This release does not add a 2400px Base64 or MCP high-resolution fallback, and connection failures remain explicit.
-- Retained beta.2 compatibility for stale Widget resource URIs across MCP process changes.
+- Original-image viewing now uses standard MCP Apps `resources/read` binary resources and removes the local HTTP server entirely, avoiding macOS Chromium restrictions on loopback access from embedded pages.
+- Original file bytes and MIME types are transferred and displayed unchanged, with no resizing, re-encoding, 2400px Base64 fallback, or MCP high-resolution fallback.
+- macOS and Windows now share the same resource path while stale Widget URIs remain compatible. Resource tokens are short-lived, and reads validate file size, modification time, and a 60 MB limit.
 
-beta.3 supersedes beta.1 and beta.2 and resumes macOS prerelease testing. Cold multi-thumbnail loading remains tracked in [#15](../../issues/15).
+This path was validated end to end in the Codex desktop app on macOS. Cold multi-thumbnail loading remains tracked in [#15](../../issues/15).
 
-[View the full v0.2.2-beta.2...v0.2.2-beta.3 changelog](../../compare/v0.2.2-beta.2...v0.2.2-beta.3)
+[View the full v0.2.2-beta.3...v0.2.2-beta.4 changelog](../../compare/v0.2.2-beta.3...v0.2.2-beta.4)
 
 ---
 
