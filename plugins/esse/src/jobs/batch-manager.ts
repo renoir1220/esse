@@ -355,6 +355,24 @@ export class BatchManager {
     return snapshot(this.requireBatch(id));
   }
 
+  async waitForPersistence(batchId?: string): Promise<void> {
+    if (batchId) {
+      while (true) {
+        const pending = this.saveChains.get(batchId);
+        if (!pending) return;
+        await pending;
+        if (this.saveChains.get(batchId) === pending) return;
+      }
+    }
+
+    while (true) {
+      const pending = new Map(this.saveChains);
+      await Promise.all(pending.values());
+      if (pending.size === this.saveChains.size
+        && [...this.saveChains].every(([id, save]) => pending.get(id) === save)) return;
+    }
+  }
+
   activation(): BatchActivation | undefined {
     return this.activatedBatchId ? { batchId: this.activatedBatchId, revision: this.activationRevision } : undefined;
   }
