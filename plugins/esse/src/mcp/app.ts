@@ -5,6 +5,7 @@ import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@model
 import { z } from "zod";
 import type { BatchManager } from "../jobs/batch-manager.js";
 import { scanImageFolder } from "../files/image-files.js";
+import { readImageFileMetadata } from "../files/image-metadata.js";
 import { fileDataUrl } from "../files/output-files.js";
 import { saveFileAs } from "../files/save-file-dialog.js";
 import { openLocalFolder } from "../files/open-folder.js";
@@ -412,6 +413,26 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     const dataUrl = full ? await fileDataUrl(filePath).catch(() => options.thumbnailer.dataUrl(filePath, 1600)) : await options.thumbnailer.dataUrl(filePath, 640);
     if (!dataUrl) throw new Error("Could not create a local preview.");
     return { structuredContent: { batchId, jobId, sourceIndex, available: true }, content: [{ type: "text", text: "Local image preview ready." }], _meta: { dataUrl } };
+  });
+
+  registerAppTool(server, "ui_get_image_metadata", {
+    title: "Get local image metadata",
+    description: "Widget-only dimensions and file size from the original local image file.",
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId, jobId }) => {
+    const batch = options.batches.get(batchId);
+    const job = batch.jobs.find((entry) => entry.id === jobId);
+    const backup = batch.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === jobId);
+    const filePath = backup?.outputPath || job?.outputPath;
+    if (!filePath) return { structuredContent: { batchId, jobId, available: false }, content: [{ type: "text", text: "Local image metadata is unavailable." }] };
+    try {
+      const metadata = await readImageFileMetadata(filePath);
+      return { structuredContent: { batchId, jobId, available: true, ...metadata }, content: [{ type: "text", text: "Local image metadata ready." }] };
+    } catch {
+      return { structuredContent: { batchId, jobId, available: false }, content: [{ type: "text", text: "Local image metadata is unavailable." }] };
+    }
   });
 
   registerAppTool(server, "ui_save_image_as", {

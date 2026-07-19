@@ -147,6 +147,12 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
     const dataUrl = sourceIndex === undefined ? backup?.previewUrl || job?.previewUrl : job?.referencePreviewUrls?.[sourceIndex] || (sourceIndex === 0 ? job?.previewUrl : undefined);
     return { structuredContent: { available: Boolean(dataUrl), sourceIndex }, _meta: { dataUrl } };
   }
+  if (name === "ui_get_image_metadata") {
+    const batch = state.batches.find((entry) => entry.id === args.batchId);
+    const job = batch?.jobs.find((entry) => entry.id === args.jobId);
+    const backup = batch?.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === args.jobId);
+    return { structuredContent: { available: Boolean(backup?.outputPath || job?.outputPath), width: 2048, height: 1536, sizeBytes: 2_621_440 } };
+  }
   if (name === "ui_test_provider_profile") {
     return { structuredContent: { ok: true, modelCount: 3 }, _meta: { models: ["gpt-image-2", "nano-banana-2", "gemini-3.1-flash-image-preview"] } };
   }
