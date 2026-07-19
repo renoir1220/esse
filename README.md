@@ -1,5 +1,7 @@
 # Esse
 
+**语言：简体中文 | [English](README.en.md)**
+
 Esse 是面向 Codex 和 ChatGPT Work 的本地图片工作台。它通过本机 `stdio MCP` 运行，不需要云端 Esse 服务、HTTPS 隧道、`.env` 或 `npm start`。
 
 只有实际生图或改图请求会把所选参考图发往当前 Agent 的图像模型或用户选择的 Provider。Provider Key、任务记录、输入路径和输出图片都保留在本机。
