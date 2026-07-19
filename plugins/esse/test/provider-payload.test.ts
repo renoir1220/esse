@@ -18,7 +18,7 @@ test("provider save payload contains only schema-valid defined fields", () => {
       canonicalModelId: "gpt-image-2",
       providerModelId: "gpt-image-2",
       displayName: "GPT-Image 2",
-      price: { mode: "per_request", amount: 0.035, currency: "CNY", observedAt: "2026-07-18", note: undefined },
+      price: { mode: "per_request", amount: 0.035, currency: "CNY", observedAt: " 2026-07-18 ", note: " 兔子 default 目录价 " },
       supportsTextToImage: true,
       supportsImageToImage: true,
       sizes: ["auto"],
@@ -31,6 +31,6 @@ test("provider save payload contains only schema-valid defined fields", () => {
   const offering = (payload.offerings as Array<Record<string, unknown>>)[0];
   assert(offering);
   assert(!("id" in offering));
-  assert.deepEqual(offering.price, { mode: "per_request", currency: "CNY", amount: 0.035 });
+  assert.deepEqual(offering.price, { mode: "per_request", currency: "CNY", amount: 0.035, observedAt: "2026-07-18", note: "兔子 default 目录价" });
   assert.deepEqual(compactToolArgs({ keep: true, omit: undefined, nested: { bad: Number.NaN, good: "ok" } }), { keep: true, nested: { good: "ok" } });
 });

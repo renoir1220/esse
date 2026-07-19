@@ -40,6 +40,8 @@ function offeringPayload(offering: OfferingConfig): Record<string, unknown> {
 
 function pricePayload(price: PriceConfig): Record<string, unknown> {
   const currency = price.currency.trim();
+  const observedAt = price.observedAt?.trim();
+  const note = price.note?.trim();
   if (!currency) throw new Error("请填写模型计费币种。");
   return {
     mode: price.mode,
@@ -47,5 +49,7 @@ function pricePayload(price: PriceConfig): Record<string, unknown> {
     ...(Number.isFinite(price.amount) ? { amount: price.amount } : {}),
     ...(Number.isFinite(price.inputPerMillion) ? { inputPerMillion: price.inputPerMillion } : {}),
     ...(Number.isFinite(price.outputPerMillion) ? { outputPerMillion: price.outputPerMillion } : {}),
+    ...(observedAt ? { observedAt } : {}),
+    ...(note ? { note } : {}),
   };
 }
