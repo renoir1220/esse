@@ -8,6 +8,14 @@ import type { ImageMetadata } from "./image-metadata";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
 import { providerSavePayload } from "./provider-payload";
 import { offeringPriceLabel } from "./pricing";
+import {
+  blankOffering,
+  createCustomProviderDraft,
+  createTuziProviderDraft,
+  offeringFromTuziModel,
+  TUZI_PROVIDER_PRESETS,
+  tuziProviderPresetForDraft,
+} from "./tuzi-catalog";
 import { imagesMentionedInRequest, selectableImages, selectionModelContext } from "./selection-context";
 import type { SelectableImage } from "./selection-context";
 import { batchIdAfterStateRefresh, batchIdAfterUpdate, batchPollDelay, hasNewBatchActivation, isStaleStateRefresh, mergeBatchWithoutReordering } from "./workbench-state";
@@ -302,11 +310,16 @@ function App() {
 }
 
 function SettingsView(props: { state: WorkbenchState; applyResult: (result: ToolResult) => void; onNotice: (message?: string) => void }) {
-  const [draft, setDraft] = useState<ProviderDraft>(() => props.state.providers[0] ? providerDraftFromProfile(props.state.providers[0]) : newRabbitDraft());
+  const [draft, setDraft] = useState<ProviderDraft>(() => props.state.providers[0] ? providerDraftFromProfile(props.state.providers[0]) : createTuziProviderDraft("tuzi-default"));
   const [busy, setBusy] = useState<string>();
   const [models, setModels] = useState<string[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const editing = Boolean(draft.id);
+  const activeTuziPreset = tuziProviderPresetForDraft(draft);
+  const configuredTuziPresetIds = useMemo(() => new Set(props.state.providers.flatMap((profile) => {
+    const preset = tuziProviderPresetForDraft(providerDraftFromProfile(profile));
+    return preset ? [preset.id] : [];
+  })), [props.state.providers]);
 
   const setDefaultOffering = async (offeringId: string) => {
     if (!offeringId || offeringId === props.state.defaultOfferingId) return;
@@ -324,6 +337,19 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
     setDraft(providerDraftFromProfile(profile));
     setModels([]);
     setConfirmDelete(false);
+  };
+
+  const startProviderDraft = (choiceId: string) => {
+    const preset = TUZI_PROVIDER_PRESETS.find((entry) => entry.id === choiceId);
+    setDraft(preset ? createTuziProviderDraft(preset.id) : createCustomProviderDraft());
+    setModels([]);
+    setConfirmDelete(false);
+  };
+
+  const addOffering = (choiceId: string) => {
+    const presetModel = activeTuziPreset?.models.find((entry) => entry.catalogId === choiceId);
+    const offering = presetModel ? offeringFromTuziModel(presetModel) : blankOffering();
+    setDraft((current) => ({ ...current, offerings: [...current.offerings, offering] }));
   };
 
   const save = async () => {
@@ -356,7 +382,7 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
     setBusy("delete");
     try {
       props.applyResult(await bridge.callTool("ui_delete_provider_profile", { id: draft.id }));
-      setDraft(newRabbitDraft());
+      setDraft(createTuziProviderDraft("tuzi-default"));
       props.onNotice("Provider 配置和对应的本地密钥已删除。");
     } catch (error) { props.onNotice(errorMessage(error)); }
     finally { setBusy(undefined); setConfirmDelete(false); }
@@ -388,7 +414,24 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
         />
       </div>
       <aside className="provider-list">
-        <div className="section-title"><strong>Provider</strong><button className="compact-icon-button" onClick={() => setDraft(newRabbitDraft())} aria-label="新建 Provider" title="新建 Provider"><Plus size={15} /></button></div>
+        <div className="section-title">
+          <strong>Provider</strong>
+          <AddChoiceMenu
+            ariaLabel="新建 Provider"
+            title="选择 Provider"
+            options={[
+              ...TUZI_PROVIDER_PRESETS.map((preset) => ({
+                id: preset.id,
+                label: preset.label,
+                description: configuredTuziPresetIds.has(preset.id) ? "已配置，可从左侧列表编辑" : `${adapterDisplayName(preset.adapterId)} · ${preset.models.length} 个预制模型`,
+                disabled: configuredTuziPresetIds.has(preset.id),
+                disabledLabel: "已配置",
+              })),
+              { id: "custom", label: "添加自定义", description: "手动填写接口、模型参数和价格", custom: true },
+            ]}
+            onChoose={startProviderDraft}
+          />
+        </div>
         {props.state.providers.length === 0 && <div className="empty-mini">尚未配置 Provider</div>}
         {props.state.providers.map((profile) => (
           <button key={profile.id} className={`provider-item ${draft.id === profile.id ? "is-active" : ""}`} onClick={() => editProvider(profile)}>
@@ -402,24 +445,44 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
 
       <div className="provider-editor">
         <div className="editor-heading"><h1>{draft.displayName || "Provider"} · {draft.tierName || "档位"}</h1></div>
+        {activeTuziPreset && <div className="preset-config-banner">
+          <span><strong>预制配置</strong> · {activeTuziPreset.label}</span>
+          <small>接口与模型已填好；目录价格为 2026-07-19 固定值，暂不自动同步。每个分组独立保存 API Key。</small>
+        </div>}
         <section className="settings-section">
           <div className="settings-section-heading"><strong>连接</strong></div>
           <div className="form-grid">
             <Field label="服务商名称"><input value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
             <Field label="档位名称"><input value={draft.tierName} onChange={(event) => setDraft({ ...draft, tierName: event.target.value })} /></Field>
             <Field label="API 地址" wide><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} /></Field>
-            <Field label="接口格式" labelAccessory={<InfoTip label="查看兔子分组与接口格式的对应关系"><strong>兔子分组对应关系</strong><span><b>default</b> → 兔子 JSON Images</span><span><b>codex / openai / 原价</b> → OpenAI Images</span></InfoTip>}><SettingsSelect ariaLabel="接口格式" value={draft.adapterId} options={[{ value: "tuzi-json-images", label: "兔子 JSON Images" }, { value: "openai-images", label: "OpenAI Images" }]} onChange={(value) => setDraft({ ...draft, adapterId: value as ProviderDraft["adapterId"] })} /></Field>
+            <Field label="接口格式" labelAccessory={<InfoTip label="查看兔子分组与接口格式的对应关系"><strong>兔子分组对应关系</strong>{TUZI_PROVIDER_PRESETS.map((preset) => <span key={preset.id}><b>{preset.tierName}</b> → {adapterDisplayName(preset.adapterId)}</span>)}<span>其他分组请选择“添加自定义”，按接口文档填写。</span></InfoTip>}><SettingsSelect ariaLabel="接口格式" value={draft.adapterId} options={[{ value: "tuzi-json-images", label: "兔子 JSON Images" }, { value: "openai-images", label: "OpenAI Images" }]} onChange={(value) => setDraft({ ...draft, adapterId: value as ProviderDraft["adapterId"] })} /></Field>
             <Field label="并发数"><input type="number" min="1" max="12" value={draft.concurrency} onChange={(event) => setDraft({ ...draft, concurrency: Number(event.target.value) })} /></Field>
-            <Field label="API Key" wide hint={draft.hasApiKey ? "留空保留现有密钥" : "安全存储在本机"}>
-              <div className="secret-input"><input type="password" autoComplete="off" placeholder={draft.hasApiKey ? "•••••••• 已安全保存" : "粘贴 API Key"} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} /><button onClick={() => void test()} disabled={Boolean(busy)}>{busy === "test" ? "测试中…" : "测试连接"}</button></div>
+            <Field label="API Key" wide hint={draft.hasApiKey ? "留空保留现有密钥" : activeTuziPreset ? `仅用于 ${activeTuziPreset.label} 分组，安全存储在本机` : "安全存储在本机"}>
+              <div className="secret-input"><input type="password" autoComplete="off" placeholder={draft.hasApiKey ? "•••••••• 已安全保存" : "粘贴 API Key"} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} /><button onClick={() => void test()} disabled={Boolean(busy) || !draft.baseUrl || (!draft.hasApiKey && !draft.apiKey.trim())}>{busy === "test" ? "测试中…" : "测试连接"}</button></div>
             </Field>
           </div>
         </section>
 
-        {models.length > 0 && <div className="models-found"><strong>已发现模型</strong><div>{models.slice(0, 20).map((model) => <button key={model} onClick={() => updateOffering(0, { providerModelId: model, canonicalModelId: model, displayName: model })}>{model}</button>)}</div></div>}
+        {models.length > 0 && !activeTuziPreset && <div className="models-found"><strong>已发现模型</strong><div>{models.slice(0, 20).map((model) => <button key={model} onClick={() => updateOffering(0, { providerModelId: model, canonicalModelId: model, displayName: model })}>{model}</button>)}</div></div>}
 
         <section className="settings-section models-section">
-          <div className="offerings-heading"><strong>模型</strong><button className="compact-icon-button" onClick={() => setDraft((current) => ({ ...current, offerings: [...current.offerings, blankOffering()] }))} aria-label="添加模型" title="添加模型"><Plus size={15} /></button></div>
+          <div className="offerings-heading">
+            <strong>模型</strong>
+            <AddChoiceMenu
+              ariaLabel="添加模型"
+              title={activeTuziPreset ? `${activeTuziPreset.label} 支持的模型` : "添加模型"}
+              options={[
+                ...(activeTuziPreset?.models.map((model) => ({
+                  id: model.catalogId,
+                  label: model.displayName,
+                  description: `${model.providerModelId} · ${offeringPriceLabel(model.price)}`,
+                  disabled: draft.offerings.some((offering) => offering.providerModelId === model.providerModelId),
+                })) || []),
+                { id: "custom", label: "添加自定义", description: "手动填写模型参数和价格", custom: true },
+              ]}
+              onChoose={addOffering}
+            />
+          </div>
           <div className="offering-list">
             {draft.offerings.map((offering, index) => (
               <article className="offering-editor" key={offering.id || index}>
@@ -438,11 +501,34 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
 
         <footer className="settings-actions">
           <div>{editing && <button className={`danger-button ${confirmDelete ? "confirm" : ""}`} onClick={() => void remove()} disabled={Boolean(busy)}>{confirmDelete ? "再次点击确认删除" : "删除配置"}</button>}</div>
-          <button className="primary-button" onClick={() => void save()} disabled={Boolean(busy) || !draft.displayName || !draft.baseUrl || draft.offerings.some((offering) => !offering.providerModelId)}>{busy === "save" ? "保存中…" : "保存"}</button>
+          <button className="primary-button" onClick={() => void save()} disabled={Boolean(busy) || !draft.displayName || !draft.baseUrl || (!draft.id && !draft.apiKey.trim()) || draft.offerings.some((offering) => !offering.providerModelId)}>{busy === "save" ? "保存中…" : "保存"}</button>
         </footer>
       </div>
     </section>
   );
+}
+
+type AddChoiceOption = { id: string; label: string; description?: string; disabled?: boolean; disabledLabel?: string; custom?: boolean };
+
+function AddChoiceMenu(props: { ariaLabel: string; title: string; options: AddChoiceOption[]; onChoose: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  return <div className="add-choice-menu" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setOpen(false); }} onKeyDown={(event) => { if (event.key === "Escape") setOpen(false); }}>
+    <button type="button" className="compact-icon-button" onClick={() => setOpen((current) => !current)} aria-label={props.ariaLabel} title={props.ariaLabel} aria-haspopup="menu" aria-expanded={open}><Plus size={15} /></button>
+    {open && <div className="add-choice-popover" role="menu" aria-label={props.title}>
+      <strong className="add-choice-title">{props.title}</strong>
+      {props.options.map((option) => <button
+        key={option.id}
+        type="button"
+        role="menuitem"
+        className={`add-choice-item ${option.custom ? "is-custom" : ""}`}
+        disabled={option.disabled}
+        onClick={() => { props.onChoose(option.id); setOpen(false); }}
+      >
+        <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+        {option.disabled ? <small>{option.disabledLabel || "已添加"}</small> : <Plus size={13} />}
+      </button>)}
+    </div>}
+  </div>;
 }
 
 function SettingsSelect(props: { ariaLabel: string; value: string; options: Array<{ value: string; label: string }>; onChange: (value: string) => void; disabled?: boolean }) {
@@ -1038,18 +1124,6 @@ function providerDraftFromProfile(profile: ProviderProfile): ProviderDraft {
     apiKey: "",
     hasApiKey: profile.hasApiKey
   };
-}
-
-function newRabbitDraft(): ProviderDraft {
-  return { displayName: "兔子", tierName: "default", baseUrl: "https://api.tu-zi.com", adapterId: "tuzi-json-images", concurrency: 3, apiKey: "", hasApiKey: false, offerings: [rabbitOffering()] };
-}
-
-function rabbitOffering(): OfferingConfig {
-  return { id: "", canonicalModelId: "gpt-image-2", providerModelId: "gpt-image-2", displayName: "GPT-Image 2", price: { mode: "per_request", amount: 0.035, currency: "CNY", observedAt: "2026-07-18" }, supportsTextToImage: true, supportsImageToImage: true, sizes: ["auto", "1024x1024", "1536x1024", "1024x1536"], qualities: ["auto", "low", "medium", "high"] };
-}
-
-function blankOffering(): OfferingConfig {
-  return { id: "", canonicalModelId: "", providerModelId: "", displayName: "", price: { mode: "unknown", currency: "CNY" }, supportsTextToImage: true, supportsImageToImage: true, sizes: [], qualities: [] };
 }
 
 function adapterDisplayName(adapterId: ProviderDraft["adapterId"]): string {
