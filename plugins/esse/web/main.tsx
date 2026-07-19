@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
+import { ArrowUpRight, ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, Copy, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
 import { bridge } from "./bridge";
 import { shouldSubmitComposerKey } from "./composer-keyboard";
+import { contextMenuPoint } from "./context-menu";
 import { formatImageFileSize, formatImageResolution } from "./image-metadata";
 import type { ImageMetadata } from "./image-metadata";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
@@ -20,7 +21,7 @@ import {
 import { imagesMentionedInRequest, selectableImages, selectionModelContext } from "./selection-context";
 import type { SelectableImage } from "./selection-context";
 import { batchIdAfterStateRefresh, batchIdAfterUpdate, batchPollDelay, hasNewBatchActivation, isStaleStateRefresh, mergeBatchWithoutReordering } from "./workbench-state";
-import type { BatchSnapshot, JobBackupSnapshot, JobCallSnapshot, JobSnapshot, OfferingConfig, ProviderDraft, ProviderProfile, PublicOffering, ToolResult, WorkbenchState } from "./types";
+import type { BatchSnapshot, JobBackupSnapshot, JobCallSnapshot, JobSnapshot, OfferingConfig, ProviderDraft, ProviderProfile, PublicOffering, ToolResult, UpdateStatus, WorkbenchState } from "./types";
 import "./styles.css";
 
 type Tab = "batches" | "settings";
@@ -63,6 +64,8 @@ function App() {
   const [modificationRequest, setModificationRequest] = useState(() => persistedState.modificationRequest || "");
   const [displayMode, setDisplayMode] = useState(window.openai?.displayMode || "inline");
   const [notice, setNotice] = useState<string>();
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus>();
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string>();
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [batchSwitcherOpen, setBatchSwitcherOpen] = useState(false);
   const [batchMenuOpen, setBatchMenuOpen] = useState(false);
@@ -114,6 +117,14 @@ function App() {
   useEffect(() => {
     if (isPreview) return;
     void bridge.callTool("ui_get_local_state", { batchId: activeBatchId }).then(applyResult).catch((error) => setNotice(errorMessage(error)));
+  }, []);
+
+  useEffect(() => {
+    let canceled = false;
+    void bridge.callTool("ui_check_for_updates", {}).then((result) => {
+      if (!canceled && result.structuredContent?.update) setUpdateStatus(result.structuredContent.update);
+    }).catch(() => undefined);
+    return () => { canceled = true; };
   }, []);
 
   useEffect(() => {
@@ -314,6 +325,12 @@ function App() {
       </header>
 
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice(undefined)} aria-label="关闭">×</button></div>}
+
+      {updateStatus?.updateAvailable && updateStatus.latestVersion !== dismissedUpdateVersion && updateStatus.releaseUrl && <div className="update-notice" role="status">
+        <div><strong>Esse {updateStatus.latestVersion} 已发布</strong><span>当前版本 {updateStatus.currentVersion}</span></div>
+        <a href={updateStatus.releaseUrl} target="_blank" rel="noopener noreferrer">查看更新<ArrowUpRight size={14} /></a>
+        <button type="button" onClick={() => setDismissedUpdateVersion(updateStatus.latestVersion)} aria-label="暂时关闭更新提示"><X size={14} /></button>
+      </div>}
 
       {tab === "settings" ? (
         <SettingsView state={state} applyResult={applyResult} onNotice={setNotice} />
@@ -753,6 +770,7 @@ type ImageAsset = {
 };
 
 type CachedPreview = { signature: string; dataUrl: string };
+type ImageContextMenu = { asset: ImageAsset; scope: "thumbnail" | "lightbox"; left: number; top: number };
 
 type ModificationOffering = Pick<PublicOffering, "id" | "displayName" | "providerName" | "tierName" | "adapterId" | "price">;
 
@@ -765,6 +783,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   const [previewZoom, setPreviewZoom] = useState(initialImageZoom);
   const [detailAsset, setDetailAsset] = useState<ImageAsset>();
   const [detailMetadata, setDetailMetadata] = useState<ImageMetadata>();
+  const [contextMenu, setContextMenu] = useState<ImageContextMenu>();
   const [busy, setBusy] = useState<string>();
   const modificationOfferings = useMemo<ModificationOffering[]>(() => {
     const configured = props.offerings
@@ -918,6 +937,24 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [modelMenuOpen]);
 
+  useEffect(() => {
+    if (!contextMenu) return;
+    const close = () => setContextMenu(undefined);
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    window.addEventListener("pointerdown", close, { passive: true });
+    window.addEventListener("blur", close, { passive: true });
+    window.addEventListener("resize", close, { passive: true });
+    window.addEventListener("scroll", close, { passive: true, capture: true });
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("pointerdown", close);
+      window.removeEventListener("blur", close);
+      window.removeEventListener("resize", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [contextMenu]);
+
   const toggle = (image: SelectableImage) => {
     props.setSelected((current) => {
       const next = new Set(current);
@@ -936,6 +973,38 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     if (!dataUrl) throw new Error("无法读取本地原图。");
     previewDataUrlCache.set(cacheKey, dataUrl);
     return dataUrl;
+  };
+  const openImageContextMenu = (event: React.MouseEvent, asset: ImageAsset, scope: ImageContextMenu["scope"]) => {
+    if (!(asset.outputPath || asset.inputPath) || asset.job && isProcessing(asset.job)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const itemCount = scope === "thumbnail" ? 3 : 1;
+    const point = contextMenuPoint(event.clientX, event.clientY, 184, itemCount * 34 + 12, window.innerWidth, window.innerHeight);
+    setContextMenu({ asset, scope, ...point });
+  };
+  const copyImage = async (asset: ImageAsset) => {
+    setContextMenu(undefined);
+    setBusy(`copy:${asset.id}`);
+    try {
+      await bridge.callTool("ui_copy_image_to_clipboard", { batchId: batch.id, jobId: asset.id });
+      props.onNotice(`已复制 ${asset.name} 到剪贴板`);
+    } catch (error) { props.onNotice(errorMessage(error)); }
+    finally { setBusy(undefined); }
+  };
+  const deleteImage = async (asset: ImageAsset) => {
+    setContextMenu(undefined);
+    setBusy(`delete-image:${asset.id}`);
+    try {
+      const result = await bridge.callTool("ui_delete_esse_images", { batchId: batch.id, imageIds: [asset.id] });
+      props.applyResult(result);
+      const nextBatch = result.structuredContent?.batch;
+      if (nextBatch) {
+        const remaining = new Set(selectableImages(nextBatch).map((image) => image.id));
+        props.setSelected((current) => new Set([...current].filter((id) => remaining.has(id))));
+      } else props.setSelected((current) => new Set([...current].filter((id) => id !== asset.id)));
+      props.onNotice(`已删除 ${asset.name}`);
+    } catch (error) { props.onNotice(errorMessage(error)); }
+    finally { setBusy(undefined); }
   };
   const openPreview = (asset: ImageAsset) => setPreviewAsset(asset);
   const previewIndex = previewAsset ? previewableAssets.findIndex((asset) => asset.id === previewAsset.id) : -1;
@@ -1018,7 +1087,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
           <section className="image-grid">{assetsToShow.map((asset) => {
             const filePath = asset.outputPath || asset.inputPath;
             const preview = filePath && previews[asset.id]?.signature === assetFileSignature(asset, filePath) ? previews[asset.id]?.dataUrl : undefined;
-            return <JobCard key={asset.id} asset={asset} preview={asset.job && isProcessing(asset.job) ? undefined : preview} sourcePreviews={sourcePreviewsFor(asset)} selected={Boolean(asset.selectableImage && props.selected.has(asset.selectableImage.id))} busy={busy === `retry:${asset.id}`} onSelect={asset.selectableImage ? () => toggle(asset.selectableImage!) : undefined} onPreview={() => openPreview(asset)} onDetail={() => setDetailAsset(asset)} onSave={() => void saveImage(asset)} onRetry={asset.job ? () => void retry(asset.job!) : undefined} />;
+            return <JobCard key={asset.id} asset={asset} preview={asset.job && isProcessing(asset.job) ? undefined : preview} sourcePreviews={sourcePreviewsFor(asset)} selected={Boolean(asset.selectableImage && props.selected.has(asset.selectableImage.id))} busy={busy === `retry:${asset.id}`} onSelect={asset.selectableImage ? () => toggle(asset.selectableImage!) : undefined} onPreview={() => openPreview(asset)} onContextMenu={(event) => openImageContextMenu(event, asset, "thumbnail")} onDetail={() => setDetailAsset(asset)} onSave={() => void saveImage(asset)} onRetry={asset.job ? () => void retry(asset.job!) : undefined} />;
           })}</section>
           {assets.length > assetsToShow.length && <div className="show-more">展开后可查看全部 {assets.length} 张图片</div>}
         </section>
@@ -1067,13 +1136,14 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
         </section>
       </div>
       {batch.queued > 0 && <footer className="batch-actions"><button className="secondary-button" onClick={() => void cancel()} disabled={Boolean(busy)}>取消排队</button></footer>}
-      {previewAsset && <div className="lightbox" role="dialog" aria-modal="true" aria-label={previewAsset.name}><button className="lightbox-close" onClick={() => setPreviewAsset(undefined)} aria-label="关闭预览">×</button>{previewableAssets.length > 1 && <><button className="lightbox-nav previous" onClick={() => movePreview(-1)} aria-label="上一张" title="上一张（←）"><CaretLeft size={24} /></button><button className="lightbox-nav next" onClick={() => movePreview(1)} aria-label="下一张" title="下一张（→）"><CaretRight size={24} /></button></>}<div className="lightbox-stage" onClick={() => setPreviewAsset(undefined)} onWheel={zoomPreview}>{previewFull ? <img className={previewZoom.scale > 1.0001 ? "is-zoomed" : ""} src={previewFull} alt={previewAsset.name} style={{ transform: `translate3d(${previewZoom.x}px, ${previewZoom.y}px, 0) scale(${previewZoom.scale})` }} onClick={(event) => event.stopPropagation()} onDoubleClick={() => setPreviewZoom(initialImageZoom)} /> : <span className="spinner large lightbox-spinner" />}</div><div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span><button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div></div>}
+      {previewAsset && <div className="lightbox" role="dialog" aria-modal="true" aria-label={previewAsset.name}><button className="lightbox-close" onClick={() => setPreviewAsset(undefined)} aria-label="关闭预览">×</button>{previewableAssets.length > 1 && <><button className="lightbox-nav previous" onClick={() => movePreview(-1)} aria-label="上一张" title="上一张（←）"><CaretLeft size={24} /></button><button className="lightbox-nav next" onClick={() => movePreview(1)} aria-label="下一张" title="下一张（→）"><CaretRight size={24} /></button></>}<div className="lightbox-stage" onClick={() => setPreviewAsset(undefined)} onWheel={zoomPreview}>{previewFull ? <img className={previewZoom.scale > 1.0001 ? "is-zoomed" : ""} src={previewFull} alt={previewAsset.name} style={{ transform: `translate3d(${previewZoom.x}px, ${previewZoom.y}px, 0) scale(${previewZoom.scale})` }} onClick={(event) => event.stopPropagation()} onContextMenu={(event) => openImageContextMenu(event, previewAsset, "lightbox")} onDoubleClick={() => setPreviewZoom(initialImageZoom)} /> : <span className="spinner large lightbox-spinner" />}</div><div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span><button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div></div>}
       {detailAsset && <TaskDetailDialog asset={detailAsset} metadata={detailMetadata} referencePaths={detailReferencePaths} previews={previews} onClose={() => setDetailAsset(undefined)} />}
+      {contextMenu && <ImageContextMenuView menu={contextMenu} selected={Boolean(contextMenu.asset.selectableImage && props.selected.has(contextMenu.asset.selectableImage.id))} onSelect={contextMenu.asset.selectableImage ? () => { toggle(contextMenu.asset.selectableImage!); setContextMenu(undefined); } : undefined} onCopy={() => void copyImage(contextMenu.asset)} onDelete={contextMenu.scope === "thumbnail" ? () => void deleteImage(contextMenu.asset) : undefined} />}
     </div>
   );
 }
 
-function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: Array<string | undefined>; selected: boolean; busy: boolean; onSelect?: () => void; onPreview: () => void; onDetail: () => void; onSave: () => void; onRetry?: () => void }) {
+function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: Array<string | undefined>; selected: boolean; busy: boolean; onSelect?: () => void; onPreview: () => void; onContextMenu: (event: React.MouseEvent<HTMLButtonElement>) => void; onDetail: () => void; onSave: () => void; onRetry?: () => void }) {
   const previewTimer = useRef<number>();
   const job = props.asset.job;
   const processing = Boolean(job && (job.status === "queued" || job.status === "running"));
@@ -1096,7 +1166,7 @@ function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: A
   };
   const attachmentAction = props.selected ? "从修改输入框移除" : "添加到修改输入框";
   return <article className={`job-card ${props.asset.kind === "backup" ? "is-backup" : ""}`}>
-    <button className={`image-button ${selectable ? "is-attachable" : ""}`} disabled={!hasImage} onClick={previewOnSingleClick} onDoubleClick={attachOnDoubleClick} aria-label={hasImage ? selectable ? `预览 ${props.asset.name}；双击${attachmentAction}` : `预览 ${props.asset.name}` : props.asset.name} title={selectable ? `双击${attachmentAction}` : undefined}>{processing && job ? <ProcessingPreview job={job} previews={props.sourcePreviews} /> : props.preview ? <img src={props.preview} alt={props.asset.name} /> : job ? <JobPlaceholder job={job} /> : <div className="placeholder"><span className="spinner" /><strong>读取备份</strong></div>}</button>
+    <button className={`image-button ${selectable ? "is-attachable" : ""}`} disabled={!hasImage} onClick={previewOnSingleClick} onDoubleClick={attachOnDoubleClick} onContextMenu={props.onContextMenu} aria-label={hasImage ? selectable ? `预览 ${props.asset.name}；双击${attachmentAction}` : `预览 ${props.asset.name}` : props.asset.name} title={selectable ? `双击${attachmentAction}` : undefined}>{processing && job ? <ProcessingPreview job={job} previews={props.sourcePreviews} /> : props.preview ? <img src={props.preview} alt={props.asset.name} /> : job ? <JobPlaceholder job={job} /> : <div className="placeholder"><span className="spinner" /><strong>读取备份</strong></div>}</button>
     <div className="card-tools">
       <button className="card-icon-button" onClick={(event) => { event.stopPropagation(); props.onDetail(); }} aria-label={`查看 ${props.asset.name} 详情`} title="任务详情"><Info size={13} /></button>
       {canSave && <button className="card-icon-button" onClick={(event) => { event.stopPropagation(); props.onSave(); }} aria-label={`保存 ${props.asset.name}`} title="保存图片"><DownloadSimple size={13} /></button>}
@@ -1105,6 +1175,14 @@ function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: A
     <div className="card-copy"><strong title={props.asset.name}>{props.asset.name}</strong></div>
     {job?.error && <p className="error-copy" title={job.error}>{job.error}</p>}
   </article>;
+}
+
+function ImageContextMenuView(props: { menu: ImageContextMenu; selected: boolean; onSelect?: () => void; onCopy: () => void; onDelete?: () => void }) {
+  return <div className="image-context-menu" role="menu" aria-label={`${props.menu.asset.name} 操作`} style={{ left: props.menu.left, top: props.menu.top }} onPointerDown={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}>
+    {props.menu.scope === "thumbnail" && props.onSelect && <button type="button" role="menuitem" onClick={props.onSelect}>{props.selected ? <X size={15} /> : <Check size={15} />}<span>{props.selected ? "取消选择" : "选择"}</span></button>}
+    <button type="button" role="menuitem" onClick={props.onCopy}><Copy size={15} /><span>复制图片</span></button>
+    {props.menu.scope === "thumbnail" && props.onDelete && <button type="button" role="menuitem" className="is-danger" onClick={props.onDelete}><Trash size={15} /><span>删除</span></button>}
+  </div>;
 }
 
 function TaskDetailDialog({ asset, metadata, referencePaths, previews, onClose }: { asset: ImageAsset; metadata?: ImageMetadata; referencePaths: string[]; previews: Record<string, CachedPreview>; onClose: () => void }) {

@@ -54,7 +54,7 @@ async function main(): Promise<void> {
   await batches.initialize();
   const thumbnailer = new Thumbnailer(paths);
   const widgetHtml = await readFile(path.join(process.cwd(), "mcp", "widget.html"), "utf8");
-  const server = createLocalEsseServer({ widgetHtml, settings, registry, batches, thumbnailer });
+  const server = createLocalEsseServer({ version: __ESSE_VERSION__, widgetHtml, settings, registry, batches, thumbnailer });
   await server.connect(new StdioServerTransport());
   process.stderr.write(`esse local MCP ${__ESSE_VERSION__} ready. Data: ${paths.root}\n`);
 }

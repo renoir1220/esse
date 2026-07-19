@@ -8,10 +8,13 @@ import { scanImageFolder } from "../files/image-files.js";
 import { readImageFileMetadata } from "../files/image-metadata.js";
 import { saveFileAs } from "../files/save-file-dialog.js";
 import { openLocalFolder } from "../files/open-folder.js";
+import { copyImageFileToClipboard } from "../files/system-image-clipboard.js";
 import type { Thumbnailer } from "../files/thumbnailer.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SettingsStore } from "../storage/settings-store.js";
 import type { AdapterId, BatchSnapshot, JobRecord, OfferingConfig } from "../types.js";
+import { GitHubReleaseChecker } from "../update-checker.js";
+import type { UpdateCheckerLike } from "../update-checker.js";
 
 export const WIDGET_URI = "ui://esse/local-v1.html";
 const THUMBNAIL_PREVIEW_MAX_DIMENSION = 640;
@@ -45,16 +48,20 @@ const existingImageReferenceSchema = z.object({
 });
 
 export function createLocalEsseServer(options: {
+  version: string;
   widgetHtml: string;
   settings: SettingsStore;
   registry: ProviderRegistry;
   batches: BatchManager;
   thumbnailer: Thumbnailer;
   saveFileAs?: typeof saveFileAs;
+  copyImageToClipboard?: typeof copyImageFileToClipboard;
   openFolder?: typeof openLocalFolder;
+  updateChecker?: UpdateCheckerLike;
 }): McpServer {
+  const updateChecker = options.updateChecker || new GitHubReleaseChecker();
   const server = new McpServer(
-    { name: "esse", version: "0.1.0" },
+    { name: "esse", version: options.version },
     {
       instructions:
         "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself."
@@ -332,11 +339,11 @@ export function createLocalEsseServer(options: {
     return batchResult(batch, `已将 ${input.sourceBatchIds.length} 个批次合并到“${batch.title}”${sourceAction}。`, true);
   });
 
-  registerUiTools(server, options);
+  registerUiTools(server, options, updateChecker);
   return server;
 }
 
-function registerUiTools(server: McpServer, options: Parameters<typeof createLocalEsseServer>[0]): void {
+function registerUiTools(server: McpServer, options: Parameters<typeof createLocalEsseServer>[0], updateChecker: UpdateCheckerLike): void {
   const appOnly = { ui: { visibility: ["app"] as Array<"app"> } };
 
   registerAppTool(server, "ui_get_local_state", {
@@ -354,6 +361,17 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId }) => batchResult(options.batches.get(batchId)));
+
+  registerAppTool(server, "ui_check_for_updates", {
+    title: "Check for Esse updates",
+    description: "Widget-only low-frequency check of the latest trusted Esse GitHub Release metadata.",
+    inputSchema: {},
+    annotations: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
+    _meta: appOnly
+  }, async () => ({
+    structuredContent: { update: await updateChecker.check(options.version) },
+    content: [{ type: "text", text: "Esse update status ready." }]
+  }));
 
   registerAppTool(server, "ui_open_batch_folder", {
     title: "Open batch output folder",
@@ -524,6 +542,22 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     };
   });
 
+  registerAppTool(server, "ui_copy_image_to_clipboard", {
+    title: "Copy local image to clipboard",
+    description: "Widget-only native clipboard copy for an exact generated image, failed-job source, or preserved version.",
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId, jobId }) => {
+    const batch = options.batches.get(batchId);
+    const filePath = previewFilePath(batch, jobId);
+    await (options.copyImageToClipboard || copyImageFileToClipboard)(filePath);
+    return {
+      structuredContent: { batchId, jobId, copied: true },
+      content: [{ type: "text", text: "Image copied to the system clipboard." }]
+    };
+  });
+
   registerAppTool(server, "ui_cancel_queued_jobs", {
     title: "Cancel local queued jobs",
     description: "Widget-only cancellation for jobs not yet sent to a provider.",
@@ -539,6 +573,14 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobIds, allowUnknownCharge }) => batchResult(await options.batches.retry(batchId, jobIds, allowUnknownCharge)));
+
+  registerAppTool(server, "ui_delete_esse_images", {
+    title: "Delete local Esse images",
+    description: "Widget-only deletion of exact current-image or backup IDs from one local batch. Active jobs cannot be deleted.",
+    inputSchema: { batchId: z.string().min(1), imageIds: z.array(z.string()).min(1).max(50) },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+    _meta: appOnly
+  }, async ({ batchId, imageIds }) => batchResult(await options.batches.deleteImages(batchId, imageIds)));
 
   registerAppTool(server, "ui_delete_image_batch", {
     title: "Delete local image batch",
