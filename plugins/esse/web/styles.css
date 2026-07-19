@@ -219,11 +219,11 @@ button { -webkit-tap-highlight-color: transparent; }
 .text-button { min-height: 28px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface); color: var(--accent); font-size: var(--font-size-meta); font-weight: var(--font-weight-bold); cursor: pointer; }
 .text-button:disabled { color: var(--muted); opacity: .5; }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
-.job-card { position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--thumbnail-surface); border-radius: 9px; background: var(--thumbnail-surface); }
+.job-card { position: relative; min-width: 0; overflow: hidden; border: 1px solid var(--thumbnail-surface); border-radius: 0; background: var(--thumbnail-surface); }
 .job-card:hover { border-color: var(--thumbnail-surface); }
 .image-button { display: block; width: 100%; aspect-ratio: 1 / 1; padding: 0; border: 0; outline: 0; background: var(--thumbnail-surface); overflow: hidden; }
 .image-button:enabled { cursor: zoom-in; }
-.image-button.is-attachable:enabled { cursor: copy; }
+.image-button.is-attachable:enabled { cursor: default; }
 .image-button:focus-visible { box-shadow: inset 0 0 0 1px var(--border-strong); }
 .image-button img { display: block; width: 100%; height: 100%; object-fit: contain; }
 .processing-preview { position: relative; width: 100%; height: 100%; overflow: hidden; background: var(--thumbnail-surface); }
@@ -257,9 +257,9 @@ button { -webkit-tap-highlight-color: transparent; }
 .card-tools button.confirm { border-color: #ffc9c2; background: rgba(183,71,61,.92); }
 .card-tools button:disabled { opacity: .6; cursor: default; }
 .job-card.is-backup { background: var(--thumbnail-surface); }
-.card-copy { display: flex; align-items: center; min-height: 32px; padding: 6px 8px; }
-.card-copy strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--font-size-control); }
-.error-copy { margin: -4px 8px 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--danger); font-size: var(--font-size-meta); }
+.card-copy { position: absolute; z-index: 2; left: 6px; bottom: 6px; max-width: calc(100% - 12px); display: flex; pointer-events: none; }
+.card-copy strong { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 7px; border: 1px solid var(--thumbnail-control-border); border-radius: 999px; background: var(--thumbnail-control-bg); color: var(--thumbnail-control-text); box-shadow: var(--thumbnail-control-shadow); font-size: var(--font-size-control); backdrop-filter: blur(10px) saturate(1.1); }
+.error-copy { position: absolute; z-index: 2; left: 6px; right: 6px; bottom: 35px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding: 3px 6px; border-radius: 5px; background: color-mix(in srgb, var(--danger) 14%, var(--thumbnail-control-bg)); color: var(--danger); font-size: var(--font-size-meta); backdrop-filter: blur(10px) saturate(1.1); }
 .show-more { margin-top: 8px; padding: 8px; border: 1px dashed var(--border); border-radius: 9px; color: var(--muted); text-align: center; font-size: var(--font-size-meta); }
 .modify-composer { position: sticky; z-index: 14; bottom: 0; min-width: 0; min-height: 100px; max-height: min(320px, calc(100vh - 120px)); display: grid; grid-template-rows: minmax(0, auto) auto; overflow: visible; border: 1px solid var(--border); border-radius: 16px; background: var(--surface); box-shadow: 0 9px 28px rgba(16,20,16,.08), 0 2px 8px rgba(16,20,16,.05); }
 .modify-entry { min-width: 0; min-height: 0; display: flex; flex-direction: column; align-items: stretch; gap: 7px; padding: 10px 12px 3px; }
