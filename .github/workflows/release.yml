@@ -9,7 +9,7 @@ permissions:
   contents: write
 
 jobs:
-  release:
+  verify:
     runs-on: windows-latest
     defaults:
       run:
@@ -23,19 +23,65 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: plugins/esse/package-lock.json
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.3.11
       - run: npm ci
       - run: npm run check
       - name: Verify tag and release metadata
         shell: pwsh
         run: npm run verify:release -- $env:GITHUB_REF_NAME
-      - run: npm run package:releases
-      - name: Verify packaged checksums
+
+  package:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: windows-x64
+            runner: windows-latest
+          - target: macos-arm64
+            runner: macos-15
+          - target: macos-x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: plugins/esse
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/esse/package-lock.json
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/package-releases.mjs --target ${{ matrix.target }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: esse-${{ matrix.target }}
+          path: release/esse-${{ matrix.target }}-v*.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    needs: package
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: esse-*
+          path: release
+          merge-multiple: true
+      - name: Create and verify release metadata
         shell: pwsh
-        working-directory: .
         run: |
+          node .\plugins\esse\scripts\create-release-metadata.mjs
           $metadata = Get-Content -Raw -Encoding UTF8 .\release\latest.json | ConvertFrom-Json
           if ($metadata.tag -ne $env:GITHUB_REF_NAME) { throw "latest.json tag does not match Git tag" }
           foreach ($prefix in @("windowsX64", "macosArm64", "macosX64")) {
@@ -46,9 +92,8 @@ jobs:
           }
       - name: Publish GitHub Release
         shell: pwsh
-        working-directory: .
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $assets = Get-ChildItem -LiteralPath .\release -File | Select-Object -ExpandProperty FullName
-          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "Esse $env:GITHUB_REF_NAME" --generate-notes --notes "Unsigned Public Beta. Windows x64 and macOS arm64/x64 are supported. The installers verify SHA256 before changing the user-scoped local marketplace."
+          gh release create $env:GITHUB_REF_NAME @assets --verify-tag --title "Esse $env:GITHUB_REF_NAME" --generate-notes --notes "Unsigned Public Beta. Windows x64 and macOS arm64/x64 are supported. Every runtime was built and self-tested on its native platform, and the installers verify SHA256 before changing the user-scoped local marketplace."

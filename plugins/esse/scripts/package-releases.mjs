@@ -1,5 +1,4 @@
-import { chmod, cp, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { chmod, cp, mkdir, readFile, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { spawn } from "node:child_process";
 
@@ -10,20 +9,24 @@ const manifest = JSON.parse(await readFile(path.join(pluginRoot, ".codex-plugin"
 const version = manifest.version;
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`Release version must be clean semver without build metadata: ${version}`);
 
-const targets = [
-  { name: "windows-x64", metadata: "windowsX64", bunTarget: "bun-windows-x64", binary: "esse.exe" },
-  { name: "macos-arm64", metadata: "macosArm64", bunTarget: "bun-darwin-arm64", binary: "esse" },
-  { name: "macos-x64", metadata: "macosX64", bunTarget: "bun-darwin-x64", binary: "esse" }
+const targetDefinitions = [
+  { name: "windows-x64", bunTarget: "bun-windows-x64", binary: "esse.exe", platform: "win32", architecture: "x64" },
+  { name: "macos-arm64", bunTarget: "bun-darwin-arm64", binary: "esse", platform: "darwin", architecture: "arm64" },
+  { name: "macos-x64", bunTarget: "bun-darwin-x64", binary: "esse", platform: "darwin", architecture: "x64" }
 ];
+const targetOptionIndex = process.argv.indexOf("--target");
+const requestedTarget = targetOptionIndex >= 0 ? process.argv[targetOptionIndex + 1] : undefined;
+if (targetOptionIndex >= 0 && !requestedTarget) throw new Error("--target requires a target name.");
+const targets = requestedTarget ? targetDefinitions.filter((target) => target.name === requestedTarget) : targetDefinitions;
+if (!targets.length) throw new Error(`Unknown release target: ${requestedTarget}`);
 
 await mkdir(releaseRoot, { recursive: true });
 for (const entry of await readdir(releaseRoot, { withFileTypes: true })) {
-  if (entry.isFile() && (/^esse-(?:windows|macos)-.+\.zip$/.test(entry.name) || entry.name === "checksums.txt" || entry.name === "latest.json")) {
+  if (entry.isFile() && targets.some((target) => entry.name.startsWith(`esse-${target.name}-v`) && entry.name.endsWith(".zip"))) {
     await rm(path.join(releaseRoot, entry.name), { force: true });
   }
 }
 
-const archives = [];
 for (const target of targets) {
   const staging = path.join(releaseRoot, `.staging-${target.name}`);
   const stagedPlugin = path.join(staging, "plugins", "esse");
@@ -49,46 +52,29 @@ for (const target of targets) {
 
   const binaryPath = path.join(stagedPlugin, "bin", target.binary);
   await run("bun", ["build", path.join(pluginRoot, "mcp", "server.cjs"), "--compile", "--compile-exec-argv=--use-system-ca", `--target=${target.bunTarget}`, `--outfile=${binaryPath}`], pluginRoot);
-  if (target.name.startsWith("macos")) await chmod(binaryPath, 0o755);
-  if (target.name === "windows-x64" && process.platform === "win32") {
+  if (target.platform === "darwin") await chmod(binaryPath, 0o755);
+  let selfTestedNatively = false;
+  if (process.platform === target.platform && process.arch === target.architecture) {
     const selfTestData = path.join(staging, ".self-test-data");
     const selfTest = await run(binaryPath, ["--self-test"], stagedPlugin, true, { ...process.env, ESSE_DATA_DIR: selfTestData });
-    if (!selfTest.includes('"status":"ok"')) throw new Error(`Compiled Windows runtime self-test failed: ${selfTest}`);
+    if (!selfTest.includes('"status":"ok"')) throw new Error(`Compiled ${target.name} runtime self-test failed: ${selfTest}`);
     await rm(selfTestData, { recursive: true, force: true });
+    selfTestedNatively = true;
+  } else if (requestedTarget) {
+    throw new Error(`Target ${target.name} must be packaged on ${target.platform}/${target.architecture}; current runner is ${process.platform}/${process.arch}.`);
   }
   await run("tar", ["-a", "-c", "-f", archive, "-C", staging, "."], marketplaceRoot);
   const listing = await run("tar", ["-t", "-f", archive], marketplaceRoot, true);
   for (const expected of [".agents/plugins/marketplace.json", "plugins/esse/.codex-plugin/plugin.json", `plugins/esse/bin/${target.binary}`, "install.ps1", "install.sh"]) {
     if (!listing.replaceAll("\\", "/").includes(expected)) throw new Error(`${target.name} archive is missing ${expected}`);
   }
-  const sha256 = await hashFile(archive);
-  archives.push({ ...target, archiveName, sha256 });
   await rm(staging, { recursive: true, force: true });
-  console.log(`Packaged ${archiveName}`);
+  console.log(`Packaged ${archiveName} on ${process.platform}/${process.arch}${selfTestedNatively ? " and self-tested it natively" : ""}`);
 }
-
-const metadata = {
-  schemaVersion: 1,
-  repository: "https://github.com/renoir1220/esse",
-  version,
-  tag: `v${version}`
-};
-for (const archive of archives) {
-  metadata[`${archive.metadata}Asset`] = archive.archiveName;
-  metadata[`${archive.metadata}Sha256`] = archive.sha256;
-}
-await writeFile(path.join(releaseRoot, "latest.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
-await writeFile(path.join(releaseRoot, "checksums.txt"), `${archives.map((archive) => `${archive.sha256}  ${archive.archiveName}`).join("\n")}\n`, "utf8");
-console.log(`Created latest.json and checksums.txt for v${version}`);
 
 async function copyPath(source, destination) {
   await mkdir(path.dirname(destination), { recursive: true });
   await cp(source, destination, { recursive: true });
-}
-
-async function hashFile(filePath) {
-  const content = await readFile(filePath);
-  return createHash("sha256").update(content).digest("hex");
 }
 
 function run(command, args, cwd, capture = false, env = process.env) {

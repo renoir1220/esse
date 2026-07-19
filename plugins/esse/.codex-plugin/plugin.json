@@ -1,6 +1,6 @@
 {
   "name": "esse",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Run parallel image generation and editing from local folders.",
   "author": {
     "name": "Renoir"
