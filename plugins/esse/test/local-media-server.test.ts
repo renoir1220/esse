@@ -12,6 +12,7 @@ test("local media server exposes only registered files without retaining deleted
   const filePath = path.join(root, "原图.png");
   const server = await LocalMediaServer.start();
   try {
+    assert.equal(new URL(server.origin).hostname, "127.0.0.1");
     await writeFile(filePath, onePixelPng);
     const mediaUrl = await server.urlFor(filePath);
     assert(mediaUrl.startsWith(`${server.origin}/media/`));
@@ -54,7 +55,7 @@ test("local media startup errors are actionable and do not promise a fallback", 
   const described = describeLocalMediaStartupError(source, "darwin");
   assert.match(described.message, /已停止启动/);
   assert.match(described.message, /不会回退/);
-  assert.match(described.message, /localhost/);
+  assert.match(described.message, /127\.0\.0\.1/);
   assert.match(described.message, /darwin/);
   assert.match(described.message, /EACCES/);
 });
