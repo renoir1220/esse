@@ -168,7 +168,7 @@ declare global {
       setWidgetState?: (state: Record<string, unknown>) => void;
       updateModelContext?: (value: { content: Array<{ type: "text"; text: string }> }) => Promise<void>;
       sendFollowUpMessage?: (value: { prompt: string; scrollToBottom?: boolean }) => Promise<void>;
-      requestDisplayMode?: (value: { mode: "fullscreen" }) => Promise<void>;
+      requestDisplayMode?: (value: { mode: "inline" | "pip" | "fullscreen" }) => Promise<{ mode?: "inline" | "pip" | "fullscreen" } | void>;
     };
     __ESSE_PREVIEW__?: WorkbenchState;
     __ESSE_LAST_MESSAGE__?: string;

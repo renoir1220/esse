@@ -6,7 +6,6 @@ import { z } from "zod";
 import type { BatchManager } from "../jobs/batch-manager.js";
 import { scanImageFolder } from "../files/image-files.js";
 import { readImageFileMetadata } from "../files/image-metadata.js";
-import { fileDataUrl } from "../files/output-files.js";
 import { saveFileAs } from "../files/save-file-dialog.js";
 import { openLocalFolder } from "../files/open-folder.js";
 import type { Thumbnailer } from "../files/thumbnailer.js";
@@ -15,6 +14,8 @@ import type { SettingsStore } from "../storage/settings-store.js";
 import type { AdapterId, BatchSnapshot, JobRecord, OfferingConfig } from "../types.js";
 
 export const WIDGET_URI = "ui://esse/local-v1.html";
+const THUMBNAIL_PREVIEW_MAX_DIMENSION = 640;
+const FULL_PREVIEW_MAX_DIMENSION = 2400;
 
 const priceSchema = z.object({
   mode: z.enum(["per_request", "token", "model_quota", "unknown"]),
@@ -437,6 +438,37 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     return appResult(await uiState(options, "settings"));
   });
 
+  const previewItemSchema = z.object({
+    jobId: z.string().min(1),
+    full: z.boolean().default(false),
+    sourceIndex: z.number().int().min(0).max(19).optional()
+  });
+
+  registerAppTool(server, "ui_get_image_previews", {
+    title: "Get local image previews",
+    description: "Widget-only batch image preview bytes. Image data is not exposed to the model.",
+    inputSchema: { batchId: z.string().min(1), items: z.array(previewItemSchema).min(1).max(16) },
+    annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId, items }) => {
+    const batch = options.batches.get(batchId);
+    const previews = await Promise.all(items.map(async ({ jobId, full, sourceIndex }) => {
+      try {
+        const filePath = previewFilePath(batch, jobId, sourceIndex);
+        const dataUrl = await options.thumbnailer.dataUrl(filePath, full ? FULL_PREVIEW_MAX_DIMENSION : THUMBNAIL_PREVIEW_MAX_DIMENSION);
+        if (!dataUrl) throw new Error("Could not create a local preview.");
+        return { jobId, sourceIndex, full, dataUrl };
+      } catch (error) {
+        return { jobId, sourceIndex, full, error: error instanceof Error ? error.message : String(error) };
+      }
+    }));
+    return {
+      structuredContent: { batchId, requested: items.length, available: previews.filter((preview) => preview.dataUrl).length },
+      content: [{ type: "text", text: "Local image previews ready." }],
+      _meta: { previews }
+    };
+  });
+
   registerAppTool(server, "ui_get_image_preview", {
     title: "Get local image preview",
     description: "Widget-only image preview bytes. Image data is not exposed to the model.",
@@ -445,12 +477,8 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     _meta: appOnly
   }, async ({ batchId, jobId, full, sourceIndex }) => {
     const batch = options.batches.get(batchId);
-    const job = batch.jobs.find((entry) => entry.id === jobId);
-    const backup = batch.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === jobId);
-    const sourcePaths = job ? previewSourcePaths(job) : backup?.referenceImagePaths || [];
-    const filePath = sourceIndex === undefined ? backup?.outputPath || job?.outputPath || sourcePaths[0] : sourcePaths[sourceIndex];
-    if (!filePath) throw new Error("This image has no local file to preview.");
-    const dataUrl = full ? await fileDataUrl(filePath).catch(() => options.thumbnailer.dataUrl(filePath, 1600)) : await options.thumbnailer.dataUrl(filePath, 640);
+    const filePath = previewFilePath(batch, jobId, sourceIndex);
+    const dataUrl = await options.thumbnailer.dataUrl(filePath, full ? FULL_PREVIEW_MAX_DIMENSION : THUMBNAIL_PREVIEW_MAX_DIMENSION);
     if (!dataUrl) throw new Error("Could not create a local preview.");
     return { structuredContent: { batchId, jobId, sourceIndex, available: true }, content: [{ type: "text", text: "Local image preview ready." }], _meta: { dataUrl } };
   });
@@ -567,6 +595,15 @@ function previewSourcePaths(job: JobRecord): string[] {
   if (job.generationInputPath) return [job.generationInputPath];
   if (job.inputPaths?.length) return [...new Set(job.inputPaths)];
   return job.inputPath ? [job.inputPath] : [];
+}
+
+function previewFilePath(batch: BatchSnapshot, jobId: string, sourceIndex?: number): string {
+  const job = batch.jobs.find((entry) => entry.id === jobId);
+  const backup = batch.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === jobId);
+  const sourcePaths = job ? previewSourcePaths(job) : backup?.referenceImagePaths || [];
+  const filePath = sourceIndex === undefined ? backup?.outputPath || job?.outputPath || sourcePaths[0] : sourcePaths[sourceIndex];
+  if (!filePath) throw new Error("This image has no local file to preview.");
+  return filePath;
 }
 
 function resolveExistingImagePaths(

@@ -76,6 +76,7 @@ export function tuziProviderPresetForDraft(draft: ProviderDraft): TuziProviderPr
 export function createTuziProviderDraft(id: TuziProviderPresetId): ProviderDraft {
   const preset = tuziProviderPresetById(id);
   if (!preset) throw new Error(`Unknown Tuzi Provider preset: ${id}`);
+  const defaultModels = preset.id === "tuzi-default" ? preset.models.slice(0, 3) : preset.models.slice(0, 1);
   return {
     displayName: preset.displayName,
     tierName: preset.tierName,
@@ -84,7 +85,7 @@ export function createTuziProviderDraft(id: TuziProviderPresetId): ProviderDraft
     concurrency: preset.concurrency,
     apiKey: "",
     hasApiKey: false,
-    offerings: [offeringFromTuziModel(preset.models[0]!)],
+    offerings: defaultModels.map(offeringFromTuziModel),
   };
 }
 
