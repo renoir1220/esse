@@ -14,6 +14,8 @@ ChatGPT desktop Work/Codex
 
 There is no public MCP endpoint. The widget calls app-only settings tools so API keys do not enter model-visible tool input or output.
 
+Windows Releases use a self-contained executable. macOS Releases contain the bundled JS service and a Bash launcher that accepts only the signed Node.js runtime managed by Codex/ChatGPT. Users do not install Node separately, and Esse does not ship its own unsigned macOS executable.
+
 One Provider Profile represents one exact credential group, price tier, API contract, and concurrency limit. If the same underlying model is sold through several tiers with different interfaces, configure separate profiles.
 
 `Codex 生成` is a built-in offering. It does not have a Provider profile or credentials: the current Agent uses whatever image-generation capability and concurrency strategy it supports, then submits each local result back to Esse. Its cost label is `模型额度`.
@@ -43,6 +45,7 @@ One Provider Profile represents one exact credential group, price tier, API cont
 - Source images are never overwritten.
 - Timed-out/interrupted requests use `chargeState: unknown` and are not blindly retried.
 - Batches and generated files persist locally across plugin restarts.
+- The macOS installer never falls back to an arbitrary `codex` or `node` command from `PATH`.
 
 ## Development
 
