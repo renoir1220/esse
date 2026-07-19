@@ -6,7 +6,7 @@ MARKETPLACE_NAME="esse-local"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 INSTALL_ROOT="${ESSE_INSTALL_ROOT:-$HOME/Library/Application Support/esse/plugin}"
 RELEASE_TAG="${ESSE_RELEASE_TAG:-}"
-CODEX_BIN="${ESSE_CODEX_BIN:-codex}"
+CODEX_BIN="${ESSE_CODEX_BIN:-}"
 DOWNLOAD_ROOT=""
 PREVIOUS_CATALOG=""
 PREVIOUS_MARKETPLACE_ROOT=""
@@ -47,6 +47,43 @@ codex_run() {
   "$CODEX_BIN" "$@"
 }
 
+select_codex_bin() {
+  if [[ -n "$CODEX_BIN" ]]; then
+    if [[ "$CODEX_BIN" != /* || ! -x "$CODEX_BIN" ]]; then
+      echo "ESSE_CODEX_BIN must be an absolute path to an executable." >&2
+      return 1
+    fi
+    return 0
+  fi
+
+  local app candidate
+  for app in \
+    "/Applications/ChatGPT.app" \
+    "/Applications/Codex.app" \
+    "$HOME/Applications/ChatGPT.app" \
+    "$HOME/Applications/Codex.app"; do
+    candidate="$app/Contents/Resources/codex"
+    if [[ -x "$candidate" ]] \
+      && /usr/bin/codesign --verify --deep --strict "$app" >/dev/null 2>&1 \
+      && /usr/sbin/spctl --assess --type execute "$app" >/dev/null 2>&1; then
+      CODEX_BIN="$candidate"
+      return 0
+    fi
+  done
+
+  echo "Esse could not find a Gatekeeper-approved Codex/ChatGPT desktop app." >&2
+  echo "Update or reinstall the official desktop app, open it once, then run this installer again." >&2
+  echo "For safety, Esse will not execute an arbitrary 'codex' command from PATH." >&2
+  return 1
+}
+
+is_safe_macos_launcher() {
+  local launcher="$1"
+  [[ -f "$launcher" ]] \
+    && [[ "$(LC_ALL=C head -c 2 "$launcher")" == "#!" ]] \
+    && grep -q 'mcp/server.cjs' "$launcher"
+}
+
 restore_registration() {
   set +e
   if [[ -n "$PREVIOUS_CATALOG" && -f "$PREVIOUS_CATALOG" ]]; then
@@ -74,8 +111,8 @@ case "$(uname -m)" in
 esac
 
 PACKAGE_ROOT="$SCRIPT_DIR"
-PACKAGE_BINARY="$PACKAGE_ROOT/plugins/esse/bin/esse"
-if [[ ! -f "$PACKAGE_BINARY" ]]; then
+PACKAGE_LAUNCHER="$PACKAGE_ROOT/plugins/esse/bin/esse"
+if [[ ! -f "$PACKAGE_LAUNCHER" ]]; then
   DOWNLOAD_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/esse-install.XXXXXX")"
   if [[ -n "$RELEASE_TAG" ]]; then
     [[ "$RELEASE_TAG" == v* ]] || RELEASE_TAG="v$RELEASE_TAG"
@@ -101,19 +138,31 @@ if [[ ! -f "$PACKAGE_BINARY" ]]; then
   PACKAGE_ROOT="$DOWNLOAD_ROOT/package"
   mkdir -p "$PACKAGE_ROOT"
   /usr/bin/ditto -x -k "$ARCHIVE_PATH" "$PACKAGE_ROOT"
-  PACKAGE_BINARY="$PACKAGE_ROOT/plugins/esse/bin/esse"
+  PACKAGE_LAUNCHER="$PACKAGE_ROOT/plugins/esse/bin/esse"
 fi
 
 PACKAGE_MARKETPLACE="$PACKAGE_ROOT/.agents/plugins/marketplace.json"
 PLUGIN_SOURCE="$PACKAGE_ROOT/plugins/esse"
 MANIFEST_PATH="$PLUGIN_SOURCE/.codex-plugin/plugin.json"
 WIDGET_PATH="$PLUGIN_SOURCE/mcp/widget.html"
-for required in "$PACKAGE_MARKETPLACE" "$PACKAGE_BINARY" "$MANIFEST_PATH" "$WIDGET_PATH"; do
+SERVER_PATH="$PLUGIN_SOURCE/mcp/server.cjs"
+for required in "$PACKAGE_MARKETPLACE" "$PACKAGE_LAUNCHER" "$MANIFEST_PATH" "$WIDGET_PATH"; do
   if [[ ! -f "$required" ]]; then
     echo "Release package is missing required file: $required" >&2
     exit 1
   fi
 done
+
+if ! is_safe_macos_launcher "$PACKAGE_LAUNCHER"; then
+  echo "This Esse release contains an obsolete macOS executable and was not run." >&2
+  echo "Install a newer release that uses the trusted Codex Node runtime. Do not bypass Gatekeeper." >&2
+  exit 1
+fi
+
+if [[ ! -f "$SERVER_PATH" ]]; then
+  echo "Release package is missing required file: $SERVER_PATH" >&2
+  exit 1
+fi
 
 VERSION="$(json_value version "$MANIFEST_PATH")"
 if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
@@ -121,9 +170,9 @@ if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
   exit 1
 fi
 
-chmod +x "$PACKAGE_BINARY"
+chmod +x "$PACKAGE_LAUNCHER"
 SELF_TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/esse-self-test.XXXXXX")"
-if ! SELF_TEST_OUTPUT="$(cd "$PLUGIN_SOURCE" && ESSE_DATA_DIR="$SELF_TEST_ROOT/data" "$PACKAGE_BINARY" --self-test 2>&1)"; then
+if ! SELF_TEST_OUTPUT="$(cd "$PLUGIN_SOURCE" && ESSE_DATA_DIR="$SELF_TEST_ROOT/data" /bin/bash "$PACKAGE_LAUNCHER" --self-test 2>&1)"; then
   rm -rf -- "$SELF_TEST_ROOT"
   echo "Esse runtime self-test failed: $SELF_TEST_OUTPUT" >&2
   exit 1
@@ -137,7 +186,7 @@ fi
 mkdir -p "$INSTALL_ROOT/versions"
 VERSION_ROOT="$INSTALL_ROOT/versions/$VERSION"
 TARGET_PLUGIN="$VERSION_ROOT/plugins/esse"
-if [[ ! -f "$TARGET_PLUGIN/bin/esse" ]]; then
+if ! is_safe_macos_launcher "$TARGET_PLUGIN/bin/esse" || [[ ! -f "$TARGET_PLUGIN/mcp/server.cjs" ]]; then
   STAGING_ROOT="$(mktemp -d "$INSTALL_ROOT/.staging.XXXXXX")"
   mkdir -p "$STAGING_ROOT/plugins"
   cp -R "$PLUGIN_SOURCE" "$STAGING_ROOT/plugins/esse"
@@ -146,6 +195,10 @@ if [[ ! -f "$TARGET_PLUGIN/bin/esse" ]]; then
     rm -rf -- "$VERSION_ROOT"
   fi
   mv "$STAGING_ROOT" "$VERSION_ROOT"
+fi
+
+if ! select_codex_bin; then
+  exit 1
 fi
 
 CATALOG_PATH="$INSTALL_ROOT/.agents/plugins/marketplace.json"
@@ -157,11 +210,6 @@ fi
 CATALOG_TEMP="$CATALOG_PATH.tmp.$$"
 sed "s#\./plugins/esse#./versions/$VERSION/plugins/esse#g" "$PACKAGE_MARKETPLACE" > "$CATALOG_TEMP"
 mv "$CATALOG_TEMP" "$CATALOG_PATH"
-
-if ! command -v "$CODEX_BIN" >/dev/null 2>&1 && [[ ! -x "$CODEX_BIN" ]]; then
-  echo "Codex CLI was not found. Install or open the Codex desktop app first." >&2
-  exit 1
-fi
 
 MARKETPLACE_LISTING="$(codex_run plugin marketplace list)"
 EXISTING_ROOT="$(printf '%s\n' "$MARKETPLACE_LISTING" | awk '/^esse-local[[:space:]]/{sub(/^esse-local[[:space:]]+/, ""); print; exit}')"

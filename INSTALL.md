@@ -6,14 +6,14 @@ This file is the installation contract for an Agent given only this repository U
 
 Install the latest stable Esse GitHub Release into the current user's profile, register the `esse-local` marketplace, install and enable `esse`, verify the result, then guide the user through restart and UI-only default model setup.
 
-Do not ask the user to download an archive manually. Do not ask for a Provider API key in chat.
+Do not ask the user to download an archive manually. Do not ask for a Provider API key in chat. Never disable or bypass Gatekeeper.
 
 ## Agent procedure
 
 1. Confirm the host is Windows x64, macOS arm64, or macOS x64. Stop with a clear unsupported-platform message otherwise.
 2. Read the installer before executing it. The installer may request network access to `github.com` and write access only to the user's Esse application-data directory and Codex plugin configuration.
 3. Run the repository installer. It downloads `latest.json` and the matching versioned archive from the latest GitHub Release, verifies SHA256, and performs an idempotent user-scoped installation.
-4. Treat an `ESSE_INSTALL_RESULT` line with `status: "installed"` as the structured success marker. Also verify that `codex plugin marketplace list` contains `esse-local` and `codex plugin list` contains an installed, enabled `esse@esse-local` at the reported version.
+4. Treat an `ESSE_INSTALL_RESULT` line with `status: "installed"` as the structured success marker. The installer performs plugin registration and verification with its selected Codex executable; do not repeat those commands through a bare `codex` from `PATH`.
 5. Do not try to open Esse in the same task. Newly installed skills and MCP tools load after the desktop app restarts and a new task begins.
 
 ### Windows
@@ -42,6 +42,15 @@ bash "$target/install.sh"
 
 If `git` is unavailable, download `https://raw.githubusercontent.com/renoir1220/esse/main/install.sh` to a temporary file, inspect it, and run it with `bash`. Do not pipe a remote script directly into a shell.
 
+The macOS package does not contain an Esse-built Mach-O executable. Its small Bash launcher runs the JS MCP with the signed Node.js runtime managed by Codex/ChatGPT, so the user does not need to install Node or obtain an Apple Developer certificate. Before changing plugin registration, the installer:
+
+- rejects legacy macOS packages that contain the old standalone Esse executable;
+- verifies and self-tests the managed Node.js runtime;
+- selects only a Gatekeeper-approved Codex/ChatGPT desktop app;
+- refuses to fall back to an arbitrary `codex` command from `PATH`.
+
+If one of these checks fails, stop and report the installer message. Do not run `xattr -d`, use `spctl --master-disable`, or instruct the user to choose an “Open Anyway” override. Updating and reopening the official desktop app is the supported recovery path.
+
 ## Required handoff
 
 After verification, report the installed version and say:
@@ -55,4 +64,4 @@ Explicitly remind the user that the API Key belongs only in the Esse settings UI
 
 ## Update behavior
 
-Running the same installation request again installs the latest release. Versions are stored separately under the user-scoped Esse plugin directory, and the fixed local marketplace is switched only after the new runtime passes its self-test. If plugin registration fails, the installer restores the previous marketplace selection.
+Running the same installation request again installs the latest release. Versions are stored separately under the user-scoped Esse plugin directory, and the fixed local marketplace is switched only after the new runtime passes its self-test. If plugin registration fails, the installer restores the previous marketplace selection. macOS runtime or desktop-app trust failures happen before the marketplace is changed.

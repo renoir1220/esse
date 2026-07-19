@@ -11,6 +11,9 @@ const marketplace = JSON.parse(await readFile(path.join(repositoryRoot, ".agents
 const installGuide = await readFile(path.join(repositoryRoot, "INSTALL.md"), "utf8");
 const windowsInstaller = await readFile(path.join(repositoryRoot, "install.ps1"), "utf8");
 const macInstaller = await readFile(path.join(repositoryRoot, "install.sh"), "utf8");
+const macLauncher = await readFile(path.join(pluginRoot, "scripts", "esse-macos-launcher.sh"), "utf8");
+const packageScript = await readFile(path.join(pluginRoot, "scripts", "package-releases.mjs"), "utf8");
+const releaseWorkflow = await readFile(path.join(repositoryRoot, ".github", "workflows", "release.yml"), "utf8");
 
 assert.match(manifest.version, /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/, "plugin version must be release semver without build metadata");
 assert.equal(packageJson.version, manifest.version, "package.json and plugin.json versions must match");
@@ -21,6 +24,12 @@ assert.equal(marketplace.plugins[0].source.path, "./plugins/esse");
 assert(installGuide.includes("ESSE_INSTALL_RESULT"));
 assert(windowsInstaller.includes("latest.json") && windowsInstaller.includes("ESSE_INSTALL_RESULT"));
 assert(macInstaller.includes("latest.json") && macInstaller.includes("ESSE_INSTALL_RESULT"));
+assert(macInstaller.includes("Gatekeeper-approved") && macInstaller.includes("will not execute an arbitrary 'codex' command from PATH"));
+assert(macInstaller.includes("is_safe_macos_launcher") && macInstaller.includes("/bin/bash \"$PACKAGE_LAUNCHER\" --self-test"));
+assert(macLauncher.includes("codex-primary-runtime/dependencies/node/bin/node"));
+assert(macLauncher.includes("codesign --verify --strict") && macLauncher.includes("spctl --assess --type execute") && !macLauncher.includes("command -v node"));
+assert(packageScript.includes('runtime: "codex-node"') && packageScript.includes('command: "/bin/bash"'));
+assert(releaseWorkflow.includes("macOS package must not contain an Esse-built Mach-O launcher"));
 await Promise.all([
   access(path.join(repositoryRoot, "AGENTS.md")),
   access(path.join(repositoryRoot, "LICENSE")),

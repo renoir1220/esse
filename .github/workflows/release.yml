@@ -53,11 +53,30 @@ jobs:
           cache: npm
           cache-dependency-path: plugins/esse/package-lock.json
       - uses: oven-sh/setup-bun@v2
+        if: matrix.target == 'windows-x64'
         with:
           bun-version: 1.3.11
       - run: npm ci
       - run: npm run build
       - run: node scripts/package-releases.mjs --target ${{ matrix.target }}
+      - name: Verify macOS safe-launcher package
+        if: startsWith(matrix.target, 'macos-')
+        shell: bash
+        working-directory: .
+        run: |
+          archive=(release/esse-${{ matrix.target }}-v*.zip)
+          test "${#archive[@]}" -eq 1
+          extracted="$(mktemp -d)"
+          /usr/bin/ditto -x -k "${archive[0]}" "$extracted"
+          launcher="$extracted/plugins/esse/bin/esse"
+          /bin/bash -n "$launcher"
+          test -f "$extracted/plugins/esse/mcp/server.cjs"
+          if /usr/bin/file "$launcher" | grep -q 'Mach-O'; then
+            echo "macOS package must not contain an Esse-built Mach-O launcher" >&2
+            exit 1
+          fi
+          grep -q '"command": "/bin/bash"' "$extracted/plugins/esse/.mcp.json"
+          ESSE_NODE_BIN="$(command -v node)" /bin/bash "$launcher" --self-test
       - uses: actions/upload-artifact@v7
         with:
           name: esse-${{ matrix.target }}

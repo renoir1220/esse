@@ -22,7 +22,7 @@ Supported platforms:
 - macOS Apple Silicon
 - macOS Intel
 
-The current `v0.1.8` release is an unsigned Public Beta. Windows SmartScreen or macOS Gatekeeper may show a system security warning.
+The macOS Release no longer contains an Esse-built Mach-O executable. A reviewable Bash launcher uses the signed Node.js runtime managed by Codex/ChatGPT, so users do not need to install Node or obtain an Apple Developer identity. The installer invokes only the desktop app's Gatekeeper-approved Codex executable, never an arbitrary command with the same name from `PATH`, and never asks users to bypass macOS security.
 
 ## Manual installation
 
@@ -64,7 +64,7 @@ npm install
 npm run check
 ```
 
-Build the three self-contained runtime archives and the Release metadata:
+The Release workflow builds a self-contained Windows runtime and two safe macOS launcher archives on native runners, then creates the Release metadata:
 
 ```bash
 npm run package:releases

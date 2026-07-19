@@ -21,8 +21,12 @@ jobs:
           node-version: 22
           cache: npm
           cache-dependency-path: plugins/esse/package-lock.json
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
       - run: npm ci
       - run: npm run check
+      - run: node scripts/package-releases.mjs --target windows-x64
       - name: Parse Windows installer
         shell: pwsh
         working-directory: .
@@ -32,3 +36,44 @@ jobs:
         shell: bash
         working-directory: .
         run: bash -n ./install.sh
+
+  macos-package-safety:
+    runs-on: macos-15
+    defaults:
+      run:
+        working-directory: plugins/esse
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: plugins/esse/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: node scripts/package-releases.mjs --target macos-arm64
+      - name: Verify macOS archive contains only the safe launcher
+        shell: bash
+        working-directory: .
+        run: |
+          archive=(release/esse-macos-arm64-v*.zip)
+          test "${#archive[@]}" -eq 1
+          extracted="$(mktemp -d)"
+          /usr/bin/ditto -x -k "${archive[0]}" "$extracted"
+          launcher="$extracted/plugins/esse/bin/esse"
+          test -f "$extracted/plugins/esse/mcp/server.cjs"
+          /bin/bash -n "$launcher"
+          if /usr/bin/file "$launcher" | grep -q 'Mach-O'; then
+            echo "macOS package must not contain an Esse-built Mach-O launcher" >&2
+            exit 1
+          fi
+          grep -q '"command": "/bin/bash"' "$extracted/plugins/esse/.mcp.json"
+          ESSE_NODE_BIN="$(command -v node)" /bin/bash "$launcher" --self-test
+          install_root="$(mktemp -d)/plugin"
+          version="$(node -p "require('./plugins/esse/package.json').version")"
+          ESSE_INSTALL_ROOT="$install_root" \
+            ESSE_CODEX_BIN="$PWD/plugins/esse/test/fixtures/fake-codex.sh" \
+            ESSE_NODE_BIN="$(command -v node)" \
+            ESSE_FAKE_PLUGIN_VERSION="$version" \
+            /bin/bash "$extracted/install.sh"
+          grep -q "\"version\": \"$version\"" "$install_root/install-receipt.json"
