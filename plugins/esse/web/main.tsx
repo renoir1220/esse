@@ -9,7 +9,7 @@ import { providerSavePayload } from "./provider-payload";
 import { offeringPriceLabel } from "./pricing";
 import { imagesMentionedInRequest, selectableImages, selectionModelContext } from "./selection-context";
 import type { SelectableImage } from "./selection-context";
-import { batchIdAfterUpdate, batchPollDelay, keepSelectedBatchId, mergeBatchWithoutReordering } from "./workbench-state";
+import { batchIdAfterStateRefresh, batchIdAfterUpdate, batchPollDelay, hasNewBatchActivation, isStaleStateRefresh, mergeBatchWithoutReordering } from "./workbench-state";
 import type { BatchSnapshot, JobBackupSnapshot, JobCallSnapshot, JobSnapshot, OfferingConfig, ProviderDraft, ProviderProfile, PublicOffering, ToolResult, WorkbenchState } from "./types";
 import "./styles.css";
 
@@ -42,6 +42,7 @@ function App() {
   const [startingState] = useState<WorkbenchState>(initialState);
   const [persistedState] = useState<PersistedWidgetState>(persistedWidgetState);
   const [state, setState] = useState<WorkbenchState>(startingState);
+  const stateRef = useRef(startingState);
   const [tab, setTab] = useState<Tab>(() => persistedState.tab || startingState.view.tab);
   const [activeBatchId, setActiveBatchId] = useState<string | undefined>(() => persistedState.batchId || startingState.view.batchId || startingState.activeBatch?.id || startingState.batches[0]?.id);
   const [selected, setSelected] = useState<Set<string>>(() => new Set(persistedState.selectedImageIds || persistedState.selectedJobIds || []));
@@ -58,13 +59,29 @@ function App() {
   const applyResult = useCallback((result: ToolResult) => {
     if (result.structuredContent?.state) {
       const incoming = result.structuredContent.state;
+      const previous = stateRef.current;
+      if (isStaleStateRefresh(previous, incoming)) return;
+      const activated = hasNewBatchActivation(previous, incoming)
+        && incoming.batches.some((batch) => batch.id === incoming.activation?.batchId);
+      stateRef.current = incoming;
       setState(incoming);
-      setActiveBatchId((current) => keepSelectedBatchId(current, incoming));
+      setActiveBatchId((current) => batchIdAfterStateRefresh(current, previous, incoming));
+      if (activated) {
+        setTab("batches");
+        setSelected(new Set());
+        setModificationRequest("");
+        setBatchSwitcherOpen(false);
+        setBatchMenuOpen(false);
+      }
       return;
     }
     const batch = result.structuredContent?.batch;
     if (batch) {
-      setState((current) => mergeBatchWithoutReordering(current, batch));
+      setState((current) => {
+        const next = mergeBatchWithoutReordering(current, batch);
+        stateRef.current = next;
+        return next;
+      });
       const activateBatchId = result.structuredContent?.activateBatchId;
       setActiveBatchId((current) => batchIdAfterUpdate(current, batch, activateBatchId));
       if (activateBatchId === batch.id) {
@@ -83,6 +100,34 @@ function App() {
     if (isPreview) return;
     void bridge.callTool("ui_get_local_state", { batchId: activeBatchId }).then(applyResult).catch((error) => setNotice(errorMessage(error)));
   }, []);
+
+  useEffect(() => {
+    if (isPreview) return;
+    let canceled = false;
+    let timer: number | undefined;
+    const refresh = async () => {
+      if (canceled || document.hidden) return;
+      try {
+        const result = await bridge.callTool("ui_get_local_state", { batchId: activeBatchId });
+        if (!canceled) applyResult(result);
+      } catch (error) {
+        if (!canceled) setNotice(errorMessage(error));
+      } finally {
+        if (!canceled && !document.hidden) timer = window.setTimeout(() => void refresh(), 2_500);
+      }
+    };
+    const onVisibilityChange = () => {
+      if (timer !== undefined) window.clearTimeout(timer);
+      if (!document.hidden) void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange, { passive: true });
+    timer = window.setTimeout(() => void refresh(), 2_500);
+    return () => {
+      canceled = true;
+      if (timer !== undefined) window.clearTimeout(timer);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [activeBatchId, applyResult, isPreview]);
 
   useEffect(() => {
     if (isPreview) return;
@@ -774,7 +819,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     setBusy("modify");
     try {
       const targets = resolvedTargets.map((image) => `${image.name}（image ID: ${image.id}；本地路径: ${image.path}；类型: ${image.kind}）`).join("、");
-      await bridge.sendMessage(`这是用户从 Esse 修改框提交的请求。请修改批次“${batch.title}”（batchId: ${batch.id}）中的目标图片：${targets}。用户已明确选择模型“${selectedOffering.displayName}”（offeringId: ${selectedOffering.id}）。修改要求：${request}\n目标已由 Esse 按双击选择和图像名称解析，无需再次询问。当前结果图可调用 modify_selected_images；历史备份或失败任务原图必须作为准确参考图创建新任务，不得替换成同批次的其他图片。`);
+      await bridge.sendMessage(`这是用户从 Esse 修改框提交的请求。请修改批次“${batch.title}”（batchId: ${batch.id}）中的目标图片：${targets}。用户已明确选择模型“${selectedOffering.displayName}”（offeringId: ${selectedOffering.id}）。修改要求：${request}\n目标已由 Esse 按双击选择和图像名称解析，无需再次询问。必须调用 modify_selected_images，并将上述准确 image ID 传入 imageIds；无论目标是当前结果、历史备份还是失败任务原图，都必须留在当前批次，禁止调用 create_image_batch 新建替代批次。`);
       props.setSelected(new Set());
       props.setModificationRequest("");
       props.onNotice(`已将 ${resolvedTargets.length} 张图片的修改要求交给当前 Agent`);

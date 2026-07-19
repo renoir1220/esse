@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { batchIdAfterUpdate, batchPollDelay, keepSelectedBatchId, mergeBatchWithoutReordering } from "../web/workbench-state.js";
+import { batchIdAfterStateRefresh, batchIdAfterUpdate, batchPollDelay, hasNewBatchActivation, isStaleStateRefresh, keepSelectedBatchId, mergeBatchWithoutReordering } from "../web/workbench-state.js";
 import type { BatchSnapshot, WorkbenchState } from "../web/types.js";
 
 function batch(id: string, updatedAt = "2026-01-01T00:00:00.000Z", status: BatchSnapshot["status"] = "completed"): BatchSnapshot {
@@ -39,6 +39,25 @@ test("a newly created batch explicitly activates itself", () => {
   assert.equal(batchIdAfterUpdate("older", created, "created"), "created");
   assert.equal(batchIdAfterUpdate(undefined, created), "created");
   assert.equal(batchIdAfterUpdate("older", created), "older");
+});
+
+test("state polling activates a headless batch exactly once", () => {
+  const first = batch("first");
+  const created = batch("created");
+  const current = { ...state([first], first), activation: { batchId: "first", revision: 2 } };
+  const incoming = { ...state([created, first], first), activation: { batchId: "created", revision: 3 } };
+  assert.equal(hasNewBatchActivation(current, incoming), true);
+  assert.equal(batchIdAfterStateRefresh("first", current, incoming), "created");
+  assert.equal(batchIdAfterStateRefresh("first", incoming, incoming), "first");
+  assert.equal(isStaleStateRefresh(incoming, current), true);
+});
+
+test("state polling preserves manual selection when activation has not changed", () => {
+  const first = batch("first");
+  const second = batch("second");
+  const current = { ...state([first, second], first), activation: { batchId: "first", revision: 4 } };
+  const incoming = { ...state([first, second], first), activation: { batchId: "first", revision: 4 } };
+  assert.equal(batchIdAfterStateRefresh("second", current, incoming), "second");
 });
 
 test("batch polling replaces in place without reordering or changing active batch", () => {

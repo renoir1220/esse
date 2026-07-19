@@ -23,6 +23,9 @@ try {
   assert(names.includes("open_esse"));
   assert(names.includes("create_image_batch"));
   assert(names.includes("list_image_batches"));
+  assert(names.includes("modify_selected_images"));
+  assert(names.includes("delete_esse_images"));
+  assert(names.includes("merge_image_batches"));
   assert(names.includes("ui_get_batch_state"));
   assert(names.includes("ui_open_batch_folder"));
   assert(names.includes("ui_save_provider_profile"));

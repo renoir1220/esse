@@ -23,6 +23,7 @@ One Provider Profile represents one exact credential group, price tier, API cont
 - `open_esse`
 - `list_image_offerings`
 - `inspect_image_folder`
+- `list_image_batches`
 - `create_image_batch`
 - `start_agent_image_job`
 - `complete_agent_image_job`
@@ -30,7 +31,9 @@ One Provider Profile represents one exact credential group, price tier, API cont
 - `get_image_batch`
 - `render_image_batch`
 - `modify_selected_images`
-- eight `ui_*` app-only tools for settings, previews, progress, cancel, and retry
+- `delete_esse_images`
+- `merge_image_batches`
+- `ui_*` app-only tools for settings, previews, progress, local refresh, cancel, retry, and batch management
 
 ## Security
 

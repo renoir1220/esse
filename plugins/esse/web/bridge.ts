@@ -169,7 +169,7 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
   }
   if (name === "modify_selected_images") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);
-    const ids = Array.isArray(args.jobIds) ? new Set(args.jobIds) : new Set<unknown>();
+    const ids = Array.isArray(args.imageIds) ? new Set(args.imageIds) : Array.isArray(args.jobIds) ? new Set(args.jobIds) : new Set<unknown>();
     const selectedOffering = state.offerings.find((offering) => offering.id === args.offeringId);
     if (batch) {
       for (const job of batch.jobs) {

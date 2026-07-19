@@ -56,7 +56,7 @@ export function createLocalEsseServer(options: {
     { name: "esse", version: "0.1.0" },
     {
       instructions:
-        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Routine tools are headless so an already docked sidebar keeps its layout."
+        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself."
     }
   );
 
@@ -243,13 +243,19 @@ export function createLocalEsseServer(options: {
   registerAppTool(server, "list_image_batches", {
     title: "List recent local image batches",
     description: "Lists recent Esse batch IDs, titles, image names, IDs, and statuses. Use this when the user refers to an earlier result such as 图1 but its batchId is not already known.",
-    inputSchema: { limit: z.number().int().min(1).max(30).default(10) },
+    inputSchema: { limit: z.number().int().min(1).max(50).default(10) },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async ({ limit }) => {
     const batches = options.batches.list(limit);
     const text = batches.length
-      ? batches.map((batch) => `${batch.title} (${batch.id}): ${batch.jobs.map((job) => `${job.name}=${job.id} [${job.status}]`).join(", ")}`).join("\n")
+      ? batches.map((batch) => {
+        const images = batch.jobs.flatMap((job) => [
+          `${job.name}=${job.id} [${job.status}]`,
+          ...(job.backups || []).map((backup) => `${backup.name}=${backup.id} [backup]`)
+        ]);
+        return `${batch.title} (${batch.id}): ${images.join(", ")}`;
+      }).join("\n")
       : "No local image batches exist yet.";
     return { structuredContent: { batches }, content: [{ type: "text" as const, text }] };
   });
@@ -272,10 +278,11 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "modify_selected_images", {
     title: "Modify selected local images",
-    description: "Modifies completed job IDs inside their existing batch. Each previous result is preserved as 图1-1, 图1-2, and so on. Uses offeringId when the user explicitly selects a model; otherwise reuses the batch offering.",
+    description: "Modifies exact image IDs inside their existing batch. Current results update in place and preserve the previous version as 图1-1, 图1-2, and so on; backups and failed-job sources append a new job to that same batch. Never create a replacement batch for a modification. Uses offeringId only when the user explicitly selects a model; otherwise reuses the batch offering.",
     inputSchema: {
       batchId: z.string().min(1),
-      jobIds: z.array(z.string()).min(1).max(50),
+      imageIds: z.array(z.string()).min(1).max(50).optional(),
+      jobIds: z.array(z.string()).min(1).max(50).optional().describe("Deprecated alias for imageIds; retained for older widgets."),
       instructions: z.string().min(1).max(5000),
       offeringId: z.string().optional(),
       outputDirectory: z.string().optional(),
@@ -284,11 +291,44 @@ export function createLocalEsseServer(options: {
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async (input) => {
-    const batch = await options.batches.modifyInPlace(input);
-    const message = batch.jobs.some((job) => input.jobIds.includes(job.id) && job.offering?.adapterId === "agent-generation")
+    const imageIds = input.imageIds || input.jobIds;
+    if (!imageIds?.length) throw new Error("请提供至少一个准确的 image ID。");
+    const batch = await options.batches.modifyInPlace({ ...input, imageIds });
+    const message = batch.jobs.some((job) => job.status === "queued" && job.offering?.adapterId === "agent-generation")
       ? "已建立 Codex 生成修改任务。当前 Agent 必须使用每个 job 返回的参考图完成生成并逐项回传结果。"
       : undefined;
-    return batchResult(batch, message);
+    return batchResult(batch, message, true);
+  });
+
+  registerAppTool(server, "delete_esse_images", {
+    title: "Delete Esse images",
+    description: "Deletes exact current-image or backup IDs from one Esse batch and removes only files managed inside that batch's output directory. Deleting a current image also deletes its preserved versions. Active jobs cannot be deleted.",
+    inputSchema: {
+      batchId: z.string().min(1),
+      imageIds: z.array(z.string()).min(1).max(50)
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+    _meta: headlessToolMeta()
+  }, async ({ batchId, imageIds }) => {
+    const batch = await options.batches.deleteImages(batchId, imageIds);
+    return batchResult(batch, `已从批次“${batch.title}”删除 ${imageIds.length} 个指定图片记录。`, true);
+  });
+
+  registerAppTool(server, "merge_image_batches", {
+    title: "Merge Esse image batches",
+    description: "Copies every image job from terminal source batches into one terminal target batch. Source batches are preserved by default; set deleteSourceBatches only when the user explicitly asks to remove them. The merged target cannot exceed 50 images.",
+    inputSchema: {
+      targetBatchId: z.string().min(1),
+      sourceBatchIds: z.array(z.string().min(1)).min(1).max(50),
+      deleteSourceBatches: z.boolean().default(false),
+      requestKey: z.string().max(200).optional()
+    },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
+    _meta: headlessToolMeta()
+  }, async (input) => {
+    const batch = await options.batches.mergeBatches(input);
+    const sourceAction = input.deleteSourceBatches ? "，源批次已按要求删除" : "，源批次已保留";
+    return batchResult(batch, `已将 ${input.sourceBatchIds.length} 个批次合并到“${batch.title}”${sourceAction}。`, true);
   });
 
   registerUiTools(server, options);
@@ -490,13 +530,19 @@ async function uiState(options: Parameters<typeof createLocalEsseServer>[0], tab
     options.settings.listProfiles(),
     options.registry.listOfferings()
   ]);
+  const activeBatch = batchId ? options.batches.get(batchId) : undefined;
+  const recentBatches = options.batches.listRecent(8);
+  const batches = activeBatch && !recentBatches.some((batch) => batch.id === activeBatch.id)
+    ? [activeBatch, ...recentBatches.slice(0, 7)]
+    : recentBatches;
   return {
     view: { tab, batchId },
     providers,
     offerings,
     defaultOfferingId: settings.defaultOfferingId,
-    batches: options.batches.listRecent(8),
-    activeBatch: batchId ? options.batches.get(batchId) : undefined,
+    batches,
+    activeBatch,
+    activation: options.batches.activation(),
     platform: process.platform,
     secureStorage: process.platform === "win32" ? "Windows DPAPI" : process.platform === "darwin" ? "macOS Keychain" : "Unavailable"
   };
@@ -532,7 +578,7 @@ function resolveExistingImagePaths(
     const selector = reference.image.trim();
     const job = batch.jobs.find((entry) => entry.id === selector || entry.name === selector);
     const backup = batch.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === selector || entry.name === selector);
-    const outputPath = backup?.outputPath || job?.outputPath || (job?.status === "failed" ? previewSourcePaths(job)[0] : undefined);
+    const outputPath = backup?.outputPath || (job?.status === "failed" ? previewSourcePaths(job)[0] : job?.outputPath);
     if (!job && !backup) throw new Error(`批次“${batch.title}”中找不到图片“${selector}”。请使用 list_image_batches 返回的准确名称或 ID。`);
     if (!outputPath) throw new Error(`批次“${batch.title}”中的“${selector}”没有可用的完成图或失败任务原图，暂时不能作为参考图。`);
     return outputPath;
