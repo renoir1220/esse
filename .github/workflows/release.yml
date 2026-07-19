@@ -121,5 +121,9 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @assets --clobber
           } else {
-            gh release create $tag @assets --verify-tag --title "Esse $tag" --generate-notes --notes $releaseNotes
+            if ($tag -match "-") {
+              gh release create $tag @assets --verify-tag --prerelease --title "Esse $tag" --generate-notes --notes $releaseNotes
+            } else {
+              gh release create $tag @assets --verify-tag --title "Esse $tag" --generate-notes --notes $releaseNotes
+            }
           }
