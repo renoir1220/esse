@@ -97,9 +97,10 @@ jobs:
         run: |
           $tag = $env:GITHUB_REF_NAME
           $assets = Get-ChildItem -LiteralPath .\release -File | Select-Object -ExpandProperty FullName
+          $releaseNotes = Get-Content -Raw -Encoding UTF8 .\.github\release-notes-prefix.md
           gh release view $tag *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @assets --clobber
           } else {
-            gh release create $tag @assets --verify-tag --title "Esse $tag" --generate-notes --notes "Unsigned Public Beta. Windows x64 and macOS arm64/x64 are supported. Every runtime was built and self-tested on its native platform, and the installers verify SHA256 before changing the user-scoped local marketplace."
+            gh release create $tag @assets --verify-tag --title "Esse $tag" --generate-notes --notes $releaseNotes
           }
