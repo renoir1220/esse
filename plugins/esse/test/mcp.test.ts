@@ -43,7 +43,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await client.connect(clientTransport);
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
-    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_metadata", "ui_save_image_as", "ui_delete_image_batch"]) {
+    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_image_metadata", "ui_save_image_as", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
     }
     const settingsTool = tools.tools.find((tool) => tool.name === "ui_save_provider_profile");
@@ -118,6 +118,18 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     }
     assert(completedJobId);
     assert(completedOutputPath);
+    const imagePreviews = await client.callTool({
+      name: "ui_get_image_previews",
+      arguments: {
+        batchId: createdBatch?.id,
+        items: [{ jobId: completedJobId, full: false }, { jobId: completedJobId, full: true }]
+      }
+    });
+    const previewItems = (imagePreviews._meta as { previews?: Array<{ dataUrl?: string; full?: boolean }> } | undefined)?.previews || [];
+    assert.equal(previewItems.length, 2);
+    assert(previewItems.every((preview) => preview.dataUrl?.startsWith("data:image/")));
+    assert.deepEqual(previewItems.map((preview) => preview.full), [false, true]);
+    assert(!JSON.stringify(imagePreviews.structuredContent).includes("data:image/"), "preview bytes must remain hidden from model-visible structured content");
     const imageMetadata = await client.callTool({ name: "ui_get_image_metadata", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
     assert.deepEqual(imageMetadata.structuredContent, { batchId: createdBatch?.id, jobId: completedJobId, available: true, width: 1, height: 1, sizeBytes: Buffer.from(onePixelPng, "base64").length });
     const listed = await client.callTool({ name: "list_image_batches", arguments: { limit: 5 } });

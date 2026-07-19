@@ -1,5 +1,6 @@
 import type { ToolResult } from "./types";
 import { compactToolArgs } from "./tool-args";
+import { requestDisplayModeWithRetry, type EsseDisplayMode } from "./display-mode";
 
 type Pending = { resolve: (value: unknown) => void; reject: (reason: unknown) => void };
 type Listener = (result: ToolResult) => void;
@@ -72,12 +73,37 @@ class HostBridge {
       document.body.classList.toggle("standalone-fullscreen");
       return;
     }
-    if (window.openai?.requestDisplayMode) {
-      await window.openai.requestDisplayMode({ mode: "fullscreen" });
-      return;
-    }
-    await this.ensureInitialized();
-    await this.request("ui/request-display-mode", { mode: "fullscreen" });
+    await requestDisplayModeWithRetry({
+      target: "fullscreen",
+      getMode: () => window.openai?.displayMode,
+      requestMode: async (mode) => {
+        if (window.openai?.requestDisplayMode) return window.openai.requestDisplayMode({ mode });
+        await this.ensureInitialized();
+        return this.request("ui/request-display-mode", { mode }) as Promise<{ mode?: EsseDisplayMode }>;
+      },
+      waitForMode: (mode, timeoutMs) => this.waitForDisplayMode(mode, timeoutMs)
+    });
+  }
+
+  private waitForDisplayMode(mode: EsseDisplayMode, timeoutMs: number): Promise<boolean> {
+    if (window.openai?.displayMode === mode) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      let settled = false;
+      let timer = 0;
+      const finish = (matched: boolean) => {
+        if (settled) return;
+        settled = true;
+        window.clearTimeout(timer);
+        window.removeEventListener("openai:set_globals", onGlobals as EventListener);
+        resolve(matched);
+      };
+      const onGlobals = (event: Event) => {
+        const globals = (event as CustomEvent<{ globals?: { displayMode?: EsseDisplayMode } }>).detail?.globals;
+        if (globals?.displayMode === mode || window.openai?.displayMode === mode) finish(true);
+      };
+      timer = window.setTimeout(() => finish(window.openai?.displayMode === mode), timeoutMs);
+      window.addEventListener("openai:set_globals", onGlobals as EventListener, { passive: true });
+    });
   }
 
   private ensureInitialized(): Promise<void> {
@@ -146,6 +172,19 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
     const sourceIndex = typeof args.sourceIndex === "number" ? args.sourceIndex : undefined;
     const dataUrl = sourceIndex === undefined ? backup?.previewUrl || job?.previewUrl : job?.referencePreviewUrls?.[sourceIndex] || (sourceIndex === 0 ? job?.previewUrl : undefined);
     return { structuredContent: { available: Boolean(dataUrl), sourceIndex }, _meta: { dataUrl } };
+  }
+  if (name === "ui_get_image_previews") {
+    const batch = state.batches.find((entry) => entry.id === args.batchId);
+    const items = Array.isArray(args.items) ? args.items as Array<{ jobId?: unknown; sourceIndex?: unknown; full?: unknown }> : [];
+    const previews = items.map((item) => {
+      const jobId = String(item.jobId || "");
+      const job = batch?.jobs.find((entry) => entry.id === jobId);
+      const backup = batch?.jobs.flatMap((entry) => entry.backups || []).find((entry) => entry.id === jobId) as ({ previewUrl?: string } | undefined);
+      const sourceIndex = typeof item.sourceIndex === "number" ? item.sourceIndex : undefined;
+      const dataUrl = sourceIndex === undefined ? backup?.previewUrl || job?.previewUrl : job?.referencePreviewUrls?.[sourceIndex] || (sourceIndex === 0 ? job?.previewUrl : undefined);
+      return { jobId, sourceIndex, full: item.full === true, dataUrl };
+    });
+    return { structuredContent: { available: previews.filter((item) => item.dataUrl).length }, _meta: { previews } };
   }
   if (name === "ui_get_image_metadata") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);

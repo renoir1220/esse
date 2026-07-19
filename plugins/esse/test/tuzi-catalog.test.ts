@@ -16,9 +16,11 @@ test("Tuzi presets keep each credential group and model catalog independent", ()
 
   const draft = createTuziProviderDraft("tuzi-default");
   assert.equal(draft.tierName, "default");
-  assert.equal(draft.offerings.length, 1);
-  assert.equal(draft.offerings[0]?.providerModelId, "gpt-image-2");
+  assert.deepEqual(draft.offerings.map((offering) => offering.providerModelId), ["gpt-image-2", "nano-banana-2", "nano-banana-2-2k"]);
   assert.equal(tuziProviderPresetForDraft(draft)?.id, "tuzi-default");
+
+  const groupedDraft = createTuziProviderDraft("tuzi-microsoft");
+  assert.deepEqual(groupedDraft.offerings.map((offering) => offering.providerModelId), ["gpt-image-2"]);
 });
 
 test("catalog offerings are cloned before entering editable Provider state", () => {

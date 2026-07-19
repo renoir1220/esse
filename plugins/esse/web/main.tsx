@@ -7,6 +7,7 @@ import { formatImageFileSize, formatImageResolution } from "./image-metadata";
 import type { ImageMetadata } from "./image-metadata";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
 import { providerSavePayload } from "./provider-payload";
+import { DataUrlLruCache, jobFileSignature, jobPreviewRevision, versionedPreviewSignature } from "./preview-cache";
 import { offeringPriceLabel } from "./pricing";
 import {
   blankOffering,
@@ -23,7 +24,11 @@ import type { BatchSnapshot, JobBackupSnapshot, JobCallSnapshot, JobSnapshot, Of
 import "./styles.css";
 
 type Tab = "batches" | "settings";
+type SidebarStatus = "opening" | "docked" | "inline";
 type PersistedWidgetState = NonNullable<NonNullable<Window["openai"]>["widgetState"]>;
+
+const previewDataUrlCache = new DataUrlLruCache(32 * 1024 * 1024);
+const PREVIEW_BATCH_SIZE = 8;
 
 function initialState(): WorkbenchState {
   const direct = window.__ESSE_PREVIEW__ || window.openai?.toolOutput?.state;
@@ -64,6 +69,7 @@ function App() {
   const [confirmDeleteBatch, setConfirmDeleteBatch] = useState(false);
   const [headerBusy, setHeaderBusy] = useState<string>();
   const isPreview = Boolean(window.__ESSE_PREVIEW__);
+  const [sidebarStatus, setSidebarStatus] = useState<SidebarStatus>(() => isPreview ? "inline" : window.openai?.displayMode === "fullscreen" ? "docked" : "opening");
 
   const applyResult = useCallback((result: ToolResult) => {
     if (result.structuredContent?.state) {
@@ -140,13 +146,25 @@ function App() {
 
   useEffect(() => {
     if (isPreview) return;
-    void bridge.requestFullscreen().catch(() => undefined);
+    let canceled = false;
+    setSidebarStatus("opening");
+    void bridge.requestFullscreen().then(() => {
+      if (canceled) return;
+      setDisplayMode(window.openai?.displayMode || "fullscreen");
+      setSidebarStatus("docked");
+    }).catch(() => {
+      if (!canceled) setSidebarStatus("inline");
+    });
+    return () => { canceled = true; };
   }, [isPreview]);
 
   useEffect(() => {
     const listener = (event: Event) => {
       const globals = (event as CustomEvent<{ globals?: { displayMode?: "inline" | "pip" | "fullscreen"; theme?: "light" | "dark" } }>).detail?.globals;
-      if (globals?.displayMode) setDisplayMode(globals.displayMode);
+      if (globals?.displayMode) {
+        setDisplayMode(globals.displayMode);
+        setSidebarStatus(globals.displayMode === "fullscreen" ? "docked" : "inline");
+      }
       if (globals?.theme) document.documentElement.dataset.theme = globals.theme;
     };
     window.addEventListener("openai:set_globals", listener as EventListener, { passive: true });
@@ -218,8 +236,18 @@ function App() {
   const switchTab = (next: Tab) => { setTab(next); setNotice(undefined); setBatchSwitcherOpen(false); setBatchMenuOpen(false); setConfirmDeleteBatch(false); };
   const switchBatch = (id: string) => { setActiveBatchId(id); setSelected(new Set()); setModificationRequest(""); setTab("batches"); setBatchSwitcherOpen(false); setBatchMenuOpen(false); setConfirmDeleteBatch(false); };
   const requestFullscreen = async () => {
-    await bridge.requestFullscreen();
-    if (isPreview) setDisplayMode(document.body.classList.contains("standalone-fullscreen") ? "fullscreen" : "inline");
+    setSidebarStatus("opening");
+    try {
+      await bridge.requestFullscreen();
+      const nextMode = isPreview
+        ? (document.body.classList.contains("standalone-fullscreen") ? "fullscreen" : "inline")
+        : (window.openai?.displayMode || "fullscreen");
+      setDisplayMode(nextMode);
+      setSidebarStatus(nextMode === "fullscreen" ? "docked" : "inline");
+    } catch (error) {
+      setSidebarStatus("inline");
+      setNotice(`无法自动在侧栏打开：${errorMessage(error)}`);
+    }
   };
   const deleteActiveBatch = async () => {
     if (!activeBatch) return;
@@ -246,7 +274,7 @@ function App() {
   };
 
   return (
-    <main className="app-shell" data-display-mode={displayMode}>
+    <main className="app-shell" data-display-mode={displayMode} data-sidebar-status={sidebarStatus}>
       <header className="app-header">
         <div className="header-context">
           {tab === "settings" && <span className="header-context-icon"><SlidersHorizontal size={17} /></span>}
@@ -467,7 +495,7 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
 
         <section className="settings-section models-section">
           <div className="offerings-heading">
-            <strong>模型</strong>
+            <span className="offerings-title"><strong>模型</strong>{activeTuziPreset && <small>价格仅供参考，请以 Tuzi 官网为准。</small>}</span>
             <AddChoiceMenu
               ariaLabel="添加模型"
               title={activeTuziPreset ? `${activeTuziPreset.label} 支持的模型` : "添加模型"}
@@ -619,18 +647,37 @@ function BatchBrowserDialog(props: {
         .filter((job) => Boolean(job.outputPath))
         .slice(0, 3)
         .map((job) => ({ batch, job })));
-      await Promise.all(entries.map(async ({ batch, job }) => {
-        const key = batchPreviewKey(batch.id, job.id);
-        if (previews[key]) return;
-        if (job.previewUrl) {
-          if (!canceled) setPreviews((current) => ({ ...current, [key]: job.previewUrl! }));
-          return;
+      const hits: Record<string, string> = {};
+      const pendingByBatch = new Map<string, PreviewRequest[]>();
+      for (const { batch, job } of entries) {
+        const stateKey = batchPreviewKey(batch.id, job.id);
+        const filePath = job.outputPath!;
+        if (previews[stateKey]) continue;
+        const cacheKey = previewMemoryKey(batch.id, job.id, filePath, false, undefined, jobPreviewRevision(job));
+        const cached = job.previewUrl || previewDataUrlCache.get(cacheKey);
+        if (cached) {
+          previewDataUrlCache.set(cacheKey, cached);
+          hits[stateKey] = cached;
+          continue;
         }
-        try {
-          const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: job.id, full: false });
-          const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
-          if (dataUrl && !canceled) setPreviews((current) => ({ ...current, [key]: dataUrl }));
-        } catch { /* A missing cover should not block browsing the batch list. */ }
+        const requests = pendingByBatch.get(batch.id) || [];
+        requests.push({ stateKey, cacheKey, filePath, jobId: job.id });
+        pendingByBatch.set(batch.id, requests);
+      }
+      if (Object.keys(hits).length && !canceled) setPreviews((current) => ({ ...current, ...hits }));
+      await Promise.all([...pendingByBatch].map(async ([batchId, requests]) => {
+        for (const chunk of previewChunks(requests)) {
+          try {
+            const loaded = await fetchPreviewBatch(batchId, chunk);
+            if (canceled) return;
+            const next: Record<string, string> = {};
+            for (const { request, dataUrl } of loaded) {
+              previewDataUrlCache.set(request.cacheKey, dataUrl);
+              next[request.stateKey] = dataUrl;
+            }
+            if (Object.keys(next).length) setPreviews((current) => ({ ...current, ...next }));
+          } catch { /* A missing cover should not block browsing the batch list. */ }
+        }
       }));
     };
     void load();
@@ -705,14 +752,14 @@ type ImageAsset = {
   selectableImage?: SelectableImage;
 };
 
-type CachedPreview = { path: string; dataUrl: string };
+type CachedPreview = { signature: string; dataUrl: string };
 
 type ModificationOffering = Pick<PublicOffering, "id" | "displayName" | "providerName" | "tierName" | "adapterId" | "price">;
 
 function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "onOpenSettings"> & { batch: BatchSnapshot; offerings: PublicOffering[] }) {
   const { batch } = props;
   const modificationTextareaRef = useRef<HTMLTextAreaElement>(null);
-  const [previews, setPreviews] = useState<Record<string, CachedPreview>>(() => Object.fromEntries(batch.jobs.filter((job) => job.previewUrl && (job.outputPath || job.inputPath)).map((job) => [job.id, { path: (job.outputPath || job.inputPath)!, dataUrl: job.previewUrl! }])));
+  const [previews, setPreviews] = useState<Record<string, CachedPreview>>(() => Object.fromEntries(batch.jobs.filter((job) => job.previewUrl && (job.outputPath || job.inputPath)).map((job) => [job.id, { signature: jobFileSignature(job, (job.outputPath || job.inputPath)!), dataUrl: job.previewUrl! }])));
   const [previewAsset, setPreviewAsset] = useState<ImageAsset>();
   const [previewFull, setPreviewFull] = useState<string>();
   const [previewZoom, setPreviewZoom] = useState(initialImageZoom);
@@ -765,45 +812,74 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   useEffect(() => {
     let canceled = false;
     const load = async () => {
+      const requests: PreviewRequest[] = [];
+      const hits: Record<string, CachedPreview> = {};
       for (const asset of assetsToShow) {
         const processingPaths = asset.job ? processingSourcePaths(asset.job) : [];
         if (processingPaths.length && asset.job && isProcessing(asset.job)) {
           for (const [sourceIndex, filePath] of processingPaths.slice(0, 4).entries()) {
-            const key = sourcePreviewKey(asset.id, sourceIndex);
-            if (canceled || previews[key]?.path === filePath) continue;
-            try {
-              const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: asset.id, sourceIndex, full: false });
-              const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
-              if (dataUrl && !canceled) setPreviews((current) => ({ ...current, [key]: { path: filePath, dataUrl } }));
-            } catch { /* Keep the reference cell neutral while loading. */ }
+            const stateKey = sourcePreviewKey(asset.id, sourceIndex);
+            if (canceled || previews[stateKey]?.signature === filePath) continue;
+            const cacheKey = previewMemoryKey(batch.id, asset.id, filePath, false, sourceIndex);
+            const cached = previewDataUrlCache.get(cacheKey);
+            if (cached) hits[stateKey] = { signature: filePath, dataUrl: cached };
+            else requests.push({ stateKey, cacheKey, filePath, jobId: asset.id, sourceIndex });
           }
           continue;
         }
         const filePath = asset.outputPath || asset.inputPath;
-        if (canceled || !filePath || previews[asset.id]?.path === filePath) continue;
+        if (!filePath) continue;
+        const signature = assetFileSignature(asset, filePath);
+        if (canceled || previews[asset.id]?.signature === signature) continue;
+        const cacheKey = previewMemoryKey(batch.id, asset.id, filePath, false, undefined, signature);
+        const cached = previewDataUrlCache.get(cacheKey);
+        if (cached) hits[asset.id] = { signature, dataUrl: cached };
+        else requests.push({ stateKey: asset.id, cacheKey, filePath, signature, jobId: asset.id });
+      }
+      if (Object.keys(hits).length && !canceled) setPreviews((current) => ({ ...current, ...hits }));
+      for (const chunk of previewChunks(requests)) {
         try {
-          const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: asset.id, full: false });
-          const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
-          if (dataUrl && !canceled) setPreviews((current) => ({ ...current, [asset.id]: { path: filePath, dataUrl } }));
-        } catch { /* Keep a neutral placeholder. */ }
+          const loaded = await fetchPreviewBatch(batch.id, chunk);
+          if (canceled) return;
+          const next: Record<string, CachedPreview> = {};
+          for (const { request, dataUrl } of loaded) {
+            previewDataUrlCache.set(request.cacheKey, dataUrl);
+            next[request.stateKey] = { signature: request.signature || request.filePath, dataUrl };
+          }
+          if (Object.keys(next).length) setPreviews((current) => ({ ...current, ...next }));
+        } catch { /* Keep a neutral placeholder while a preview is unavailable. */ }
       }
     };
     void load();
     return () => { canceled = true; };
-  }, [batch.id, assetsToShow.map((asset) => `${asset.id}:${asset.outputPath || asset.inputPath || ""}:${asset.job ? processingSourcePaths(asset.job).join(",") : ""}`).join("|")]);
+  }, [batch.id, assetsToShow.map((asset) => `${asset.id}:${asset.outputPath || asset.inputPath ? assetFileSignature(asset, (asset.outputPath || asset.inputPath)!) : ""}:${asset.job ? processingSourcePaths(asset.job).join(",") : ""}`).join("|")]);
 
   const detailReferencePaths = detailAsset ? referencePathsForAsset(detailAsset) : [];
   useEffect(() => {
     if (!detailAsset || !detailReferencePaths.length) return;
     let canceled = false;
     const load = async () => {
+      const requests: PreviewRequest[] = [];
+      const hits: Record<string, CachedPreview> = {};
       for (const [sourceIndex, filePath] of detailReferencePaths.entries()) {
-        const key = sourcePreviewKey(detailAsset.id, sourceIndex);
-        if (canceled || previews[key]?.path === filePath) continue;
+        const stateKey = sourcePreviewKey(detailAsset.id, sourceIndex);
+        if (canceled || previews[stateKey]?.signature === filePath) continue;
+        const cacheKey = previewMemoryKey(batch.id, detailAsset.id, filePath, false, sourceIndex);
+        const cached = previewDataUrlCache.get(cacheKey);
+        if (cached) hits[stateKey] = { signature: filePath, dataUrl: cached };
+        else requests.push({ stateKey, cacheKey, filePath, jobId: detailAsset.id, sourceIndex });
+      }
+      if (Object.keys(hits).length && !canceled) setPreviews((current) => ({ ...current, ...hits }));
+      for (const chunk of previewChunks(requests)) {
         try {
-          const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: detailAsset.id, sourceIndex, full: false });
-          const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
-          if (dataUrl && !canceled) setPreviews((current) => ({ ...current, [key]: { path: filePath, dataUrl } }));
+          const loaded = await fetchPreviewBatch(batch.id, chunk);
+          if (canceled) return;
+          const next: Record<string, CachedPreview> = {};
+          for (const { request, dataUrl } of loaded) {
+            previewDataUrlCache.set(request.cacheKey, dataUrl);
+            next[request.stateKey] = { signature: request.signature || request.filePath, dataUrl };
+          }
+          if (Object.keys(next).length) setPreviews((current) => ({ ...current, ...next }));
         } catch { /* Keep the path visible when a reference thumbnail is unavailable. */ }
       }
     };
@@ -850,9 +926,15 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     });
   };
   const fullDataUrl = async (asset: ImageAsset) => {
+    const filePath = asset.outputPath || asset.inputPath;
+    if (!filePath) throw new Error("无法读取本地原图。");
+    const cacheKey = previewMemoryKey(batch.id, asset.id, filePath, true, undefined, assetFileSignature(asset, filePath));
+    const cached = previewDataUrlCache.get(cacheKey);
+    if (cached) return cached;
     const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: asset.id, full: true });
     const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
     if (!dataUrl) throw new Error("无法读取本地原图。");
+    previewDataUrlCache.set(cacheKey, dataUrl);
     return dataUrl;
   };
   const openPreview = (asset: ImageAsset) => setPreviewAsset(asset);
@@ -865,9 +947,11 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   useEffect(() => {
     if (!previewAsset) return;
     let canceled = false;
-    setPreviewFull(undefined);
+    const filePath = previewAsset.outputPath || previewAsset.inputPath;
+    const cached = filePath ? previewDataUrlCache.get(previewMemoryKey(batch.id, previewAsset.id, filePath, true, undefined, assetFileSignature(previewAsset, filePath))) : undefined;
+    setPreviewFull(cached);
     setPreviewZoom(initialImageZoom);
-    void fullDataUrl(previewAsset).then((dataUrl) => { if (!canceled) setPreviewFull(dataUrl); }).catch((error) => { if (!canceled) props.onNotice(errorMessage(error)); });
+    if (!cached) void fullDataUrl(previewAsset).then((dataUrl) => { if (!canceled) setPreviewFull(dataUrl); }).catch((error) => { if (!canceled) props.onNotice(errorMessage(error)); });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setPreviewAsset(undefined);
       if (event.key === "ArrowLeft") { event.preventDefault(); movePreview(-1); }
@@ -922,7 +1006,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     if (!asset.job || !isProcessing(asset.job)) return [];
     return processingSourcePaths(asset.job).slice(0, 4).map((filePath, sourceIndex) => {
       const cached = previews[sourcePreviewKey(asset.id, sourceIndex)];
-      return cached?.path === filePath ? cached.dataUrl : undefined;
+      return cached?.signature === filePath ? cached.dataUrl : undefined;
     });
   };
 
@@ -931,7 +1015,11 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       <div className={`batch-workspace ${assetsToShow.length === 1 ? "is-single" : ""}`}>
         <section className="gallery-panel" aria-label="批次图片">
           <div className="selection-bar"><strong>图片</strong></div>
-          <section className="image-grid">{assetsToShow.map((asset) => <JobCard key={asset.id} asset={asset} preview={asset.job && isProcessing(asset.job) ? undefined : previews[asset.id]?.path === (asset.outputPath || asset.inputPath) ? previews[asset.id]?.dataUrl : undefined} sourcePreviews={sourcePreviewsFor(asset)} selected={Boolean(asset.selectableImage && props.selected.has(asset.selectableImage.id))} busy={busy === `retry:${asset.id}`} onSelect={asset.selectableImage ? () => toggle(asset.selectableImage!) : undefined} onPreview={() => openPreview(asset)} onDetail={() => setDetailAsset(asset)} onSave={() => void saveImage(asset)} onRetry={asset.job ? () => void retry(asset.job!) : undefined} />)}</section>
+          <section className="image-grid">{assetsToShow.map((asset) => {
+            const filePath = asset.outputPath || asset.inputPath;
+            const preview = filePath && previews[asset.id]?.signature === assetFileSignature(asset, filePath) ? previews[asset.id]?.dataUrl : undefined;
+            return <JobCard key={asset.id} asset={asset} preview={asset.job && isProcessing(asset.job) ? undefined : preview} sourcePreviews={sourcePreviewsFor(asset)} selected={Boolean(asset.selectableImage && props.selected.has(asset.selectableImage.id))} busy={busy === `retry:${asset.id}`} onSelect={asset.selectableImage ? () => toggle(asset.selectableImage!) : undefined} onPreview={() => openPreview(asset)} onDetail={() => setDetailAsset(asset)} onSave={() => void saveImage(asset)} onRetry={asset.job ? () => void retry(asset.job!) : undefined} />;
+          })}</section>
           {assets.length > assetsToShow.length && <div className="show-more">展开后可查看全部 {assets.length} 张图片</div>}
         </section>
         <section className="modify-composer" aria-label="修改选定图片">
@@ -1043,7 +1131,7 @@ function TaskDetailDialog({ asset, metadata, referencePaths, previews, onClose }
       <section className="task-detail-section"><strong>参考图</strong>
         {referencePaths.length ? <div className="task-reference-grid">{referencePaths.map((filePath, index) => {
           const cached = previews[sourcePreviewKey(asset.id, index)];
-          const preview = cached?.path === filePath ? cached.dataUrl : undefined;
+          const preview = cached?.signature === filePath ? cached.dataUrl : undefined;
           return <article key={`${filePath}:${index}`}><div className="task-reference-image">{preview ? <img src={preview} alt={`参考图 ${index + 1}`} /> : <ImageSquare size={22} />}</div><div><b>参考图 {index + 1}</b><span title={filePath}>{fileName(filePath)}</span><code title={filePath}>{filePath}</code></div></article>;
         })}</div> : <div className="task-reference-empty"><ImageSquare size={20} /><span>无参考图，使用纯文本生成</span></div>}
       </section>
@@ -1187,6 +1275,51 @@ function formatBatchDate(value: string): string {
 
 function batchPreviewKey(batchId: string, jobId: string): string {
   return `${batchId}:${jobId}`;
+}
+
+function assetFileSignature(asset: ImageAsset, filePath: string): string {
+  if (asset.job) return jobFileSignature(asset.job, filePath);
+  if (asset.backup) return versionedPreviewSignature(filePath, asset.backup.createdAt);
+  return filePath;
+}
+
+type PreviewRequest = {
+  stateKey: string;
+  cacheKey: string;
+  filePath: string;
+  signature?: string;
+  jobId: string;
+  sourceIndex?: number;
+};
+
+type PreviewResponseItem = {
+  jobId?: string;
+  sourceIndex?: number;
+  full?: boolean;
+  dataUrl?: string;
+};
+
+function previewMemoryKey(batchId: string, jobId: string, filePath: string, full: boolean, sourceIndex?: number, revision?: string): string {
+  return [batchId, jobId, sourceIndex ?? "output", full ? "full" : "thumb", filePath, revision || ""].join("\u001f");
+}
+
+function previewChunks<T>(values: T[]): T[][] {
+  const chunks: T[][] = [];
+  for (let index = 0; index < values.length; index += PREVIEW_BATCH_SIZE) chunks.push(values.slice(index, index + PREVIEW_BATCH_SIZE));
+  return chunks;
+}
+
+async function fetchPreviewBatch(batchId: string, requests: PreviewRequest[]): Promise<Array<{ request: PreviewRequest; dataUrl: string }>> {
+  if (!requests.length) return [];
+  const result = await bridge.callTool("ui_get_image_previews", {
+    batchId,
+    items: requests.map(({ jobId, sourceIndex }) => ({ jobId, sourceIndex, full: false }))
+  });
+  const previews = Array.isArray(result._meta?.previews) ? result._meta.previews as PreviewResponseItem[] : [];
+  return requests.flatMap((request) => {
+    const preview = previews.find((entry) => entry.jobId === request.jobId && entry.sourceIndex === request.sourceIndex && entry.full === false);
+    return typeof preview?.dataUrl === "string" ? [{ request, dataUrl: preview.dataUrl }] : [];
+  });
 }
 
 function jobStatusLabel(job: JobSnapshot): string {
