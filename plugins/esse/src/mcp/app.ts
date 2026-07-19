@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
 import type { BatchManager } from "../jobs/batch-manager.js";
@@ -63,17 +63,9 @@ export function createLocalEsseServer(options: {
 }): McpServer {
   const updateChecker = options.updateChecker || new GitHubReleaseChecker();
   const widgetUri = widgetUriFor(options.mediaServer?.origin);
-  const server = new McpServer(
-    { name: "esse", version: options.version },
-    {
-      instructions:
-        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself."
-    }
-  );
-
-  registerAppResource(server, "esse-ui", widgetUri, {}, async () => ({
+  const widgetResource = (uri: string) => ({
     contents: [{
-      uri: widgetUri,
+      uri,
       mimeType: RESOURCE_MIME_TYPE,
       text: options.widgetHtml,
       _meta: {
@@ -84,7 +76,24 @@ export function createLocalEsseServer(options: {
         "openai/widgetDescription": "本地图片工作台：Provider 设置、文件夹批处理、并行进度、预览、选择和再次修改。"
       }
     }]
-  }));
+  });
+  const server = new McpServer(
+    { name: "esse", version: options.version },
+    {
+      instructions:
+        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself."
+    }
+  );
+
+  registerAppResource(server, "esse-ui", widgetUri, {}, async () => widgetResource(widgetUri));
+  if (options.mediaServer) {
+    server.registerResource(
+      "esse-ui-process-compatible",
+      new ResourceTemplate("ui://esse/local-v2-{mediaIdentity}.html", { list: undefined }),
+      { mimeType: RESOURCE_MIME_TYPE },
+      async (uri) => widgetResource(uri.toString())
+    );
+  }
 
   registerAppTool(server, "open_esse", {
     title: "Open esse",

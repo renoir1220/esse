@@ -76,9 +76,13 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     }
     const resources = await client.listResources();
     assert(resources.resources.some((resource) => resource.uri === widgetUri));
-    assert.notEqual(widgetUri, widgetUriFor("http://localhost:4568"), "a new media origin must get a cache-busting widget URI");
+    const priorProcessWidgetUri = widgetUriFor("http://localhost:4568");
+    assert.notEqual(widgetUri, priorProcessWidgetUri, "a new media origin must get a cache-busting widget URI");
     const widget = await client.readResource({ uri: widgetUri });
     assert.deepEqual((widget.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined)?.ui?.csp?.resourceDomains, [mediaServer.origin]);
+    const priorProcessWidget = await client.readResource({ uri: priorProcessWidgetUri });
+    assert.equal(priorProcessWidget.contents[0]?.uri, priorProcessWidgetUri);
+    assert.deepEqual((priorProcessWidget.contents[0]?._meta as { ui?: { csp?: { resourceDomains?: string[] } } } | undefined)?.ui?.csp?.resourceDomains, [mediaServer.origin], "a cached URI from another MCP process must resolve with the current process CSP");
     const open = await client.callTool({ name: "open_esse", arguments: { tab: "settings" } });
     assert.equal((open.structuredContent as { state?: { providers?: unknown[] } }).state?.providers?.length, 0);
     const update = await client.callTool({ name: "ui_check_for_updates", arguments: {} });
