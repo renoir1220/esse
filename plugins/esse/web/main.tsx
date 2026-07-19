@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createRoot } from "react-dom/client";
 import { ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
 import { bridge } from "./bridge";
+import { shouldSubmitComposerKey } from "./composer-keyboard";
 import { formatImageFileSize, formatImageResolution } from "./image-metadata";
 import type { ImageMetadata } from "./image-metadata";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
@@ -822,7 +823,6 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       await bridge.sendMessage(`这是用户从 Esse 修改框提交的请求。请修改批次“${batch.title}”（batchId: ${batch.id}）中的目标图片：${targets}。用户已明确选择模型“${selectedOffering.displayName}”（offeringId: ${selectedOffering.id}）。修改要求：${request}\n目标已由 Esse 按双击选择和图像名称解析，无需再次询问。必须调用 modify_selected_images，并将上述准确 image ID 传入 imageIds；无论目标是当前结果、历史备份还是失败任务原图，都必须留在当前批次，禁止调用 create_image_batch 新建替代批次。`);
       props.setSelected(new Set());
       props.setModificationRequest("");
-      props.onNotice(`已将 ${resolvedTargets.length} 张图片的修改要求交给当前 Agent`);
     } catch (error) { props.onNotice(errorMessage(error)); }
     finally { setBusy(undefined); }
   };
@@ -859,7 +859,21 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
                 </div>;
               })}
             </div>}
-            <textarea ref={modificationTextareaRef} value={props.modificationRequest} onChange={(event) => props.setModificationRequest(event.target.value)} placeholder={selectedImages.length ? "描述你希望如何修改这些图片…" : "双击选择想要编辑的图片"} rows={1} maxLength={1200} aria-label="修改要求" />
+            <textarea
+              ref={modificationTextareaRef}
+              value={props.modificationRequest}
+              onChange={(event) => props.setModificationRequest(event.target.value)}
+              onKeyDown={(event) => {
+                if (!shouldSubmitComposerKey({ key: event.key, shiftKey: event.shiftKey, repeat: event.repeat, isComposing: event.nativeEvent.isComposing })) return;
+                event.preventDefault();
+                if (!props.modificationRequest.trim() || busy) return;
+                void sendSelection();
+              }}
+              placeholder={selectedImages.length ? "描述你希望如何修改这些图片…" : "双击选择想要编辑的图片"}
+              rows={1}
+              maxLength={1200}
+              aria-label="修改要求"
+            />
           </div>
           <div className="modify-toolbar">
             <div className="modify-model-picker" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) setModelMenuOpen(false); }}>
