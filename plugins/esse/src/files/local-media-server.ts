@@ -12,6 +12,8 @@ interface RegisteredAsset {
   mtimeMs: number;
 }
 
+const LOOPBACK_HOST = "127.0.0.1";
+
 export interface LocalMediaServerLike {
   readonly origin: string;
   urlFor(filePath: string): Promise<string>;
@@ -23,7 +25,7 @@ export function describeLocalMediaStartupError(error: unknown, platform = proces
   const code = "code" in source && typeof source.code === "string" ? ` [${source.code}]` : "";
   return new Error(
     `Esse 无法启动本机原图直读服务，因此已停止启动（不会回退到慢速 Base64 预览）。` +
-    `请确认安全软件和系统网络权限允许 Codex/ChatGPT 在 localhost 监听临时端口，然后完全重启桌面应用。` +
+    `请确认安全软件和系统网络权限允许 Codex/ChatGPT 在 127.0.0.1 监听临时端口，然后完全重启桌面应用。` +
     `平台：${platform}；原因${code}：${source.message}`,
     { cause: source }
   );
@@ -36,7 +38,7 @@ export class LocalMediaServer implements LocalMediaServerLike {
   private readonly assetIdsBySignature = new Map<string, string>();
 
   private constructor(private readonly server: ReturnType<typeof createServer>, port: number) {
-    this.origin = `http://localhost:${port}`;
+    this.origin = `http://${LOOPBACK_HOST}:${port}`;
   }
 
   static async start(): Promise<LocalMediaServer> {
@@ -51,7 +53,7 @@ export class LocalMediaServer implements LocalMediaServerLike {
     await new Promise<void>((resolve, reject) => {
       const onError = (error: Error) => reject(error);
       server.once("error", onError);
-      server.listen(0, "localhost", () => {
+      server.listen(0, LOOPBACK_HOST, () => {
         server.off("error", onError);
         resolve();
       });

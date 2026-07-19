@@ -1158,7 +1158,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
             onLoad={() => { if (previewTransport === "direct-loading") setPreviewTransport("direct"); }}
             onError={() => {
               if (previewTransport !== "direct-loading") return;
-              const message = "原图直读连接失败。请确认 Codex/ChatGPT 可以访问 localhost，然后完全重启桌面应用。";
+              const message = "原图直读连接失败。请确认 Codex/ChatGPT 可以访问 127.0.0.1，然后完全重启桌面应用。";
               setPreviewFull(undefined);
               setPreviewTransport("error");
               setPreviewError(message);
