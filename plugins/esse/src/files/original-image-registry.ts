@@ -4,6 +4,7 @@ import path from "node:path";
 import { mimeForPath } from "./image-files.js";
 
 export const MAX_ORIGINAL_IMAGE_BYTES = 60 * 1024 * 1024;
+export const ORIGINAL_IMAGE_TOKEN_TTL_MS = 5 * 60 * 1000;
 export const ORIGINAL_IMAGE_RESOURCE_TEMPLATE = "esse-image://original/{token}";
 
 interface RegisteredImage {
@@ -11,6 +12,7 @@ interface RegisteredImage {
   size: number;
   mtimeMs: number;
   signature: string;
+  expiresAt: number;
 }
 
 export interface OriginalImageResource {
@@ -23,6 +25,8 @@ export class OriginalImageRegistry {
   private readonly images = new Map<string, RegisteredImage>();
   private readonly tokensBySignature = new Map<string, string>();
 
+  constructor(private readonly now: () => number = Date.now) {}
+
   async register(filePath: string): Promise<string> {
     const resolvedPath = path.resolve(filePath);
     const file = await stat(resolvedPath);
@@ -30,11 +34,23 @@ export class OriginalImageRegistry {
     if (file.size > MAX_ORIGINAL_IMAGE_BYTES) throw new Error("原图超过 60 MB，无法在 Esse 中打开。");
 
     const signature = `${resolvedPath}\0${file.size}\0${file.mtimeMs}`;
+    const now = this.now();
+    this.pruneExpired(now);
     let token = this.tokensBySignature.get(signature);
+    if (token && !this.images.has(token)) {
+      this.tokensBySignature.delete(signature);
+      token = undefined;
+    }
     if (!token) {
       token = randomUUID();
       this.tokensBySignature.set(signature, token);
-      this.images.set(token, { filePath: resolvedPath, size: file.size, mtimeMs: file.mtimeMs, signature });
+      this.images.set(token, {
+        filePath: resolvedPath,
+        size: file.size,
+        mtimeMs: file.mtimeMs,
+        signature,
+        expiresAt: now + ORIGINAL_IMAGE_TOKEN_TTL_MS
+      });
       this.trim();
     }
     return `esse-image://original/${token}`;
@@ -43,6 +59,10 @@ export class OriginalImageRegistry {
   async read(token: string): Promise<OriginalImageResource> {
     const image = this.images.get(token);
     if (!image) throw new Error("原图读取凭据已失效，请关闭预览后重试。");
+    if (image.expiresAt <= this.now()) {
+      this.deleteToken(token, image);
+      throw new Error("原图读取凭据已失效，请关闭预览后重试。");
+    }
 
     const current = await stat(image.filePath).catch((error: NodeJS.ErrnoException) => {
       if (error.code === "ENOENT") return undefined;
@@ -63,8 +83,18 @@ export class OriginalImageRegistry {
     while (this.images.size > 512) {
       const oldest = this.images.entries().next().value as [string, RegisteredImage] | undefined;
       if (!oldest) return;
-      this.images.delete(oldest[0]);
-      if (this.tokensBySignature.get(oldest[1].signature) === oldest[0]) this.tokensBySignature.delete(oldest[1].signature);
+      this.deleteToken(oldest[0], oldest[1]);
     }
+  }
+
+  private pruneExpired(now: number): void {
+    for (const [token, image] of this.images) {
+      if (image.expiresAt <= now) this.deleteToken(token, image);
+    }
+  }
+
+  private deleteToken(token: string, image: RegisteredImage): void {
+    this.images.delete(token);
+    if (this.tokensBySignature.get(image.signature) === token) this.tokensBySignature.delete(image.signature);
   }
 }

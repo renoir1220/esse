@@ -3,7 +3,11 @@ import { mkdtemp, rm, truncate, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { MAX_ORIGINAL_IMAGE_BYTES, OriginalImageRegistry } from "../src/files/original-image-registry.js";
+import {
+  MAX_ORIGINAL_IMAGE_BYTES,
+  ORIGINAL_IMAGE_TOKEN_TTL_MS,
+  OriginalImageRegistry
+} from "../src/files/original-image-registry.js";
 import { originalImageDataUrl } from "../web/original-image-resource.js";
 
 const onePixelPng = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=", "base64");
@@ -35,6 +39,28 @@ test("original image resources enforce the 60 MB limit before reading", async ()
     await writeFile(filePath, onePixelPng);
     await truncate(filePath, MAX_ORIGINAL_IMAGE_BYTES + 1);
     await assert.rejects(() => new OriginalImageRegistry().register(filePath), /超过 60 MB/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("original image resource tokens expire after five minutes", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-original-expiry-"));
+  const filePath = path.join(root, "expiring.png");
+  let now = 1_000;
+  try {
+    await writeFile(filePath, onePixelPng);
+    const registry = new OriginalImageRegistry(() => now);
+    const firstUri = await registry.register(filePath);
+    const firstToken = new URL(firstUri).pathname.slice(1);
+
+    now += ORIGINAL_IMAGE_TOKEN_TTL_MS - 1;
+    assert.equal((await registry.read(firstToken)).sizeBytes, onePixelPng.length);
+
+    now += 1;
+    await assert.rejects(() => registry.read(firstToken), /凭据已失效/);
+    const secondUri = await registry.register(filePath);
+    assert.notEqual(secondUri, firstUri);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
