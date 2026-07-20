@@ -8,6 +8,7 @@ const MAX_REDIRECTS = 5;
 const DOWNLOAD_TIMEOUT_MS = 90_000;
 const DOH_TIMEOUT_MS = 8_000;
 const TRUSTED_DOH_ENDPOINTS = [
+  "https://dns.alidns.com/resolve",
   "https://cloudflare-dns.com/dns-query",
   "https://dns.google/resolve"
 ] as const;
@@ -88,7 +89,11 @@ export async function resolveHostnameWithTrustedDoh(
 
 export function isGloballyRoutableAddress(address: string): boolean {
   try {
-    return ipaddr.process(address).range() === "unicast";
+    const parsed = ipaddr.process(address);
+    if (parsed.range() !== "unicast") return false;
+    if (parsed.kind() !== "ipv4") return true;
+    const bytes = parsed.toByteArray();
+    return bytes[0] !== 198 || (bytes[1] !== 18 && bytes[1] !== 19);
   } catch {
     return false;
   }

@@ -130,7 +130,35 @@ test("trusted DoH answers replace OS Fake-IP results", async () => {
     { address: "8.8.4.4", family: 4 },
     { address: "2001:4860:4860::8844", family: 6 }
   ]);
-  assert.deepEqual(queries.sort(), ["cloudflare-dns.com:1", "cloudflare-dns.com:28"]);
+  assert.ok(queries.includes("dns.alidns.com:1"));
+  assert.ok(queries.includes("dns.alidns.com:28"));
+});
+
+test("trusted DoH resolution falls back when AliDNS is unavailable", async () => {
+  const queries: string[] = [];
+  const addresses = await resolveHostnameWithTrustedDoh("cdn.provider.example", async (input) => {
+    const url = new URL(String(input));
+    queries.push(`${url.hostname}:${url.searchParams.get("type")}`);
+    if (url.hostname === "dns.alidns.com") throw new Error("resolver unavailable");
+    assert.equal(url.hostname, "cloudflare-dns.com");
+    const type = Number(url.searchParams.get("type"));
+    return Response.json({
+      Status: 0,
+      Answer: type === 1
+        ? [{ name: "cdn.provider.example.", type: 1, data: "1.1.1.1" }]
+        : [{ name: "cdn.provider.example.", type: 28, data: "2606:4700:4700::1111" }]
+    });
+  });
+  assert.deepEqual(addresses, [
+    { address: "1.1.1.1", family: 4 },
+    { address: "2606:4700:4700::1111", family: 6 }
+  ]);
+  assert.deepEqual(queries.sort(), [
+    "cloudflare-dns.com:1",
+    "cloudflare-dns.com:28",
+    "dns.alidns.com:1",
+    "dns.alidns.com:28"
+  ]);
 });
 
 test("only globally routable unicast addresses pass remote validation", () => {
