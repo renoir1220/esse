@@ -30,16 +30,19 @@ try {
   assert(names.includes("ui_open_batch_folder"));
   assert(names.includes("ui_save_provider_profile"));
   assert(names.includes("ui_save_image_as"));
+  assert(names.includes("ui_get_original_image_resource"));
   assert(!names.includes("get_local_media_status"));
   const openTool = tools.tools.find((tool) => tool.name === "open_esse");
   const widgetUri = openTool?._meta?.ui?.resourceUri;
-  assert.match(widgetUri || "", /^ui:\/\/esse\/local-v2-[0-9a-f]{16}\.html$/);
+  assert.equal(widgetUri, "ui://esse/local-v4.html");
   const resources = await client.listResources();
   assert(resources.resources.some((resource) => resource.uri === widgetUri));
-  for (const compatibleUri of [widgetUri, "ui://esse/local-v1.html", "ui://esse/local-v2-0000000000000000.html"]) {
+  const templates = await client.listResourceTemplates();
+  assert(templates.resourceTemplates.some((resource) => resource.uriTemplate === "esse-image://original/{token}"));
+  for (const compatibleUri of [widgetUri, "ui://esse/local-v1.html", "ui://esse/local-v2-0000000000000000.html", "ui://esse/local-v3.html"]) {
     const widget = await client.readResource({ uri: compatibleUri });
     assert.equal(widget.contents[0]?.uri, compatibleUri);
-    assert.match(widget.contents[0]?._meta?.ui?.csp?.resourceDomains?.[0] || "", /^http:\/\/127\.0\.0\.1:\d+$/);
+    assert.equal(widget.contents[0]?._meta?.ui?.csp, undefined);
   }
   const opened = await client.callTool({ name: "open_esse", arguments: { tab: "settings" } });
   assert.equal(opened.isError, undefined);

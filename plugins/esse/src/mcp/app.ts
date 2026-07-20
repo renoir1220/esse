@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
@@ -6,18 +6,19 @@ import { z } from "zod";
 import type { BatchManager } from "../jobs/batch-manager.js";
 import { scanImageFolder } from "../files/image-files.js";
 import { readImageFileMetadata } from "../files/image-metadata.js";
+import { ORIGINAL_IMAGE_RESOURCE_TEMPLATE, OriginalImageRegistry } from "../files/original-image-registry.js";
 import { saveFileAs } from "../files/save-file-dialog.js";
 import { openLocalFolder } from "../files/open-folder.js";
 import { copyImageFileToClipboard } from "../files/system-image-clipboard.js";
 import type { Thumbnailer } from "../files/thumbnailer.js";
-import type { LocalMediaServerLike } from "../files/local-media-server.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SettingsStore } from "../storage/settings-store.js";
 import type { AdapterId, BatchSnapshot, JobRecord, OfferingConfig } from "../types.js";
 import { GitHubReleaseChecker } from "../update-checker.js";
 import type { UpdateCheckerLike } from "../update-checker.js";
 
-export const WIDGET_URI = "ui://esse/local-v1.html";
+export const WIDGET_URI = "ui://esse/local-v4.html";
+const LEGACY_WIDGET_URI = "ui://esse/local-v1.html";
 const THUMBNAIL_PREVIEW_MAX_DIMENSION = 640;
 const FULL_PREVIEW_MAX_DIMENSION = 2400;
 
@@ -55,14 +56,14 @@ export function createLocalEsseServer(options: {
   registry: ProviderRegistry;
   batches: BatchManager;
   thumbnailer: Thumbnailer;
-  mediaServer?: LocalMediaServerLike;
   saveFileAs?: typeof saveFileAs;
   copyImageToClipboard?: typeof copyImageFileToClipboard;
   openFolder?: typeof openLocalFolder;
   updateChecker?: UpdateCheckerLike;
 }): McpServer {
   const updateChecker = options.updateChecker || new GitHubReleaseChecker();
-  const widgetUri = widgetUriFor(options.mediaServer?.origin);
+  const widgetUri = WIDGET_URI;
+  const originalImages = new OriginalImageRegistry();
   const widgetResource = (uri: string) => ({
     contents: [{
       uri,
@@ -70,8 +71,7 @@ export function createLocalEsseServer(options: {
       text: options.widgetHtml,
       _meta: {
         ui: {
-          prefersBorder: false,
-          ...(options.mediaServer ? { csp: { resourceDomains: [options.mediaServer.origin] } } : {})
+          prefersBorder: false
         },
         "openai/widgetDescription": "本地图片工作台：Provider 设置、文件夹批处理、并行进度、预览、选择和再次修改。"
       }
@@ -86,15 +86,24 @@ export function createLocalEsseServer(options: {
   );
 
   registerAppResource(server, "esse-ui", widgetUri, {}, async () => widgetResource(widgetUri));
-  if (options.mediaServer) {
-    registerAppResource(server, "esse-ui-v1-compatible", WIDGET_URI, {}, async () => widgetResource(WIDGET_URI));
-    server.registerResource(
-      "esse-ui-process-compatible",
-      new ResourceTemplate("ui://esse/local-v2-{mediaIdentity}.html", { list: undefined }),
-      { mimeType: RESOURCE_MIME_TYPE },
-      async (uri) => widgetResource(uri.toString())
-    );
-  }
+  registerAppResource(server, "esse-ui-v1-compatible", LEGACY_WIDGET_URI, {}, async () => widgetResource(LEGACY_WIDGET_URI));
+  registerAppResource(server, "esse-ui-v3-compatible", "ui://esse/local-v3.html", {}, async () => widgetResource("ui://esse/local-v3.html"));
+  server.registerResource(
+    "esse-ui-v2-compatible",
+    new ResourceTemplate("ui://esse/local-v2-{mediaIdentity}.html", { list: undefined }),
+    { mimeType: RESOURCE_MIME_TYPE },
+    async (uri) => widgetResource(uri.toString())
+  );
+  server.registerResource(
+    "esse-original-image",
+    new ResourceTemplate(ORIGINAL_IMAGE_RESOURCE_TEMPLATE, { list: undefined }),
+    { description: "Exact local image bytes for the Esse app lightbox.", mimeType: "application/octet-stream" },
+    async (uri, variables) => {
+      const token = resourceVariable(variables.token);
+      const image = await originalImages.read(token);
+      return { contents: [{ uri: uri.toString(), mimeType: image.mimeType, blob: image.blob }] };
+    }
+  );
 
   registerAppTool(server, "open_esse", {
     title: "Open esse",
@@ -355,11 +364,16 @@ export function createLocalEsseServer(options: {
     return batchResult(batch, `已将 ${input.sourceBatchIds.length} 个批次合并到“${batch.title}”${sourceAction}。`, true);
   });
 
-  registerUiTools(server, options, updateChecker);
+  registerUiTools(server, options, updateChecker, originalImages);
   return server;
 }
 
-function registerUiTools(server: McpServer, options: Parameters<typeof createLocalEsseServer>[0], updateChecker: UpdateCheckerLike): void {
+function registerUiTools(
+  server: McpServer,
+  options: Parameters<typeof createLocalEsseServer>[0],
+  updateChecker: UpdateCheckerLike,
+  originalImages: OriginalImageRegistry
+): void {
   const appOnly = { ui: { visibility: ["app"] as Array<"app"> } };
 
   registerAppTool(server, "ui_get_local_state", {
@@ -517,23 +531,20 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     return { structuredContent: { batchId, jobId, sourceIndex, available: true }, content: [{ type: "text", text: "Local image preview ready." }], _meta: { dataUrl } };
   });
 
-  registerAppTool(server, "ui_get_direct_image_url", {
-    title: "Get direct local image URL",
-    description: "Widget-only short-lived local URL for loading the original image without preview transcoding or Base64 transport.",
+  registerAppTool(server, "ui_get_original_image_resource", {
+    title: "Get original image resource",
+    description: "Widget-only short-lived MCP resource for loading the exact original image bytes without transcoding.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), sourceIndex: z.number().int().min(0).max(19).optional() },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobId, sourceIndex }) => {
-    if (!options.mediaServer) {
-      return { structuredContent: { batchId, jobId, sourceIndex, available: false }, content: [{ type: "text", text: "Direct local image transport is unavailable." }] };
-    }
     const batch = options.batches.get(batchId);
     const filePath = previewFilePath(batch, jobId, sourceIndex);
-    const mediaUrl = await options.mediaServer.urlFor(filePath);
+    const resourceUri = await originalImages.register(filePath);
     return {
       structuredContent: { batchId, jobId, sourceIndex, available: true },
-      content: [{ type: "text", text: "Direct local image URL ready." }],
-      _meta: { mediaUrl }
+      content: [{ type: "text", text: "Original image resource ready." }],
+      _meta: { resourceUri }
     };
   });
 
@@ -654,12 +665,6 @@ async function uiState(options: Parameters<typeof createLocalEsseServer>[0], tab
   };
 }
 
-export function widgetUriFor(mediaOrigin?: string): string {
-  if (!mediaOrigin) return WIDGET_URI;
-  const mediaIdentity = createHash("sha256").update(mediaOrigin).digest("hex").slice(0, 16);
-  return `ui://esse/local-v2-${mediaIdentity}.html`;
-}
-
 function widgetToolMeta(resourceUri: string, invoking: string, invoked: string) {
   return {
     ui: { resourceUri, visibility: ["model", "app"] as Array<"model" | "app"> },
@@ -667,6 +672,12 @@ function widgetToolMeta(resourceUri: string, invoking: string, invoked: string) 
     "openai/toolInvocation/invoking": invoking,
     "openai/toolInvocation/invoked": invoked
   };
+}
+
+function resourceVariable(value: string | string[] | undefined): string {
+  const resolved = Array.isArray(value) ? value[0] : value;
+  if (!resolved) throw new Error("Original image resource token is missing.");
+  return resolved;
 }
 
 function headlessToolMeta() {
