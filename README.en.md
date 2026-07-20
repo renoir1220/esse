@@ -2,7 +2,7 @@
 
 **Language: [简体中文](README.md) | English**
 
-Esse is a local image workspace for Codex and ChatGPT Work. It runs through a local `stdio MCP`; no hosted Esse service, HTTPS tunnel, `.env`, or `npm start` process is required.
+Esse is a local image workspace for Codex and ChatGPT Work. A local `stdio MCP` is the plugin entry point, while one per-user Esse Core owns batch state and Provider scheduling. Parallel tasks no longer write separate copies of the same state, and disconnecting one stdio adapter does not terminate an already submitted Provider request. No hosted Esse service, HTTPS tunnel, `.env`, or `npm start` process is required.
 
 Only image generation and editing requests send the selected reference images to the current Agent's image model or to a Provider chosen by the user. Provider keys, task records, input paths, and output images remain on the local computer.
 

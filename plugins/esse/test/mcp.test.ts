@@ -51,6 +51,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "append_image_batch_jobs", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_check_for_updates", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_original_image_resource", "ui_get_image_metadata", "ui_save_image_as", "ui_copy_image_to_clipboard", "ui_delete_esse_images", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
     }
+    for (const tool of tools.tools) assert(tool.outputSchema, `${tool.name} must publish an output schema`);
     assert(!names.includes("get_local_media_status"), "PoC-only media diagnostics must not be published");
     const settingsTool = tools.tools.find((tool) => tool.name === "ui_save_provider_profile");
     assert.deepEqual((settingsTool?._meta as { ui?: { visibility?: string[] } })?.ui?.visibility, ["app"]);
@@ -58,6 +59,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert.equal((openTool?._meta as { ui?: { resourceUri?: string } })?.ui?.resourceUri, WIDGET_URI);
     const createTool = tools.tools.find((tool) => tool.name === "create_image_batch");
     assert(!((createTool?.inputSchema as { required?: string[] })?.required || []).includes("offeringId"), "create_image_batch must use the configured default when offeringId is omitted");
+    assert(((createTool?.inputSchema as { required?: string[] })?.required || []).includes("requestKey"), "create_image_batch must require an idempotency key");
     assert((createTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.referenceImages, "create_image_batch must accept existing Esse image references");
     const appendTool = tools.tools.find((tool) => tool.name === "append_image_batch_jobs");
     assert((appendTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.batchId, "append_image_batch_jobs must target one existing batch");
@@ -118,7 +120,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert.deepEqual(publicOffering?.sizes, []);
     assert.deepEqual(publicOffering?.qualities, []);
     const defaultOfferingId = (saved.structuredContent as { state?: { defaultOfferingId?: string } }).state?.defaultOfferingId;
-    const created = await client.callTool({ name: "create_image_batch", arguments: { prompt: "use my default", count: 1 } });
+    const created = await client.callTool({ name: "create_image_batch", arguments: { prompt: "use my default", count: 1, requestKey: "mcp-create-default" } });
     const createdBatch = (created.structuredContent as { batch?: { id?: string; offering?: { id?: string } } }).batch;
     assert.equal(createdBatch?.offering?.id, defaultOfferingId);
     assert.equal((created.structuredContent as { activateBatchId?: string }).activateBatchId, createdBatch?.id);
@@ -138,14 +140,15 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     }
     assert(completedJobId);
     assert(completedOutputPath);
+    const appendArguments = {
+      batchId: createdBatch?.id,
+      offeringId: defaultOfferingId,
+      jobs: [{ prompt: "append directly to this batch" }],
+      requestKey: "mcp-append-once"
+    };
     const appended = await client.callTool({
       name: "append_image_batch_jobs",
-      arguments: {
-        batchId: createdBatch?.id,
-        offeringId: defaultOfferingId,
-        jobs: [{ prompt: "append directly to this batch" }],
-        requestKey: "mcp-append-once"
-      }
+      arguments: appendArguments
     });
     const appendedContent = appended.structuredContent as { batch?: { id?: string; total?: number; jobs?: Array<{ id?: string; name?: string }> }; appendedJobIds?: string[] };
     assert.equal(appendedContent.batch?.id, createdBatch?.id);
@@ -154,9 +157,14 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert.deepEqual(appendedContent.appendedJobIds, [appendedContent.batch?.jobs?.[1]?.id]);
     const duplicateAppend = await client.callTool({
       name: "append_image_batch_jobs",
-      arguments: { batchId: createdBatch?.id, prompt: "must not duplicate", requestKey: "mcp-append-once" }
+      arguments: appendArguments
     });
     assert.equal((duplicateAppend.structuredContent as { batch?: { total?: number } }).batch?.total, 2);
+    const conflictingAppend = await client.callTool({
+      name: "append_image_batch_jobs",
+      arguments: { batchId: createdBatch?.id, prompt: "different operation", requestKey: "mcp-append-once" }
+    });
+    assert.equal(conflictingAppend.isError, true);
     const imagePreviews = await client.callTool({
       name: "ui_get_image_previews",
       arguments: {
@@ -188,7 +196,8 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
       name: "create_image_batch",
       arguments: {
         title: "reuse prior result",
-        jobs: [{ prompt: "match the exact color palette", referenceImages: [{ batchId: createdBatch?.id, image: "图1" }] }]
+        jobs: [{ prompt: "match the exact color palette", referenceImages: [{ batchId: createdBatch?.id, image: "图1" }] }],
+        requestKey: "mcp-create-reference"
       }
     });
     const referencedBatch = (referenced.structuredContent as { batch?: { id?: string; jobs?: Array<{ inputPaths?: string[] }> } }).batch;
@@ -220,7 +229,8 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
       name: "create_image_batch",
       arguments: {
         title: "Agent delegated",
-        jobs: [{ prompt: "Agent prompt", referenceImages: [{ batchId: createdBatch?.id, image: "图1" }] }]
+        jobs: [{ prompt: "Agent prompt", referenceImages: [{ batchId: createdBatch?.id, image: "图1" }] }],
+        requestKey: "mcp-create-agent"
       }
     });
     const delegatedBatch = (delegated.structuredContent as { batch?: { id?: string; status?: string; offering?: { adapterId?: string }; jobs?: Array<{ id?: string; referenceImagePaths?: string[] }> } }).batch;
@@ -238,7 +248,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const importedHistory = (imported.structuredContent as { batch?: { jobs?: Array<{ id?: string; callHistory?: Array<{ status?: string; source?: string }> }> } }).batch?.jobs?.find((job) => job.id === delegatedJobId)?.callHistory;
     assert.deepEqual(importedHistory?.map((call) => [call.status, call.source]), [["succeeded", "agent"]]);
 
-    await client.callTool({ name: "modify_selected_images", arguments: { batchId: createdBatch?.id, jobIds: [completedJobId], instructions: "create one backup for metadata verification", offeringId: defaultOfferingId } });
+    await client.callTool({ name: "modify_selected_images", arguments: { batchId: createdBatch?.id, jobIds: [completedJobId], instructions: "create one backup for metadata verification", offeringId: defaultOfferingId, requestKey: "mcp-modify-metadata" } });
     let backupId: string | undefined;
     for (let index = 0; index < 100; index += 1) {
       const current = await client.callTool({ name: "get_image_batch", arguments: { batchId: createdBatch?.id } });

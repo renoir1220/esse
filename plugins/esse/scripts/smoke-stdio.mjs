@@ -2,17 +2,19 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const root = process.cwd();
 const dataDir = await mkdtemp(path.join(os.tmpdir(), "esse-stdio-"));
 const compiledBinary = process.env.ESSE_BINARY;
+const pluginRoot = compiledBinary ? path.dirname(path.dirname(path.resolve(compiledBinary))) : root;
 const transport = new StdioClientTransport({
   command: compiledBinary || process.execPath,
-  args: compiledBinary ? [] : [path.join(root, "mcp", "server.cjs")],
-  cwd: root,
-  env: { ...process.env, ESSE_DATA_DIR: dataDir }
+  args: compiledBinary ? [] : [path.join(pluginRoot, "mcp", "server.cjs")],
+  cwd: pluginRoot,
+  env: { ...process.env, ESSE_DATA_DIR: dataDir, ESSE_CORE_IDLE_MS: "100", ESSE_PLUGIN_ROOT: pluginRoot }
 });
 const client = new Client({ name: "esse-stdio-smoke", version: "0.1.0" });
 
@@ -49,5 +51,6 @@ try {
   console.log(JSON.stringify({ transport: "stdio", runtime: compiledBinary ? "compiled" : "node", tools: names.length, widget: "ok", localState: "ok" }, null, 2));
 } finally {
   await client.close().catch(() => undefined);
+  await delay(300);
   await rm(dataDir, { recursive: true, force: true });
 }

@@ -10,7 +10,7 @@ const version = manifest.version;
 if (!/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error(`Release version must be clean semver without build metadata: ${version}`);
 
 const targetDefinitions = [
-  { name: "windows-x64", bunTarget: "bun-windows-x64", binary: "esse.exe", platform: "win32", architecture: "x64", runtime: "compiled" },
+  { name: "windows-x64", bunTarget: "bun-windows-x64", binary: "esse.exe", coreBinary: "esse-core.exe", platform: "win32", architecture: "x64", runtime: "compiled" },
   { name: "macos-arm64", binary: "esse", platform: "darwin", architecture: "arm64", runtime: "codex-node" },
   { name: "macos-x64", binary: "esse", platform: "darwin", architecture: "x64", runtime: "codex-node" }
 ];
@@ -48,12 +48,14 @@ for (const target of targets) {
     copyPath(path.join(pluginRoot, "skills"), path.join(stagedPlugin, "skills")),
     copyPath(path.join(pluginRoot, "README.md"), path.join(stagedPlugin, "README.md")),
     copyPath(path.join(pluginRoot, "mcp", "server.cjs"), path.join(stagedPlugin, "mcp", "server.cjs")),
+    copyPath(path.join(pluginRoot, "mcp", "core.cjs"), path.join(stagedPlugin, "mcp", "core.cjs")),
     copyPath(path.join(pluginRoot, "mcp", "widget.html"), path.join(stagedPlugin, "mcp", "widget.html"))
   ]);
 
   const binaryPath = path.join(stagedPlugin, "bin", target.binary);
   if (target.runtime === "compiled") {
     await run("bun", ["build", path.join(pluginRoot, "mcp", "server.cjs"), "--compile", "--compile-exec-argv=--use-system-ca", `--target=${target.bunTarget}`, `--outfile=${binaryPath}`], pluginRoot);
+    await run("bun", ["build", path.join(pluginRoot, "mcp", "core.cjs"), "--compile", "--compile-exec-argv=--use-system-ca", `--target=${target.bunTarget}`, `--outfile=${path.join(stagedPlugin, "bin", target.coreBinary)}`], pluginRoot);
   } else {
     await copyPath(path.join(pluginRoot, "scripts", "esse-macos-launcher.sh"), binaryPath);
     await chmod(binaryPath, 0o755);
@@ -79,6 +81,14 @@ for (const target of targets) {
       ...(target.runtime === "codex-node" ? { ESSE_NODE_BIN: process.execPath } : {})
     });
     if (!selfTest.includes('"status":"ok"')) throw new Error(`Packaged ${target.name} runtime self-test failed: ${selfTest}`);
+    const coreSelfTestCommand = target.runtime === "compiled" ? path.join(stagedPlugin, "bin", target.coreBinary) : process.execPath;
+    const coreSelfTestArgs = target.runtime === "compiled" ? ["--self-test"] : [path.join(stagedPlugin, "mcp", "core.cjs"), "--self-test"];
+    const coreSelfTest = await run(coreSelfTestCommand, coreSelfTestArgs, stagedPlugin, true, {
+      ...process.env,
+      ESSE_DATA_DIR: selfTestData,
+      ESSE_PLUGIN_ROOT: stagedPlugin
+    });
+    if (!coreSelfTest.includes('"status":"ok"') || !coreSelfTest.includes('"component":"core"')) throw new Error(`Packaged ${target.name} Core self-test failed: ${coreSelfTest}`);
     await rm(selfTestData, { recursive: true, force: true });
     selfTestedNatively = true;
   } else if (requestedTarget) {
@@ -86,7 +96,9 @@ for (const target of targets) {
   }
   await run("tar", ["-a", "-c", "-f", archive, "-C", staging, "."], marketplaceRoot);
   const listing = await run("tar", ["-t", "-f", archive], marketplaceRoot, true);
-  for (const expected of [".agents/plugins/marketplace.json", "plugins/esse/.codex-plugin/plugin.json", `plugins/esse/bin/${target.binary}`, "plugins/esse/mcp/server.cjs", "install.ps1", "install.sh"]) {
+  const expectedEntries = [".agents/plugins/marketplace.json", "plugins/esse/.codex-plugin/plugin.json", `plugins/esse/bin/${target.binary}`, "plugins/esse/mcp/server.cjs", "plugins/esse/mcp/core.cjs", "install.ps1", "install.sh"];
+  if (target.coreBinary) expectedEntries.push(`plugins/esse/bin/${target.coreBinary}`);
+  for (const expected of expectedEntries) {
     if (!listing.replaceAll("\\", "/").includes(expected)) throw new Error(`${target.name} archive is missing ${expected}`);
   }
   await rm(staging, { recursive: true, force: true });

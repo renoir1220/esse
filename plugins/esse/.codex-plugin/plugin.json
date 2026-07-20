@@ -1,6 +1,6 @@
 {
   "name": "esse",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "Run image generation and editing with the current Agent or local Providers.",
   "author": {
     "name": "Renoir"

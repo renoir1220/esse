@@ -1,6 +1,6 @@
 {
   "name": "@local/esse-plugin",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "type": "module",
   "engines": {
@@ -8,8 +8,13 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
-    "selftest": "node mcp/server.cjs --self-test",
+    "selftest": "npm run selftest:adapter && npm run selftest:core",
+    "selftest:adapter": "node mcp/server.cjs --self-test",
+    "selftest:core": "node mcp/core.cjs --self-test",
     "smoke:stdio": "node scripts/smoke-stdio.mjs",
+    "smoke:multi-stdio": "node scripts/smoke-multi-stdio.mjs",
+    "smoke:core-survival": "node scripts/smoke-core-survival.mjs",
+    "smoke:core-crash": "node scripts/smoke-core-crash.mjs",
     "e2e:windows": "node scripts/e2e-windows-install.mjs",
     "benchmark:thumbnails": "tsx scripts/benchmark-thumbnails.ts",
     "preview": "node scripts/preview-server.mjs",
@@ -17,7 +22,7 @@
     "verify:release": "node scripts/verify-release.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "tsx --test test/**/*.test.ts",
-    "check": "npm run typecheck && npm test && npm run build && npm run selftest && npm run smoke:stdio && npm run verify:release",
+    "check": "npm run typecheck && npm test && npm run build && npm run selftest && npm run smoke:stdio && npm run smoke:multi-stdio && npm run smoke:core-survival && npm run smoke:core-crash && npm run verify:release",
     "start:stdio": "node mcp/server.cjs"
   },
   "dependencies": {

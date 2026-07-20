@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import type { DataPaths } from "../paths.js";
@@ -58,6 +58,7 @@ export class BatchManager {
   private readonly semaphores = new Map<string, Semaphore>();
   private readonly saveChains = new Map<string, Promise<void>>();
   private readonly agentCompletionChains = new Map<string, Promise<BatchSnapshot>>();
+  private readonly requestOperations = new Map<string, { fingerprint: string | undefined; promise: Promise<unknown> }>();
   private readonly deletingBatchIds = new Set<string>();
   private activationRevision = Date.now();
   private activatedBatchId: string | undefined;
@@ -67,6 +68,16 @@ export class BatchManager {
     private readonly registry: ProviderRegistry,
     private readonly paths: DataPaths
   ) {}
+
+  hasActiveProviderJobs(): boolean {
+    for (const batch of this.batches.values()) {
+      for (const job of batch.jobs) {
+        const offering = job.offering || batch.offering;
+        if (offering.adapterId !== "agent-generation" && (job.status === "queued" || job.status === "running")) return true;
+      }
+    }
+    return false;
+  }
 
   async initialize(): Promise<void> {
     for (const batch of await this.store.loadAll()) {
@@ -125,8 +136,15 @@ export class BatchManager {
   }
 
   async create(input: CreateBatchInput): Promise<BatchSnapshot> {
+    const fingerprint = input.requestKey ? requestFingerprint({ ...input, requestKey: undefined }) : undefined;
+    return this.withRequestKey(`create:${input.requestKey || ""}`, input.requestKey, fingerprint, () => this.createUnlocked(input));
+  }
+
+  private async createUnlocked(input: CreateBatchInput): Promise<BatchSnapshot> {
+    const fingerprint = input.requestKey ? requestFingerprint({ ...input, requestKey: undefined }) : undefined;
     const existingId = input.requestKey ? this.requestKeys.get(input.requestKey) : undefined;
     if (existingId) {
+      assertMatchingFingerprint(this.requireBatch(existingId).requestFingerprint, fingerprint, input.requestKey!);
       this.activate(existingId);
       return this.get(existingId);
     }
@@ -171,6 +189,7 @@ export class BatchManager {
     const batch: BatchRecord = {
       id,
       requestKey: input.requestKey,
+      requestFingerprint: fingerprint,
       title: input.title?.trim() || `${resolved.offering.displayName} · ${count} 张`,
       prompt: input.prompt,
       inputDirectory: input.inputDirectory ? path.resolve(input.inputDirectory) : undefined,
@@ -190,9 +209,16 @@ export class BatchManager {
   }
 
   async append(input: AppendBatchInput): Promise<AppendBatchResult> {
+    const fingerprint = input.requestKey ? requestFingerprint({ ...input, requestKey: undefined }) : undefined;
+    return this.withRequestKey(`append:${input.batchId}:${input.requestKey || ""}`, input.requestKey, fingerprint, () => this.appendUnlocked(input));
+  }
+
+  private async appendUnlocked(input: AppendBatchInput): Promise<AppendBatchResult> {
     const batch = this.requireBatch(input.batchId);
+    const fingerprint = input.requestKey ? requestFingerprint({ ...input, requestKey: undefined }) : undefined;
     const existingJobIds = input.requestKey ? batch.appendKeys?.[input.requestKey] : undefined;
     if (existingJobIds) {
+      assertMatchingFingerprint(batch.appendFingerprints?.[input.requestKey!], fingerprint, input.requestKey!);
       this.activate(batch.id);
       return { batch: snapshot(batch), appendedJobIds: [...existingJobIds] };
     }
@@ -240,7 +266,10 @@ export class BatchManager {
       batch.jobs.push(job);
       appended.push(job);
     }
-    if (input.requestKey) batch.appendKeys = { ...(batch.appendKeys || {}), [input.requestKey]: appended.map((job) => job.id) };
+    if (input.requestKey) {
+      batch.appendKeys = { ...(batch.appendKeys || {}), [input.requestKey]: appended.map((job) => job.id) };
+      batch.appendFingerprints = { ...(batch.appendFingerprints || {}), [input.requestKey]: fingerprint! };
+    }
     batch.updatedAt = now;
     await this.persist(batch);
     this.activate(batch.id);
@@ -256,8 +285,22 @@ export class BatchManager {
     offeringId?: string;
     requestKey?: string;
   }): Promise<BatchSnapshot> {
+    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
+    return this.withRequestKey(`modify:${options.batchId}:${options.requestKey || ""}`, options.requestKey, fingerprint, () => this.modifyInPlaceUnlocked(options));
+  }
+
+  private async modifyInPlaceUnlocked(options: {
+    batchId: string;
+    imageIds?: string[];
+    jobIds?: string[];
+    instructions: string;
+    offeringId?: string;
+    requestKey?: string;
+  }): Promise<BatchSnapshot> {
     const source = this.requireBatch(options.batchId);
+    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
     if (options.requestKey && source.modificationKeys?.[options.requestKey]) {
+      assertMatchingFingerprint(source.modificationFingerprints?.[options.requestKey], fingerprint, options.requestKey);
       this.activate(source.id);
       return snapshot(source);
     }
@@ -330,6 +373,7 @@ export class BatchManager {
     }
     if (options.requestKey) {
       source.modificationKeys = { ...(source.modificationKeys || {}), [options.requestKey]: scheduled.map((job) => job.id) };
+      source.modificationFingerprints = { ...(source.modificationFingerprints || {}), [options.requestKey]: fingerprint! };
     }
     source.updatedAt = now;
     await this.persist(source);
@@ -537,8 +581,20 @@ export class BatchManager {
     deleteSourceBatches?: boolean;
     requestKey?: string;
   }): Promise<BatchSnapshot> {
+    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
+    return this.withRequestKey(`merge:${options.targetBatchId}:${options.requestKey || ""}`, options.requestKey, fingerprint, () => this.mergeBatchesUnlocked(options));
+  }
+
+  private async mergeBatchesUnlocked(options: {
+    targetBatchId: string;
+    sourceBatchIds: string[];
+    deleteSourceBatches?: boolean;
+    requestKey?: string;
+  }): Promise<BatchSnapshot> {
     const target = this.requireBatch(options.targetBatchId);
+    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
     if (options.requestKey && target.mergeKeys?.[options.requestKey]) {
+      assertMatchingFingerprint(target.mergeFingerprints?.[options.requestKey], fingerprint, options.requestKey);
       this.activate(target.id);
       return snapshot(target);
     }
@@ -584,20 +640,46 @@ export class BatchManager {
 
     const previousJobs = target.jobs;
     const previousMergeKeys = target.mergeKeys;
+    const previousMergeFingerprints = target.mergeFingerprints;
     target.jobs = [...target.jobs, ...clones];
-    if (options.requestKey) target.mergeKeys = { ...(target.mergeKeys || {}), [options.requestKey]: clones.map((job) => job.id) };
+    if (options.requestKey) {
+      target.mergeKeys = { ...(target.mergeKeys || {}), [options.requestKey]: clones.map((job) => job.id) };
+      target.mergeFingerprints = { ...(target.mergeFingerprints || {}), [options.requestKey]: fingerprint! };
+    }
     target.updatedAt = new Date().toISOString();
     try {
       await this.persist(target);
     } catch (error) {
       target.jobs = previousJobs;
       target.mergeKeys = previousMergeKeys;
+      target.mergeFingerprints = previousMergeFingerprints;
       await Promise.all(copiedPaths.map((filePath) => rm(filePath, { force: true })));
       throw error;
     }
     if (options.deleteSourceBatches) for (const source of sources) await this.delete(source.id);
     this.activate(target.id);
     return snapshot(target);
+  }
+
+  private async withRequestKey<T>(
+    lockKey: string,
+    requestKey: string | undefined,
+    fingerprint: string | undefined,
+    operation: () => Promise<T>
+  ): Promise<T> {
+    if (!requestKey) return operation();
+    const active = this.requestOperations.get(lockKey);
+    if (active) {
+      assertMatchingFingerprint(active.fingerprint, fingerprint, requestKey);
+      return active.promise as Promise<T>;
+    }
+    const running = operation();
+    this.requestOperations.set(lockKey, { fingerprint, promise: running });
+    try {
+      return await running;
+    } finally {
+      if (this.requestOperations.get(lockKey)?.promise === running) this.requestOperations.delete(lockKey);
+    }
   }
 
   async delete(batchId: string): Promise<void> {
@@ -958,6 +1040,13 @@ function cloneOffering(offering: OfferingSnapshot): OfferingSnapshot {
 }
 
 function snapshot(batch: BatchRecord): BatchSnapshot {
+  const {
+    requestFingerprint: _requestFingerprint,
+    appendFingerprints: _appendFingerprints,
+    modificationFingerprints: _modificationFingerprints,
+    mergeFingerprints: _mergeFingerprints,
+    ...publicBatch
+  } = batch;
   const counts = {
     queued: batch.jobs.filter((job) => job.status === "queued").length,
     running: batch.jobs.filter((job) => job.status === "running").length,
@@ -972,7 +1061,7 @@ function snapshot(batch: BatchRecord): BatchSnapshot {
     ? Number(jobPrices.reduce((total, price) => total + (price.amount || 0), 0).toFixed(6))
     : undefined;
   return {
-    ...batch,
+    ...publicBatch,
     jobs: batch.jobs.map((job) => ({
       ...job,
       callHistory: job.callHistory?.map((call) => ({ ...call, offering: { ...call.offering, price: { ...call.offering.price } } }))
@@ -1074,4 +1163,23 @@ function defaultOutputDirectory(paths: DataPaths, inputDirectory: string | undef
 function isInside(directory: string, filePath: string): boolean {
   const relative = path.relative(path.resolve(directory), path.resolve(filePath));
   return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function requestFingerprint(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(stableValue(value))).digest("hex");
+}
+
+function stableValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .filter(([, entry]) => entry !== undefined)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, entry]) => [key, stableValue(entry)]));
+}
+
+function assertMatchingFingerprint(stored: string | undefined, incoming: string | undefined, requestKey: string): void {
+  if (stored && incoming && stored !== incoming) {
+    throw new Error(`requestKey ${requestKey} was already used with different arguments.`);
+  }
 }

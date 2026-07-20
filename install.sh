@@ -183,7 +183,8 @@ PLUGIN_SOURCE="$PACKAGE_ROOT/plugins/esse"
 MANIFEST_PATH="$PLUGIN_SOURCE/.codex-plugin/plugin.json"
 WIDGET_PATH="$PLUGIN_SOURCE/mcp/widget.html"
 SERVER_PATH="$PLUGIN_SOURCE/mcp/server.cjs"
-for required in "$PACKAGE_MARKETPLACE" "$PACKAGE_LAUNCHER" "$MANIFEST_PATH" "$WIDGET_PATH"; do
+CORE_PATH="$PLUGIN_SOURCE/mcp/core.cjs"
+for required in "$PACKAGE_MARKETPLACE" "$PACKAGE_LAUNCHER" "$MANIFEST_PATH" "$WIDGET_PATH" "$SERVER_PATH" "$CORE_PATH"; do
   if [[ ! -f "$required" ]]; then
     echo "Release package is missing required file: $required" >&2
     exit 1
@@ -193,11 +194,6 @@ done
 if ! is_safe_macos_launcher "$PACKAGE_LAUNCHER"; then
   echo "This Esse release contains an obsolete macOS executable and was not run." >&2
   echo "Install a newer release that uses the trusted Codex Node runtime. Do not bypass Gatekeeper." >&2
-  exit 1
-fi
-
-if [[ ! -f "$SERVER_PATH" ]]; then
-  echo "Release package is missing required file: $SERVER_PATH" >&2
   exit 1
 fi
 
@@ -214,11 +210,22 @@ if ! SELF_TEST_OUTPUT="$(cd "$PLUGIN_SOURCE" && ESSE_DATA_DIR="$SELF_TEST_ROOT/d
   echo "Esse runtime self-test failed: $SELF_TEST_OUTPUT" >&2
   exit 1
 fi
-rm -rf -- "$SELF_TEST_ROOT"
 if [[ "$SELF_TEST_OUTPUT" != *'"status":"ok"'* && "$SELF_TEST_OUTPUT" != *'"status": "ok"'* ]]; then
+  rm -rf -- "$SELF_TEST_ROOT"
   echo "Esse runtime self-test returned an invalid result: $SELF_TEST_OUTPUT" >&2
   exit 1
 fi
+if ! CORE_SELF_TEST_OUTPUT="$(cd "$PLUGIN_SOURCE" && ESSE_DATA_DIR="$SELF_TEST_ROOT/data-core" /bin/bash "$PACKAGE_LAUNCHER" --core --self-test 2>&1)"; then
+  rm -rf -- "$SELF_TEST_ROOT"
+  echo "Esse Core self-test failed: $CORE_SELF_TEST_OUTPUT" >&2
+  exit 1
+fi
+if [[ "$CORE_SELF_TEST_OUTPUT" != *'"component":"core"'* && "$CORE_SELF_TEST_OUTPUT" != *'"component": "core"'* ]]; then
+  rm -rf -- "$SELF_TEST_ROOT"
+  echo "Esse Core self-test returned an invalid result: $CORE_SELF_TEST_OUTPUT" >&2
+  exit 1
+fi
+rm -rf -- "$SELF_TEST_ROOT"
 
 mkdir -p "$INSTALL_ROOT/versions"
 VERSION_ROOT="$INSTALL_ROOT/versions/$VERSION"
@@ -240,11 +247,22 @@ if ! INSTALLED_SELF_TEST_OUTPUT="$(cd "$TARGET_PLUGIN" && ESSE_DATA_DIR="$INSTAL
   echo "Installed Esse runtime self-test failed: $INSTALLED_SELF_TEST_OUTPUT" >&2
   exit 1
 fi
-rm -rf -- "$INSTALLED_SELF_TEST_ROOT"
 if [[ "$INSTALLED_SELF_TEST_OUTPUT" != *'"status":"ok"'* && "$INSTALLED_SELF_TEST_OUTPUT" != *'"status": "ok"'* ]]; then
+  rm -rf -- "$INSTALLED_SELF_TEST_ROOT"
   echo "Installed Esse runtime self-test returned an invalid result: $INSTALLED_SELF_TEST_OUTPUT" >&2
   exit 1
 fi
+if ! INSTALLED_CORE_SELF_TEST_OUTPUT="$(cd "$TARGET_PLUGIN" && ESSE_DATA_DIR="$INSTALLED_SELF_TEST_ROOT/data-core" /bin/bash "$TARGET_PLUGIN/bin/esse" --core --self-test 2>&1)"; then
+  rm -rf -- "$INSTALLED_SELF_TEST_ROOT"
+  echo "Installed Esse Core self-test failed: $INSTALLED_CORE_SELF_TEST_OUTPUT" >&2
+  exit 1
+fi
+if [[ "$INSTALLED_CORE_SELF_TEST_OUTPUT" != *'"component":"core"'* && "$INSTALLED_CORE_SELF_TEST_OUTPUT" != *'"component": "core"'* ]]; then
+  rm -rf -- "$INSTALLED_SELF_TEST_ROOT"
+  echo "Installed Esse Core self-test returned an invalid result: $INSTALLED_CORE_SELF_TEST_OUTPUT" >&2
+  exit 1
+fi
+rm -rf -- "$INSTALLED_SELF_TEST_ROOT"
 
 if ! select_codex_bin; then
   exit 1

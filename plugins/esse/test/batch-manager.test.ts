@@ -125,13 +125,14 @@ test("new jobs append directly to an active batch with their own model and idemp
       count: 1,
       size: "1024x1024"
     });
-    const appended = await manager.append({
+    const appendInput = {
       batchId: created.id,
       offeringId: "offer-alternate",
       prompt: "fallback",
       jobs: [{ prompt: "new turtle one" }, { prompt: "new turtle two" }],
       requestKey: "append-once"
-    });
+    };
+    const appended = await manager.append(appendInput);
     assert.equal(appended.batch.id, created.id);
     assert.equal(appended.batch.total, 3);
     assert.deepEqual(appended.batch.jobs.map((job) => job.name), ["图1", "图2", "图3"]);
@@ -139,15 +140,13 @@ test("new jobs append directly to an active batch with their own model and idemp
     assert.deepEqual(appended.batch.jobs.slice(1).map((job) => job.prompt), ["new turtle one", "new turtle two"]);
     assert.deepEqual(appended.appendedJobIds, appended.batch.jobs.slice(1).map((job) => job.id));
 
-    const duplicate = await manager.append({
-      batchId: created.id,
-      offeringId: "offer-alternate",
-      prompt: "must not run",
-      count: 2,
-      requestKey: "append-once"
-    });
+    const duplicate = await manager.append(appendInput);
     assert.deepEqual(duplicate.appendedJobIds, appended.appendedJobIds);
     assert.equal(duplicate.batch.total, 3);
+    await assert.rejects(
+      manager.append({ batchId: created.id, prompt: "different operation", count: 2, requestKey: "append-once" }),
+      /already used with different arguments/u
+    );
 
     const completed = await waitForBatch(manager, created.id);
     assert.equal(completed.succeeded, 3);
@@ -159,12 +158,7 @@ test("new jobs append directly to an active batch with their own model and idemp
 
     const reloaded = new BatchManager(store, registry, paths);
     await reloaded.initialize();
-    const persistedDuplicate = await reloaded.append({
-      batchId: created.id,
-      prompt: "must remain idempotent after restart",
-      count: 2,
-      requestKey: "append-once"
-    });
+    const persistedDuplicate = await reloaded.append(appendInput);
     assert.deepEqual(persistedDuplicate.appendedJobIds, appended.appendedJobIds);
     assert.equal(persistedDuplicate.batch.total, 3);
   } finally {
@@ -266,8 +260,12 @@ test("in-place modification keeps the batch, refreshes the main image, and creat
     assert.deepEqual(modifiedJob.referenceImagePaths, [backupPath]);
     await access(modifiedJob.outputPath!);
     await assert.rejects(access(originalPath));
-    const duplicate = await manager.modifyInPlace({ batchId: created.id, jobIds: [modifiedJob.id], instructions: "不会重复提交", requestKey: "edit-once" });
+    const duplicate = await manager.modifyInPlace({ batchId: created.id, jobIds: [originalJob.id], instructions: "只保留一支向日葵", offeringId: "offer-alternate", requestKey: "edit-once" });
     assert.equal(onlyJob(duplicate).backups?.length, 1);
+    await assert.rejects(
+      manager.modifyInPlace({ batchId: created.id, jobIds: [modifiedJob.id], instructions: "不同修改", requestKey: "edit-once" }),
+      /already used with different arguments/u
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
