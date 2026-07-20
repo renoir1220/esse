@@ -1,6 +1,6 @@
 {
   "name": "@local/esse-plugin",
-  "version": "0.2.3-beta.2",
+  "version": "0.2.3-beta.3",
   "private": true,
   "type": "module",
   "engines": {
@@ -24,6 +24,7 @@
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.20.2",
     "@phosphor-icons/react": "^2.1.10",
+    "ipaddr.js": "^2.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zod": "^3.25.76"

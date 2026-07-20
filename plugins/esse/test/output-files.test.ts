@@ -53,6 +53,7 @@ test("generated downloads enforce pre-decode and streaming limits", async () => 
       outputDirectory: root,
       sourceName: "too-large.png",
       maxBytes: 12,
+      trustedBaseUrl: "https://images.example/v1",
       fetchImpl: async () => new Response(Buffer.from(onePixelPng, "base64"), { status: 200 })
     }), /exceeds the 60 MB download limit/);
   } finally {
