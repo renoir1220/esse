@@ -141,9 +141,9 @@ jobs:
               $publishExit = $LASTEXITCODE
             } elseif ($viewOutput -match 'HTTP 404|Not Found') {
               if ($tag -match "-") {
-                $publishOutput = (& gh release create $tag @assets --verify-tag --prerelease --title "Esse $tag" --generate-notes --notes $releaseNotes 2>&1 | Out-String)
+                $publishOutput = (& gh release create $tag @assets --verify-tag --prerelease --title "Esse $tag" --notes $releaseNotes 2>&1 | Out-String)
               } else {
-                $publishOutput = (& gh release create $tag @assets --verify-tag --title "Esse $tag" --generate-notes --notes $releaseNotes 2>&1 | Out-String)
+                $publishOutput = (& gh release create $tag @assets --verify-tag --title "Esse $tag" --notes $releaseNotes 2>&1 | Out-String)
               }
               $publishExit = $LASTEXITCODE
             } else {
