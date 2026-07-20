@@ -443,10 +443,7 @@ async function createManager(root: string, fetchImpl: typeof fetch) {
 async function waitForBatch(manager: BatchManager, id: string) {
   for (let index = 0; index < 200; index += 1) {
     const batch = manager.get(id);
-    if (!["queued", "running"].includes(batch.status)) {
-      await manager.waitForPersistence(id);
-      return manager.get(id);
-    }
+    if (!["queued", "running"].includes(batch.status)) return batch;
     await new Promise((resolve) => setTimeout(resolve, 15));
   }
   throw new Error("Timed out waiting for local batch.");

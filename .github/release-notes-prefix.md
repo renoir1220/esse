@@ -2,27 +2,27 @@
 
 ## 简体中文
 
-### Esse 0.2.2-beta.4
+Esse 是面向 Codex 和 ChatGPT Work 的本地图片生成与编辑工作台。
 
-- 原图预览改用标准 MCP Apps `resources/read` 二进制资源，完全移除本地 HTTP 服务，规避 macOS Chromium 对嵌入式页面访问回环地址的限制。
-- 原始文件字节和 MIME 类型会原样传输并显示，不缩放、不转码，也不增加 2400px Base64 或 MCP 高清回退。
-- macOS 与 Windows 统一使用同一条资源通道，并保留旧 Widget URI 兼容；资源令牌仅在当前进程内有效并于 5 分钟后过期，读取时会校验文件大小、修改时间和 60 MB 上限。
+- 支持 Windows x64、macOS Apple Silicon 和 macOS Intel。
+- 三个平台的运行时均在对应的原生 GitHub Runner 上完成构建和自检。
+- macOS 使用 Codex/ChatGPT 管理的已签名 Node.js 运行时，不再分发 Esse 自行编译的 Mach-O 文件。
+- 安装器会在更改当前用户的本地插件市场前验证 SHA256 校验和、受信任运行时和桌面 App。
+- 推荐让 Codex 阅读仓库中的 `INSTALL.md` 并自动完成安装；也可以下载对应平台的 ZIP 后手动运行安装器。
 
-该方案已通过 macOS Codex 桌面端真实用户链路验证。多缩略图冷加载优化继续在 [#15](../../issues/15) 跟踪。
-
-[查看 v0.2.2-beta.3...v0.2.2-beta.4 完整变更](../../compare/v0.2.2-beta.3...v0.2.2-beta.4)
+[查看简体中文安装说明](../../blob/main/README.md) · [查看完整变更](../../compare)
 
 ## English
 
-### Esse 0.2.2-beta.4
+Esse is a local image generation and editing workspace for Codex and ChatGPT Work.
 
-- Original-image viewing now uses standard MCP Apps `resources/read` binary resources and removes the local HTTP server entirely, avoiding macOS Chromium restrictions on loopback access from embedded pages.
-- Original file bytes and MIME types are transferred and displayed unchanged, with no resizing, re-encoding, 2400px Base64 fallback, or MCP high-resolution fallback.
-- macOS and Windows now share the same resource path while stale Widget URIs remain compatible. Resource tokens stay process-local and expire after five minutes, while reads validate file size, modification time, and a 60 MB limit.
+- Esse supports Windows x64, macOS Apple Silicon, and macOS Intel.
+- Every runtime is built and self-tested on its matching native GitHub runner.
+- macOS uses the signed Node.js runtime managed by Codex/ChatGPT instead of distributing an Esse-built Mach-O executable.
+- The installer verifies the SHA256 checksum, trusted runtime, and desktop app before changing the user's local plugin marketplace.
+- The recommended installation flow is to let Codex read `INSTALL.md` and install automatically. You can also download the ZIP for your platform and run the installer manually.
 
-This path was validated end to end in the Codex desktop app on macOS. Cold multi-thumbnail loading remains tracked in [#15](../../issues/15).
-
-[View the full v0.2.2-beta.3...v0.2.2-beta.4 changelog](../../compare/v0.2.2-beta.3...v0.2.2-beta.4)
+[Read the English installation guide](../../blob/main/README.en.md) · [View the full changelog](../../compare)
 
 ---
 
