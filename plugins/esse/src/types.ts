@@ -72,6 +72,7 @@ export interface JobRecord {
   generationInputPaths?: string[];
   backups?: JobBackup[];
   offering?: OfferingSnapshot;
+  generationOptions?: GenerationOptions;
   prompt: string;
   status: JobStatus;
   progress: number;
@@ -134,6 +135,7 @@ export interface BatchRecord {
   id: string;
   parentBatchId?: string;
   requestKey?: string;
+  appendKeys?: Record<string, string[]>;
   modificationKeys?: Record<string, string[]>;
   mergeKeys?: Record<string, string[]>;
   title: string;

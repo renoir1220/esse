@@ -81,7 +81,7 @@ export function createLocalEsseServer(options: {
     { name: "esse", version: options.version },
     {
       instructions:
-        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself."
+        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Append new generation tasks to an existing batch with append_image_batch_jobs; never simulate append by creating and merging a temporary batch. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself."
     }
   );
 
@@ -235,6 +235,66 @@ export function createLocalEsseServer(options: {
       ? `已创建 ${batch.total} 个“Codex 生成”任务。请由当前 Agent 使用自身可用的图像生成能力完成每个 job，并通过 Agent job 接口回传结果；结果目录：${batch.outputDirectory}`
       : `已创建 ${batch.total} 个本地任务，${batch.offering.concurrency} 路并发，结果目录：${batch.outputDirectory}`;
     return batchResult(batch, message, true);
+  });
+
+  registerAppTool(server, "append_image_batch_jobs", {
+    title: "Append generation jobs to an Esse batch",
+    description: "Adds new generation jobs directly to one existing batch, whether it is active or terminal. It never creates a temporary batch and never requires a merge. Uses the batch model when offeringId is omitted; pass offeringId only when the user explicitly requests another model. Each jobs[] item keeps its own prompt and references.",
+    inputSchema: {
+      batchId: z.string().min(1),
+      offeringId: z.string().min(1).optional(),
+      prompt: z.string().min(1).max(5000).optional(),
+      referenceImagePaths: z.array(z.string()).max(20).optional(),
+      referenceImages: z.array(existingImageReferenceSchema).max(20).optional(),
+      jobs: z.array(z.object({
+        prompt: z.string().min(1).max(5000),
+        referenceImagePaths: z.array(z.string()).max(20).default([]),
+        referenceImages: z.array(existingImageReferenceSchema).max(20).default([])
+      })).min(1).max(50).optional(),
+      count: z.number().int().min(1).max(50).optional(),
+      size: z.string().optional(),
+      quality: z.string().optional(),
+      requestKey: z.string().max(200).optional()
+    },
+    annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+    _meta: headlessToolMeta()
+  }, async (input) => {
+    if (!input.prompt && !input.jobs?.length) throw new Error("请提供追加任务的 prompt，或为每个 jobs[] 子任务分别提供 prompt。");
+    const referenceImagePaths = [
+      ...(input.referenceImagePaths || []),
+      ...resolveExistingImagePaths(options.batches, input.referenceImages)
+    ];
+    const jobs = input.jobs?.map((job) => ({
+      prompt: job.prompt,
+      referenceImagePaths: [
+        ...(job.referenceImagePaths || []),
+        ...resolveExistingImagePaths(options.batches, job.referenceImages)
+      ]
+    }));
+    const appended = await options.batches.append({
+      batchId: input.batchId,
+      offeringId: input.offeringId,
+      prompt: input.prompt || "各追加子任务使用独立 Prompt",
+      referenceImagePaths,
+      jobs,
+      count: input.count,
+      size: input.size,
+      quality: input.quality,
+      requestKey: input.requestKey
+    });
+    const appendedJobs = appended.batch.jobs.filter((job) => appended.appendedJobIds.includes(job.id));
+    const agentGenerated = appendedJobs.some((job) => job.offering?.adapterId === "agent-generation");
+    const message = agentGenerated
+      ? `已向“${appended.batch.title}”直接追加 ${appendedJobs.length} 个 Codex 生成任务。当前 Agent 必须完成返回的 appendedJobIds 并逐项回传结果。`
+      : `已向“${appended.batch.title}”直接追加 ${appendedJobs.length} 个任务；未创建新批次。`;
+    return {
+      structuredContent: {
+        batch: appended.batch,
+        appendedJobIds: appended.appendedJobIds,
+        activateBatchId: appended.batch.id
+      },
+      content: [{ type: "text" as const, text: message }]
+    };
   });
 
   registerAppTool(server, "start_agent_image_job", {

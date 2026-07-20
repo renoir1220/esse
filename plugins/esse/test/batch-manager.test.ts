@@ -110,6 +110,68 @@ test("each child task keeps its own prompt and zero-to-many reference images", a
   }
 });
 
+test("new jobs append directly to an active batch with their own model and idempotency key", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-append-generate-"));
+  try {
+    const requests: Array<{ model?: string; prompt?: string; size?: string }> = [];
+    const { manager, store, registry, paths } = await createManager(root, async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body || "{}")) as { model?: string; prompt?: string; size?: string });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const created = await manager.create({
+      offeringId: "offer-default",
+      prompt: "original turtle",
+      count: 1,
+      size: "1024x1024"
+    });
+    const appended = await manager.append({
+      batchId: created.id,
+      offeringId: "offer-alternate",
+      prompt: "fallback",
+      jobs: [{ prompt: "new turtle one" }, { prompt: "new turtle two" }],
+      requestKey: "append-once"
+    });
+    assert.equal(appended.batch.id, created.id);
+    assert.equal(appended.batch.total, 3);
+    assert.deepEqual(appended.batch.jobs.map((job) => job.name), ["图1", "图2", "图3"]);
+    assert.deepEqual(appended.batch.jobs.slice(1).map((job) => job.offering?.id), ["offer-alternate", "offer-alternate"]);
+    assert.deepEqual(appended.batch.jobs.slice(1).map((job) => job.prompt), ["new turtle one", "new turtle two"]);
+    assert.deepEqual(appended.appendedJobIds, appended.batch.jobs.slice(1).map((job) => job.id));
+
+    const duplicate = await manager.append({
+      batchId: created.id,
+      offeringId: "offer-alternate",
+      prompt: "must not run",
+      count: 2,
+      requestKey: "append-once"
+    });
+    assert.deepEqual(duplicate.appendedJobIds, appended.appendedJobIds);
+    assert.equal(duplicate.batch.total, 3);
+
+    const completed = await waitForBatch(manager, created.id);
+    assert.equal(completed.succeeded, 3);
+    assert.equal(manager.list(10).length, 1);
+    assert.equal(completed.estimatedCost, 0.21);
+    assert.deepEqual(requests.map((request) => request.model).sort(), ["alternate-image-model", "alternate-image-model", "gpt-image-2"]);
+    assert.equal(requests.find((request) => request.model === "gpt-image-2")?.size, "1024x1024");
+    assert(requests.filter((request) => request.model === "alternate-image-model").every((request) => request.size === undefined));
+
+    const reloaded = new BatchManager(store, registry, paths);
+    await reloaded.initialize();
+    const persistedDuplicate = await reloaded.append({
+      batchId: created.id,
+      prompt: "must remain idempotent after restart",
+      count: 2,
+      requestKey: "append-once"
+    });
+    assert.deepEqual(persistedDuplicate.appendedJobIds, appended.appendedJobIds);
+    assert.equal(persistedDuplicate.batch.total, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Codex generation delegates to the current Agent and imports terminal results", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-agent-generation-"));
   try {

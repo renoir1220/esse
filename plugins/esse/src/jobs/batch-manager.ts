@@ -26,6 +26,23 @@ export interface CreateBatchInput {
   requestKey?: string;
 }
 
+export interface AppendBatchInput {
+  batchId: string;
+  offeringId?: string;
+  prompt: string;
+  referenceImagePaths?: string[];
+  jobs?: Array<{ prompt: string; referenceImagePaths?: string[] }>;
+  count?: number;
+  size?: string;
+  quality?: string;
+  requestKey?: string;
+}
+
+export interface AppendBatchResult {
+  batch: BatchSnapshot;
+  appendedJobIds: string[];
+}
+
 type SelectedBatchImage =
   | { kind: "result" | "failed-source"; job: JobRecord; sourcePath: string }
   | { kind: "backup"; job: JobRecord; backup: JobBackup; sourcePath: string };
@@ -170,6 +187,65 @@ export class BatchManager {
     this.activate(id);
     if (!isAgentGeneration(resolved)) for (const job of jobs) this.schedule(batch, job, resolved);
     return snapshot(batch);
+  }
+
+  async append(input: AppendBatchInput): Promise<AppendBatchResult> {
+    const batch = this.requireBatch(input.batchId);
+    const existingJobIds = input.requestKey ? batch.appendKeys?.[input.requestKey] : undefined;
+    if (existingJobIds) {
+      this.activate(batch.id);
+      return { batch: snapshot(batch), appendedJobIds: [...existingJobIds] };
+    }
+    const resolved = await this.registry.resolveOffering(input.offeringId || batch.offering.id);
+    if (!isAgentGeneration(resolved) && !resolved.profile.hasApiKey) throw new Error(`Provider ${resolved.profile.displayName} · ${resolved.profile.tierName} has no API key.`);
+    const referenceImagePaths = [...new Set((input.referenceImagePaths || []).map((value) => path.resolve(value)))];
+    const jobInputs = input.jobs || [];
+    const count = jobInputs.length || Math.max(1, Math.trunc(input.count || 1));
+    if (batch.jobs.length + count > MAX_BATCH_IMAGES) throw new Error(`The appended batch would exceed the ${MAX_BATCH_IMAGES}-image limit.`);
+    const hasReferenceImages = Boolean(referenceImagePaths.length || jobInputs.some((job) => job.referenceImagePaths?.length));
+    if (hasReferenceImages && !resolved.offering.supportsImageToImage) throw new Error(`${resolved.offering.displayName} does not support image editing.`);
+    if (!hasReferenceImages && !resolved.offering.supportsTextToImage) throw new Error(`${resolved.offering.displayName} does not support text-to-image generation.`);
+
+    const now = new Date().toISOString();
+    const sameOffering = resolved.snapshot.id === batch.offering.id;
+    const requestedOptions = compactGenerationOptions({
+      size: input.size || (sameOffering ? batch.generationOptions?.size : undefined),
+      quality: input.quality || (sameOffering ? batch.generationOptions?.quality : undefined)
+    });
+    const generationOptions = requestedOptions || (sameOffering ? undefined : {});
+    const appended: JobRecord[] = [];
+    for (let index = 0; index < count; index += 1) {
+      const slot = nextJobSlot(batch);
+      const jobReferencePaths = (jobInputs[index]?.referenceImagePaths || []).map((value) => path.resolve(value));
+      const inputPaths = [...new Set([...referenceImagePaths, ...jobReferencePaths])];
+      const prompt = jobInputs[index]?.prompt.trim() || input.prompt.trim();
+      if (!prompt) throw new Error("Each appended image job requires a prompt.");
+      const job: JobRecord = {
+        id: randomUUID(),
+        index: slot.index,
+        name: slot.name,
+        inputPath: inputPaths[0],
+        inputPaths: inputPaths.length ? inputPaths : undefined,
+        referenceImagePaths: inputPaths.length ? inputPaths : undefined,
+        offering: resolved.snapshot,
+        generationOptions,
+        prompt,
+        status: "queued",
+        progress: 0,
+        attempt: 1,
+        retryable: false,
+        chargeState: "not_charged",
+        createdAt: now
+      };
+      batch.jobs.push(job);
+      appended.push(job);
+    }
+    if (input.requestKey) batch.appendKeys = { ...(batch.appendKeys || {}), [input.requestKey]: appended.map((job) => job.id) };
+    batch.updatedAt = now;
+    await this.persist(batch);
+    this.activate(batch.id);
+    if (!isAgentGeneration(resolved)) for (const job of appended) this.schedule(batch, job, resolved);
+    return { batch: snapshot(batch), appendedJobIds: appended.map((job) => job.id) };
   }
 
   async modifyInPlace(options: {
@@ -637,7 +713,7 @@ export class BatchManager {
       const adapter = await this.registry.adapterFor(resolved.profile);
       const generationInputs = generationInputsFor(job);
       const images = await imageFilesToDataUrls(generationInputs);
-      const runtime = batch.generationOptions || {};
+      const runtime = job.generationOptions || batch.generationOptions || {};
       const result = await adapter.generate({
         model: resolved.offering.providerModelId,
         prompt: job.prompt,
@@ -889,8 +965,11 @@ function snapshot(batch: BatchRecord): BatchSnapshot {
     failed: batch.jobs.filter((job) => job.status === "failed").length,
     canceled: batch.jobs.filter((job) => job.status === "canceled").length
   };
-  const estimatedCost = batch.offering.price.mode === "per_request" && typeof batch.offering.price.amount === "number"
-    ? Number((batch.offering.price.amount * batch.jobs.length).toFixed(6))
+  const jobPrices = batch.jobs.map((job) => (job.offering || batch.offering).price);
+  const priceCurrency = jobPrices[0]?.currency;
+  const estimatedCost = jobPrices.length
+    && jobPrices.every((price) => price.mode === "per_request" && typeof price.amount === "number" && price.currency === priceCurrency)
+    ? Number(jobPrices.reduce((total, price) => total + (price.amount || 0), 0).toFixed(6))
     : undefined;
   return {
     ...batch,
@@ -902,7 +981,7 @@ function snapshot(batch: BatchRecord): BatchSnapshot {
     total: batch.jobs.length,
     ...counts,
     estimatedCost,
-    currency: estimatedCost === undefined ? undefined : batch.offering.price.currency
+    currency: estimatedCost === undefined ? undefined : priceCurrency
   };
 }
 
