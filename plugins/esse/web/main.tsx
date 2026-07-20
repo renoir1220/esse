@@ -12,6 +12,7 @@ import { providerSavePayload } from "./provider-payload";
 import { DataUrlLruCache, jobFileSignature, jobPreviewRevision, versionedPreviewSignature } from "./preview-cache";
 import { progressivePreviewChunks } from "./preview-batching";
 import { offeringPriceLabel } from "./pricing";
+import { errorMessage, resolveBackgroundPollingError } from "./polling-error";
 import {
   blankOffering,
   createCustomProviderDraft,
@@ -71,6 +72,7 @@ function App() {
   const [batchMenuOpen, setBatchMenuOpen] = useState(false);
   const [confirmDeleteBatch, setConfirmDeleteBatch] = useState(false);
   const [headerBusy, setHeaderBusy] = useState<string>();
+  const transportClosedRef = useRef(false);
   const isPreview = Boolean(window.__ESSE_PREVIEW__);
   const [sidebarStatus, setSidebarStatus] = useState<SidebarStatus>(() => isPreview ? "inline" : window.openai?.displayMode === "fullscreen" ? "docked" : "opening");
 
@@ -112,11 +114,18 @@ function App() {
     }
   }, []);
 
+  const handleBackgroundPollingError = useCallback((error: unknown): boolean => {
+    const result = resolveBackgroundPollingError(error, transportClosedRef.current);
+    if (result.notice) setNotice(result.notice);
+    if (result.stop) transportClosedRef.current = true;
+    return result.stop;
+  }, []);
+
   useEffect(() => bridge.subscribe(applyResult), [applyResult]);
 
   useEffect(() => {
     if (isPreview) return;
-    void bridge.callTool("ui_get_local_state", { batchId: activeBatchId }).then(applyResult).catch((error) => setNotice(errorMessage(error)));
+    void bridge.callTool("ui_get_local_state", { batchId: activeBatchId }).then(applyResult).catch(handleBackgroundPollingError);
   }, []);
 
   useEffect(() => {
@@ -132,14 +141,14 @@ function App() {
     let canceled = false;
     let timer: number | undefined;
     const refresh = async () => {
-      if (canceled || document.hidden) return;
+      if (canceled || transportClosedRef.current || document.hidden) return;
       try {
         const result = await bridge.callTool("ui_get_local_state", { batchId: activeBatchId });
         if (!canceled) applyResult(result);
       } catch (error) {
-        if (!canceled) setNotice(errorMessage(error));
+        if (!canceled && handleBackgroundPollingError(error)) canceled = true;
       } finally {
-        if (!canceled && !document.hidden) timer = window.setTimeout(() => void refresh(), 2_500);
+        if (!canceled && !transportClosedRef.current && !document.hidden) timer = window.setTimeout(() => void refresh(), 2_500);
       }
     };
     const onVisibilityChange = () => {
@@ -153,7 +162,7 @@ function App() {
       if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [activeBatchId, applyResult, isPreview]);
+  }, [activeBatchId, applyResult, handleBackgroundPollingError, isPreview]);
 
   useEffect(() => {
     if (isPreview) return;
@@ -197,12 +206,12 @@ function App() {
     let canceled = false;
     let timer: number | undefined;
     const schedule = (delay: number) => {
-      if (canceled || document.hidden) return;
+      if (canceled || transportClosedRef.current || document.hidden) return;
       if (timer !== undefined) window.clearTimeout(timer);
       timer = window.setTimeout(() => void refresh(), delay);
     };
     const refresh = async () => {
-      if (canceled || document.hidden || !activeBatchId) return;
+      if (canceled || transportClosedRef.current || document.hidden || !activeBatchId) return;
       let nextDelay = batchPollDelay(activeBatch);
       try {
         const result = await bridge.callTool("ui_get_batch_state", { batchId: activeBatchId });
@@ -210,8 +219,8 @@ function App() {
         applyResult(result);
         nextDelay = batchPollDelay(result.structuredContent.batch);
       }
-      catch (error) { if (!canceled) setNotice(errorMessage(error)); }
-      finally { if (!canceled) schedule(nextDelay); }
+      catch (error) { if (!canceled && handleBackgroundPollingError(error)) canceled = true; }
+      finally { if (!canceled && !transportClosedRef.current) schedule(nextDelay); }
     };
     const onVisibilityChange = () => {
       if (timer !== undefined) window.clearTimeout(timer);
@@ -224,7 +233,7 @@ function App() {
       if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [activeBatchId, applyResult, isPreview]);
+  }, [activeBatchId, applyResult, handleBackgroundPollingError, isPreview]);
 
   useEffect(() => {
     bridge.persistState({ tab, batchId: activeBatch?.id, selectedImageIds: [...selected], modificationRequest });
@@ -1473,12 +1482,6 @@ function fileName(filePath: string): string {
 
 function sourcePreviewKey(jobId: string, sourceIndex: number): string {
   return `${jobId}:source:${sourceIndex}`;
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "message" in error) return String((error as { message: unknown }).message);
-  return "本地插件操作失败。";
 }
 
 const root = document.getElementById("root");
