@@ -10,6 +10,8 @@
     "build": "node scripts/build.mjs",
     "selftest": "node mcp/server.cjs --self-test",
     "smoke:stdio": "node scripts/smoke-stdio.mjs",
+    "e2e:windows": "node scripts/e2e-windows-install.mjs",
+    "benchmark:thumbnails": "tsx scripts/benchmark-thumbnails.ts",
     "preview": "node scripts/preview-server.mjs",
     "package:releases": "npm run build && node scripts/package-releases.mjs && node scripts/create-release-metadata.mjs",
     "verify:release": "node scripts/verify-release.mjs",

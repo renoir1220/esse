@@ -125,6 +125,11 @@ export interface OfferingSnapshot {
   price: PriceConfig;
 }
 
+export interface GenerationOptions {
+  size?: string;
+  quality?: string;
+}
+
 export interface BatchRecord {
   id: string;
   parentBatchId?: string;
@@ -136,6 +141,7 @@ export interface BatchRecord {
   inputDirectory?: string;
   outputDirectory: string;
   offering: OfferingSnapshot;
+  generationOptions?: GenerationOptions;
   jobs: JobRecord[];
   createdAt: string;
   updatedAt: string;

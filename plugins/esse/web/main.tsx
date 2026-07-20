@@ -10,6 +10,7 @@ import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
 import { originalImageDataUrl } from "./original-image-resource";
 import { providerSavePayload } from "./provider-payload";
 import { DataUrlLruCache, jobFileSignature, jobPreviewRevision, versionedPreviewSignature } from "./preview-cache";
+import { progressivePreviewChunks } from "./preview-batching";
 import { offeringPriceLabel } from "./pricing";
 import {
   blankOffering,
@@ -30,7 +31,6 @@ type SidebarStatus = "opening" | "docked" | "inline";
 type PersistedWidgetState = NonNullable<NonNullable<Window["openai"]>["widgetState"]>;
 
 const previewDataUrlCache = new DataUrlLruCache(32 * 1024 * 1024);
-const PREVIEW_BATCH_SIZE = 8;
 
 function initialState(): WorkbenchState {
   const direct = window.__ESSE_PREVIEW__ || window.openai?.toolOutput?.state;
@@ -1425,9 +1425,7 @@ function previewMemoryKey(batchId: string, jobId: string, filePath: string, full
 }
 
 function previewChunks<T>(values: T[]): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < values.length; index += PREVIEW_BATCH_SIZE) chunks.push(values.slice(index, index + PREVIEW_BATCH_SIZE));
-  return chunks;
+  return progressivePreviewChunks(values);
 }
 
 async function fetchPreviewBatch(batchId: string, requests: PreviewRequest[]): Promise<Array<{ request: PreviewRequest; dataUrl: string }>> {

@@ -12,6 +12,7 @@ PREVIOUS_CATALOG=""
 PREVIOUS_MARKETPLACE_ROOT=""
 REGISTERED_STABLE=0
 RESULT_EMITTED=0
+PREVIOUS_INSTALLED_VERSION=""
 
 cleanup() {
   if [[ -n "$DOWNLOAD_ROOT" && -d "$DOWNLOAD_ROOT" ]]; then
@@ -41,6 +42,38 @@ normalize_path() {
   else
     printf '%s\n' "$path"
   fi
+}
+
+directories_match() {
+  local source="$1"
+  local target="$2"
+  [[ -d "$target" ]] || return 1
+  local source_files target_files relative
+  source_files="$(cd "$source" && find . -type f | LC_ALL=C sort)"
+  target_files="$(cd "$target" && find . -type f | LC_ALL=C sort)"
+  [[ "$source_files" == "$target_files" ]] || return 1
+  while IFS= read -r relative; do
+    [[ -n "$relative" ]] || continue
+    [[ "$(shasum -a 256 "$source/$relative" | awk '{print $1}')" == "$(shasum -a 256 "$target/$relative" | awk '{print $1}')" ]] || return 1
+  done <<< "$source_files"
+}
+
+remove_unused_versions() {
+  local versions_root="$1"
+  local current="$2"
+  local previous="$3"
+  local directory name
+  [[ -d "$versions_root" ]] || return 0
+  for directory in "$versions_root"/*; do
+    [[ -d "$directory" ]] || continue
+    name="$(basename "$directory")"
+    if [[ "$name" == "$current" || ( -n "$previous" && "$name" == "$previous" ) ]]; then
+      continue
+    fi
+    if ! rm -rf -- "$directory"; then
+      echo "Warning: could not remove unused Esse version $name." >&2
+    fi
+  done
 }
 
 codex_run() {
@@ -102,6 +135,10 @@ restore_registration() {
 if [[ "$(uname -s)" != "Darwin" ]]; then
   echo "install.sh supports macOS only. Use install.ps1 on Windows." >&2
   exit 1
+fi
+
+if [[ -f "$INSTALL_ROOT/install-receipt.json" ]]; then
+  PREVIOUS_INSTALLED_VERSION="$(json_value version "$INSTALL_ROOT/install-receipt.json")"
 fi
 
 case "$(uname -m)" in
@@ -186,7 +223,7 @@ fi
 mkdir -p "$INSTALL_ROOT/versions"
 VERSION_ROOT="$INSTALL_ROOT/versions/$VERSION"
 TARGET_PLUGIN="$VERSION_ROOT/plugins/esse"
-if ! is_safe_macos_launcher "$TARGET_PLUGIN/bin/esse" || [[ ! -f "$TARGET_PLUGIN/mcp/server.cjs" ]]; then
+if ! directories_match "$PLUGIN_SOURCE" "$TARGET_PLUGIN"; then
   STAGING_ROOT="$(mktemp -d "$INSTALL_ROOT/.staging.XXXXXX")"
   mkdir -p "$STAGING_ROOT/plugins"
   cp -R "$PLUGIN_SOURCE" "$STAGING_ROOT/plugins/esse"
@@ -195,6 +232,18 @@ if ! is_safe_macos_launcher "$TARGET_PLUGIN/bin/esse" || [[ ! -f "$TARGET_PLUGIN
     rm -rf -- "$VERSION_ROOT"
   fi
   mv "$STAGING_ROOT" "$VERSION_ROOT"
+fi
+chmod +x "$TARGET_PLUGIN/bin/esse"
+INSTALLED_SELF_TEST_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/esse-installed-self-test.XXXXXX")"
+if ! INSTALLED_SELF_TEST_OUTPUT="$(cd "$TARGET_PLUGIN" && ESSE_DATA_DIR="$INSTALLED_SELF_TEST_ROOT/data" /bin/bash "$TARGET_PLUGIN/bin/esse" --self-test 2>&1)"; then
+  rm -rf -- "$INSTALLED_SELF_TEST_ROOT"
+  echo "Installed Esse runtime self-test failed: $INSTALLED_SELF_TEST_OUTPUT" >&2
+  exit 1
+fi
+rm -rf -- "$INSTALLED_SELF_TEST_ROOT"
+if [[ "$INSTALLED_SELF_TEST_OUTPUT" != *'"status":"ok"'* && "$INSTALLED_SELF_TEST_OUTPUT" != *'"status": "ok"'* ]]; then
+  echo "Installed Esse runtime self-test returned an invalid result: $INSTALLED_SELF_TEST_OUTPUT" >&2
+  exit 1
 fi
 
 if ! select_codex_bin; then
@@ -247,6 +296,7 @@ cat > "$INSTALL_ROOT/install-receipt.json" <<EOF
   "pluginPath": "$TARGET_PLUGIN"
 }
 EOF
+remove_unused_versions "$INSTALL_ROOT/versions" "$VERSION" "$PREVIOUS_INSTALLED_VERSION"
 
 echo "Esse $VERSION installed and enabled."
 echo "Restart the Codex/ChatGPT desktop app, start a new task, and say: 打开 Esse 设置"

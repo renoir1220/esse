@@ -4,7 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { ensureDataPaths, resolveDataPaths } from "../src/paths.js";
-import { scanImageFolder } from "../src/files/image-files.js";
+import { imageFilesToDataUrls, scanImageFolder } from "../src/files/image-files.js";
 import { Thumbnailer } from "../src/files/thumbnailer.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
@@ -78,6 +78,19 @@ test("thumbnailer bounds concurrent native image processes", async () => {
     });
     await Promise.all(inputs.map((input) => thumbnailer.dataUrl(input, 320)));
     assert.equal(peak, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reference image encoding enforces per-job count and total-byte limits", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-reference-limits-"));
+  try {
+    const first = path.join(root, "first.png");
+    const second = path.join(root, "second.png");
+    await Promise.all([writeFile(first, Buffer.alloc(8)), writeFile(second, Buffer.alloc(8))]);
+    await assert.rejects(imageFilesToDataUrls([first, second], { maxImages: 1 }), /at most 1 reference images/);
+    await assert.rejects(imageFilesToDataUrls([first, second], { maxBytesPerImage: 10, maxTotalBytes: 15 }), /total input limit/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -8,6 +8,7 @@ import { BatchStore } from "./storage/batch-store.js";
 import { ProviderRegistry } from "./providers/registry.js";
 import { BatchManager } from "./jobs/batch-manager.js";
 import { Thumbnailer } from "./files/thumbnailer.js";
+import { pruneThumbnailCache } from "./files/thumbnail-cache.js";
 import { createLocalEsseServer } from "./mcp/app.js";
 
 declare const __ESSE_VERSION__: string;
@@ -46,6 +47,11 @@ async function main(): Promise<void> {
 
   const paths = resolveDataPaths();
   await ensureDataPaths(paths);
+  const cachePrune = await pruneThumbnailCache(paths.thumbnailsDir).catch((error) => {
+    process.stderr.write(`esse could not prune its thumbnail cache: ${error instanceof Error ? error.message : String(error)}\n`);
+    return undefined;
+  });
+  if (cachePrune?.removed) process.stderr.write(`esse removed ${cachePrune.removed} stale thumbnail cache file(s).\n`);
   const secrets = createSecretStore(paths.secretsDir);
   const settings = new SettingsStore(paths.settingsFile, secrets);
   const registry = new ProviderRegistry(settings);

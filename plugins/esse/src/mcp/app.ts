@@ -318,7 +318,6 @@ export function createLocalEsseServer(options: {
       jobIds: z.array(z.string()).min(1).max(50).optional().describe("Deprecated alias for imageIds; retained for older widgets."),
       instructions: z.string().min(1).max(5000),
       offeringId: z.string().optional(),
-      outputDirectory: z.string().optional(),
       requestKey: z.string().max(200).optional()
     },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },

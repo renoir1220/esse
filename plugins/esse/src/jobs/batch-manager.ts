@@ -2,9 +2,9 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import type { DataPaths } from "../paths.js";
-import { imageFileToDataUrl } from "../files/image-files.js";
+import { imageFilesToDataUrls } from "../files/image-files.js";
 import { backupImageVersion, importGeneratedImage, saveGeneratedImage } from "../files/output-files.js";
-import type { BatchActivation, BatchRecord, BatchSnapshot, BatchStatus, JobBackup, JobCallRecord, JobCallStatus, JobRecord, OfferingSnapshot, ProviderRequestError } from "../types.js";
+import type { BatchActivation, BatchRecord, BatchSnapshot, BatchStatus, GenerationOptions, JobBackup, JobCallRecord, JobCallStatus, JobRecord, OfferingSnapshot, ProviderRequestError } from "../types.js";
 import { ProviderRequestError as ProviderError } from "../types.js";
 import type { BatchStore } from "../storage/batch-store.js";
 import type { ProviderRegistry, ResolvedOffering } from "../providers/registry.js";
@@ -26,7 +26,6 @@ export interface CreateBatchInput {
   requestKey?: string;
 }
 
-interface RuntimeJobOptions { size?: string; quality?: string }
 type SelectedBatchImage =
   | { kind: "result" | "failed-source"; job: JobRecord; sourcePath: string }
   | { kind: "backup"; job: JobRecord; backup: JobBackup; sourcePath: string };
@@ -40,9 +39,9 @@ export class BatchManager {
   private readonly batches = new Map<string, BatchRecord>();
   private readonly requestKeys = new Map<string, string>();
   private readonly semaphores = new Map<string, Semaphore>();
-  private readonly runtimeOptions = new Map<string, RuntimeJobOptions>();
   private readonly saveChains = new Map<string, Promise<void>>();
   private readonly agentCompletionChains = new Map<string, Promise<BatchSnapshot>>();
+  private readonly deletingBatchIds = new Set<string>();
   private activationRevision = Date.now();
   private activatedBatchId: string | undefined;
 
@@ -160,13 +159,13 @@ export class BatchManager {
       inputDirectory: input.inputDirectory ? path.resolve(input.inputDirectory) : undefined,
       outputDirectory,
       offering: resolved.snapshot,
+      generationOptions: compactGenerationOptions({ size: input.size, quality: input.quality }),
       jobs,
       createdAt: now,
       updatedAt: now
     };
     this.batches.set(id, batch);
     if (input.requestKey) this.requestKeys.set(input.requestKey, id);
-    this.runtimeOptions.set(id, { size: input.size, quality: input.quality });
     await this.store.save(batch);
     this.activate(id);
     if (!isAgentGeneration(resolved)) for (const job of jobs) this.schedule(batch, job, resolved);
@@ -179,7 +178,6 @@ export class BatchManager {
     jobIds?: string[];
     instructions: string;
     offeringId?: string;
-    outputDirectory?: string;
     requestKey?: string;
   }): Promise<BatchSnapshot> {
     const source = this.requireBatch(options.batchId);
@@ -529,23 +527,30 @@ export class BatchManager {
   async delete(batchId: string): Promise<void> {
     const batch = this.requireBatch(batchId);
     if (batch.jobs.some((job) => job.status === "queued" || job.status === "running")) throw new Error("正在运行的批次不能删除，请等待任务结束或先取消排队任务。");
-    const managedPaths = new Set<string>();
-    for (const job of batch.jobs) {
-      if (job.outputPath) managedPaths.add(job.outputPath);
-      if (job.generationInputPath) managedPaths.add(job.generationInputPath);
-      for (const filePath of job.generationInputPaths || []) managedPaths.add(filePath);
-      for (const backup of job.backups || []) managedPaths.add(backup.outputPath);
+    this.deletingBatchIds.add(batch.id);
+    try {
+      await this.waitForPersistence(batch.id);
+      if (this.batches.get(batch.id) !== batch) throw new Error(`Unknown image batch: ${batch.id}`);
+      if (batch.jobs.some((job) => job.status === "queued" || job.status === "running")) throw new Error("正在运行的批次不能删除，请等待任务结束或先取消排队任务。");
+      const managedPaths = new Set<string>();
+      for (const job of batch.jobs) {
+        if (job.outputPath) managedPaths.add(job.outputPath);
+        if (job.generationInputPath) managedPaths.add(job.generationInputPath);
+        for (const filePath of job.generationInputPaths || []) managedPaths.add(filePath);
+        for (const backup of job.backups || []) managedPaths.add(backup.outputPath);
+      }
+      for (const filePath of managedPaths) {
+        if (isInside(batch.outputDirectory, filePath)) await rm(filePath, { force: true });
+      }
+      const remaining = await readdir(batch.outputDirectory).catch(() => []);
+      if (!remaining.length) await rmdir(batch.outputDirectory).catch(() => undefined);
+      await this.store.delete(batch.id);
+      this.batches.delete(batch.id);
+      if (batch.requestKey) this.requestKeys.delete(batch.requestKey);
+      this.saveChains.delete(batch.id);
+    } finally {
+      this.deletingBatchIds.delete(batch.id);
     }
-    for (const filePath of managedPaths) {
-      if (isInside(batch.outputDirectory, filePath)) await rm(filePath, { force: true });
-    }
-    const remaining = await readdir(batch.outputDirectory).catch(() => []);
-    if (!remaining.length) await rmdir(batch.outputDirectory).catch(() => undefined);
-    await this.store.delete(batch.id);
-    this.batches.delete(batch.id);
-    if (batch.requestKey) this.requestKeys.delete(batch.requestKey);
-    this.runtimeOptions.delete(batch.id);
-    this.saveChains.delete(batch.id);
   }
 
   private async completeAgentJobOnce(batchId: string, jobId: string, imagePath: string): Promise<BatchSnapshot> {
@@ -631,8 +636,8 @@ export class BatchManager {
     try {
       const adapter = await this.registry.adapterFor(resolved.profile);
       const generationInputs = generationInputsFor(job);
-      const images = await Promise.all(generationInputs.map((filePath) => imageFileToDataUrl(filePath)));
-      const runtime = this.runtimeOptions.get(batch.id) || {};
+      const images = await imageFilesToDataUrls(generationInputs);
+      const runtime = batch.generationOptions || {};
       const result = await adapter.generate({
         model: resolved.offering.providerModelId,
         prompt: job.prompt,
@@ -642,7 +647,12 @@ export class BatchManager {
         responseFormat: "url"
       });
       const previousOutputs = job.generationInputPaths?.length ? job.generationInputPaths : job.generationInputPath ? [job.generationInputPath] : [];
-      job.outputPath = await saveGeneratedImage({ result, outputDirectory: batch.outputDirectory, sourceName: job.name });
+      job.outputPath = await saveGeneratedImage({
+        result,
+        outputDirectory: batch.outputDirectory,
+        sourceName: job.name,
+        trustedBaseUrl: resolved.profile.baseUrl
+      });
       for (const previousOutput of previousOutputs) {
         if (isInside(batch.outputDirectory, previousOutput)) await rm(previousOutput, { force: true }).catch(() => undefined);
       }
@@ -713,7 +723,7 @@ export class BatchManager {
 
   private requireBatch(id: string): BatchRecord {
     const batch = this.batches.get(id);
-    if (!batch) throw new Error(`Unknown image batch: ${id}`);
+    if (!batch || this.deletingBatchIds.has(id)) throw new Error(`Unknown image batch: ${id}`);
     return batch;
   }
 
@@ -744,6 +754,12 @@ export class BatchManager {
     this.saveChains.set(batch.id, next);
     return next;
   }
+}
+
+function compactGenerationOptions(options: GenerationOptions): GenerationOptions | undefined {
+  const size = options.size?.trim();
+  const quality = options.quality?.trim();
+  return size || quality ? { size: size || undefined, quality: quality || undefined } : undefined;
 }
 
 function resolveBatchImage(batch: BatchRecord, selector: string): SelectedBatchImage {

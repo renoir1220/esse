@@ -2,11 +2,45 @@ import { ProviderRequestError, type ChargeState, type GenerateResult } from "../
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+const MAX_SUCCESS_RESPONSE_BYTES = 82 * 1024 * 1024;
+const MAX_ERROR_RESPONSE_BYTES = 1024 * 1024;
+
 export async function parseResponse(response: Response): Promise<unknown> {
-  const text = await response.text();
+  const limit = response.ok ? MAX_SUCCESS_RESPONSE_BYTES : MAX_ERROR_RESPONSE_BYTES;
+  const text = new TextDecoder().decode(await readResponseBytes(response, limit));
   if (!text) return {};
   try { return JSON.parse(text); }
   catch { return { message: text.slice(0, 1000) }; }
+}
+
+async function readResponseBytes(response: Response, limit: number): Promise<Uint8Array> {
+  const declaredLength = Number(response.headers.get("content-length") || "0");
+  if (Number.isFinite(declaredLength) && declaredLength > limit) throw new ProviderRequestError("Provider response exceeds the allowed size.", { retryable: false, chargeState: "unknown" });
+  if (!response.body) return new Uint8Array();
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > limit) {
+        await reader.cancel();
+        throw new ProviderRequestError("Provider response exceeds the allowed size.", { retryable: false, chargeState: "unknown" });
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return bytes;
 }
 
 export function providerError(response: Response, body: unknown): ProviderRequestError {

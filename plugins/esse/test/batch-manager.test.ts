@@ -316,6 +316,75 @@ test("deleting a terminal batch removes its managed images and record", async ()
   }
 });
 
+test("deleting a terminal batch waits for pending persistence and cannot resurrect its record", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-delete-race-"));
+  try {
+    const { manager, store } = await createManager(root, async () => { throw new Error("Agent generation must not call a Provider."); });
+    const created = await manager.create({ offeringId: CODEX_GENERATION_OFFERING_ID, prompt: "delete race", count: 1 });
+    const job = created.jobs[0]!;
+    await manager.startAgentJob(created.id, job.id);
+
+    const originalSave = store.save.bind(store);
+    let releaseSave!: () => void;
+    let markSaveEntered!: () => void;
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+    const saveEntered = new Promise<void>((resolve) => { markSaveEntered = resolve; });
+    let delayNextSave = true;
+    store.save = async (batch) => {
+      if (delayNextSave) {
+        delayNextSave = false;
+        markSaveEntered();
+        await saveGate;
+      }
+      await originalSave(batch);
+    };
+
+    const failing = manager.failAgentJob(created.id, job.id, "terminal failure");
+    await saveEntered;
+    let deletionSettled = false;
+    const deleting = manager.delete(created.id).then(() => { deletionSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(deletionSettled, false, "delete must wait for the pending record write");
+    assert.throws(() => manager.get(created.id), /Unknown image batch/);
+    releaseSave();
+    await Promise.all([failing, deleting]);
+    assert.equal(await store.get(created.id), undefined);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(await store.get(created.id), undefined, "a delayed save must not recreate the deleted record");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("generation size and quality survive restart and are reused by manual retry", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-generation-options-"));
+  try {
+    let failTransport = true;
+    const payloads: Array<Record<string, unknown>> = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      if (failTransport) throw new Error("connection dropped");
+      payloads.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
+      return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const { manager, store, registry, paths } = await createManager(root, fetchImpl);
+    const created = await manager.create({ offeringId: "offer-default", prompt: "persistent options", count: 1, size: "1536x1024", quality: "high" });
+    const failed = await waitForBatch(manager, created.id);
+    assert.deepEqual(failed.generationOptions, { size: "1536x1024", quality: "high" });
+
+    failTransport = false;
+    const restored = new BatchManager(store, registry, paths);
+    await restored.initialize();
+    const retrying = await restored.retry(created.id, [failed.jobs[0]!.id], true);
+    const completed = await waitForBatch(restored, retrying.id);
+    assert.equal(completed.status, "completed");
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0]?.size, "1536x1024");
+    assert.equal(payloads[0]?.quality, "high");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("deleting exact images removes managed files without renumbering survivors", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-delete-images-"));
   try {
@@ -437,7 +506,7 @@ async function createManager(root: string, fetchImpl: typeof fetch) {
   const registry = new ProviderRegistry(settings, fetchImpl);
   const manager = new BatchManager(store, registry, paths);
   await manager.initialize();
-  return { manager, store, registry, settings };
+  return { manager, store, registry, settings, paths };
 }
 
 async function waitForBatch(manager: BatchManager, id: string) {
