@@ -30,6 +30,7 @@ assert(macLauncher.includes("codex-primary-runtime/dependencies/node/bin/node"))
 assert(macLauncher.includes("codesign --verify --strict") && macLauncher.includes("spctl --assess --type execute") && !macLauncher.includes("command -v node"));
 assert(packageScript.includes('runtime: "codex-node"') && packageScript.includes('command: "/bin/bash"'));
 assert(releaseWorkflow.includes("macOS package must not contain an Esse-built Mach-O launcher"));
+assert(releaseWorkflow.includes("--prerelease"), "prerelease tags must not replace the latest stable GitHub Release");
 await Promise.all([
   access(path.join(repositoryRoot, "AGENTS.md")),
   access(path.join(repositoryRoot, "LICENSE")),

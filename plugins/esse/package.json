@@ -1,6 +1,6 @@
 {
   "name": "@local/esse-plugin",
-  "version": "0.2.1",
+  "version": "0.2.3",
   "private": true,
   "type": "module",
   "engines": {
@@ -10,6 +10,8 @@
     "build": "node scripts/build.mjs",
     "selftest": "node mcp/server.cjs --self-test",
     "smoke:stdio": "node scripts/smoke-stdio.mjs",
+    "e2e:windows": "node scripts/e2e-windows-install.mjs",
+    "benchmark:thumbnails": "tsx scripts/benchmark-thumbnails.ts",
     "preview": "node scripts/preview-server.mjs",
     "package:releases": "npm run build && node scripts/package-releases.mjs && node scripts/create-release-metadata.mjs",
     "verify:release": "node scripts/verify-release.mjs",
@@ -22,6 +24,7 @@
     "@modelcontextprotocol/ext-apps": "^1.0.1",
     "@modelcontextprotocol/sdk": "^1.20.2",
     "@phosphor-icons/react": "^2.1.10",
+    "ipaddr.js": "^2.4.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "zod": "^3.25.76"

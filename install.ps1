@@ -15,6 +15,7 @@ $previousCatalog = $null
 $previousMarketplaceRoot = $null
 $registeredStableMarketplace = $false
 $codexExecutable = $null
+$previousInstalledVersion = $null
 
 function Write-Utf8NoBom([string]$Path, [string]$Content) {
   $encoding = New-Object System.Text.UTF8Encoding($false)
@@ -23,6 +24,71 @@ function Write-Utf8NoBom([string]$Path, [string]$Content) {
 
 function Resolve-FullPath([string]$Path) {
   return [IO.Path]::GetFullPath($Path).TrimEnd([char[]]@("\", "/"))
+}
+
+function Get-Sha256([string]$Path) {
+  $stream = [IO.File]::OpenRead($Path)
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $algorithm.Dispose()
+    $stream.Dispose()
+  }
+}
+
+function Test-DirectoriesMatch([string]$Source, [string]$Target) {
+  if (-not (Test-Path -LiteralPath $Target -PathType Container)) { return $false }
+  $sourceRoot = Resolve-FullPath $Source
+  $targetRoot = Resolve-FullPath $Target
+  $sourceFiles = @(Get-ChildItem -LiteralPath $sourceRoot -Recurse -File)
+  $targetFiles = @(Get-ChildItem -LiteralPath $targetRoot -Recurse -File)
+  if ($sourceFiles.Count -ne $targetFiles.Count) { return $false }
+  foreach ($sourceFile in $sourceFiles) {
+    $relative = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart([char[]]@(92, 47))
+    $targetFile = Join-Path $targetRoot $relative
+    if (-not (Test-Path -LiteralPath $targetFile -PathType Leaf)) { return $false }
+    if ((Get-Sha256 $sourceFile.FullName) -ne (Get-Sha256 $targetFile)) { return $false }
+  }
+  return $true
+}
+
+function Invoke-EsseSelfTest([string]$Binary, [string]$PluginRoot) {
+  $selfTestData = Join-Path ([IO.Path]::GetTempPath()) ("esse-self-test-" + [guid]::NewGuid().ToString("N"))
+  $oldDataDir = $env:ESSE_DATA_DIR
+  try {
+    $env:ESSE_DATA_DIR = $selfTestData
+    Push-Location $PluginRoot
+    try {
+      $previousErrorActionPreference = $ErrorActionPreference
+      try {
+        # Windows PowerShell 5 turns native stderr into non-terminating ErrorRecord
+        # objects. Esse logs its readiness message to stderr during self-test, so
+        # capture both streams and judge the native process by its exit code.
+        $ErrorActionPreference = "Continue"
+        $selfTestOutput = (& $Binary --self-test 2>&1 | ForEach-Object { "$_" } | Out-String).Trim()
+        $selfTestExitCode = $LASTEXITCODE
+      } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+      }
+      if ($selfTestExitCode -ne 0 -or $selfTestOutput -notmatch '"status"\s*:\s*"ok"') { throw "Esse runtime self-test failed: $selfTestOutput" }
+    } finally {
+      Pop-Location
+    }
+  } finally {
+    $env:ESSE_DATA_DIR = $oldDataDir
+    if (Test-Path -LiteralPath $selfTestData) { Remove-Item -LiteralPath $selfTestData -Recurse -Force }
+  }
+}
+
+function Remove-UnusedVersions([string]$VersionsRoot, [string[]]$KeepVersions) {
+  if (-not (Test-Path -LiteralPath $VersionsRoot -PathType Container)) { return }
+  foreach ($directory in Get-ChildItem -LiteralPath $VersionsRoot -Directory) {
+    if ($KeepVersions -contains $directory.Name) { continue }
+    try { Remove-Item -LiteralPath $directory.FullName -Recurse -Force } catch {
+      Write-Warning "Could not remove unused Esse version $($directory.Name): $($_.Exception.Message)"
+    }
+  }
 }
 
 function Invoke-Codex([string[]]$Arguments) {
@@ -95,6 +161,10 @@ try {
     $InstallRoot = Join-Path $localAppData "esse\plugin"
   }
   $InstallRoot = Resolve-FullPath $InstallRoot
+  $existingReceiptPath = Join-Path $InstallRoot "install-receipt.json"
+  if (Test-Path -LiteralPath $existingReceiptPath -PathType Leaf) {
+    try { $previousInstalledVersion = [string](Get-Content -Raw -Encoding UTF8 -LiteralPath $existingReceiptPath | ConvertFrom-Json).version } catch {}
+  }
 
   $packageRoot = $PSScriptRoot
   $packageBinary = Join-Path $packageRoot "plugins\esse\bin\esse.exe"
@@ -116,7 +186,7 @@ try {
     if (-not $archiveName -or $expectedHash -notmatch "^[0-9a-f]{64}$") { throw "latest.json does not contain a valid Windows x64 asset." }
     $archivePath = Join-Path $downloadRoot $archiveName
     Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/$archiveName" -OutFile $archivePath
-    $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    $actualHash = Get-Sha256 $archivePath
     if ($actualHash -ne $expectedHash) { throw "SHA256 mismatch for $archiveName. Expected $expectedHash, got $actualHash." }
     $packageRoot = Join-Path $downloadRoot "package"
     Expand-ZipSafely -ArchivePath $archivePath -Destination $packageRoot
@@ -135,42 +205,23 @@ try {
   $version = [string]$manifest.version
   if ($version -notmatch "^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$") { throw "Release manifest has an invalid version: $version" }
 
-  $selfTestData = Join-Path ([IO.Path]::GetTempPath()) ("esse-self-test-" + [guid]::NewGuid().ToString("N"))
-  $oldDataDir = $env:ESSE_DATA_DIR
-  try {
-    $env:ESSE_DATA_DIR = $selfTestData
-    Push-Location $pluginSource
-    try {
-      $previousErrorActionPreference = $ErrorActionPreference
-      try {
-        # Windows PowerShell 5 turns native stderr into non-terminating ErrorRecord
-        # objects. Esse logs its readiness message to stderr during self-test, so
-        # capture both streams and judge the native process by its exit code.
-        $ErrorActionPreference = "Continue"
-        $selfTestOutput = (& $packageBinary --self-test 2>&1 | ForEach-Object { "$_" } | Out-String).Trim()
-        $selfTestExitCode = $LASTEXITCODE
-      } finally {
-        $ErrorActionPreference = $previousErrorActionPreference
-      }
-      if ($selfTestExitCode -ne 0 -or $selfTestOutput -notmatch '"status"\s*:\s*"ok"') { throw "Esse runtime self-test failed: $selfTestOutput" }
-    } finally {
-      Pop-Location
-    }
-  } finally {
-    $env:ESSE_DATA_DIR = $oldDataDir
-    if (Test-Path -LiteralPath $selfTestData) { Remove-Item -LiteralPath $selfTestData -Recurse -Force }
-  }
+  Invoke-EsseSelfTest -Binary $packageBinary -PluginRoot $pluginSource
 
   New-Item -ItemType Directory -Path (Join-Path $InstallRoot "versions") -Force | Out-Null
   $versionRoot = Join-Path $InstallRoot "versions\$version"
   $targetPlugin = Join-Path $versionRoot "plugins\esse"
-  if (-not (Test-Path -LiteralPath (Join-Path $targetPlugin "bin\esse.exe") -PathType Leaf)) {
+  if (-not (Test-DirectoriesMatch -Source $pluginSource -Target $targetPlugin)) {
     $stagingRoot = Join-Path $InstallRoot (".staging-" + [guid]::NewGuid().ToString("N"))
-    New-Item -ItemType Directory -Path (Join-Path $stagingRoot "plugins") -Force | Out-Null
-    Copy-Item -LiteralPath $pluginSource -Destination (Join-Path $stagingRoot "plugins\esse") -Recurse -Force
-    if (Test-Path -LiteralPath $versionRoot) { Remove-Item -LiteralPath $versionRoot -Recurse -Force }
-    Move-Item -LiteralPath $stagingRoot -Destination $versionRoot
+    try {
+      New-Item -ItemType Directory -Path (Join-Path $stagingRoot "plugins") -Force | Out-Null
+      Copy-Item -LiteralPath $pluginSource -Destination (Join-Path $stagingRoot "plugins\esse") -Recurse -Force
+      if (Test-Path -LiteralPath $versionRoot) { Remove-Item -LiteralPath $versionRoot -Recurse -Force }
+      Move-Item -LiteralPath $stagingRoot -Destination $versionRoot
+    } finally {
+      if (Test-Path -LiteralPath $stagingRoot) { Remove-Item -LiteralPath $stagingRoot -Recurse -Force }
+    }
   }
+  Invoke-EsseSelfTest -Binary (Join-Path $targetPlugin "bin\esse.exe") -PluginRoot $targetPlugin
 
   $catalogPath = Join-Path $InstallRoot ".agents\plugins\marketplace.json"
   New-Item -ItemType Directory -Path (Split-Path -Parent $catalogPath) -Force | Out-Null
@@ -206,10 +257,11 @@ try {
     pluginPath = $targetPlugin
   }
   Write-Utf8NoBom -Path (Join-Path $InstallRoot "install-receipt.json") -Content ($receipt | ConvertTo-Json -Depth 4)
+  Remove-UnusedVersions -VersionsRoot (Join-Path $InstallRoot "versions") -KeepVersions @($version, $previousInstalledVersion)
 
   Write-Host "Esse $version installed and enabled." -ForegroundColor Green
   Write-Host "Restart the Codex/ChatGPT desktop app, start a new task, and say: Open Esse settings"
-  Write-Host "Choose Codex 生成, or configure an optional Provider in the Esse settings UI. Never paste a Provider API Key into chat."
+  Write-Host "Choose Codex generation, or configure an optional Provider in the Esse settings UI. Never paste a Provider API Key into chat."
   $result = [ordered]@{ status = "installed"; version = $version; marketplace = $marketplaceName; installRoot = $InstallRoot; restartRequired = $true }
   Write-Output "ESSE_INSTALL_RESULT=$(($result | ConvertTo-Json -Compress))"
 } catch {

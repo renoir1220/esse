@@ -110,6 +110,68 @@ test("each child task keeps its own prompt and zero-to-many reference images", a
   }
 });
 
+test("new jobs append directly to an active batch with their own model and idempotency key", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-append-generate-"));
+  try {
+    const requests: Array<{ model?: string; prompt?: string; size?: string }> = [];
+    const { manager, store, registry, paths } = await createManager(root, async (_input, init) => {
+      requests.push(JSON.parse(String(init?.body || "{}")) as { model?: string; prompt?: string; size?: string });
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const created = await manager.create({
+      offeringId: "offer-default",
+      prompt: "original turtle",
+      count: 1,
+      size: "1024x1024"
+    });
+    const appended = await manager.append({
+      batchId: created.id,
+      offeringId: "offer-alternate",
+      prompt: "fallback",
+      jobs: [{ prompt: "new turtle one" }, { prompt: "new turtle two" }],
+      requestKey: "append-once"
+    });
+    assert.equal(appended.batch.id, created.id);
+    assert.equal(appended.batch.total, 3);
+    assert.deepEqual(appended.batch.jobs.map((job) => job.name), ["图1", "图2", "图3"]);
+    assert.deepEqual(appended.batch.jobs.slice(1).map((job) => job.offering?.id), ["offer-alternate", "offer-alternate"]);
+    assert.deepEqual(appended.batch.jobs.slice(1).map((job) => job.prompt), ["new turtle one", "new turtle two"]);
+    assert.deepEqual(appended.appendedJobIds, appended.batch.jobs.slice(1).map((job) => job.id));
+
+    const duplicate = await manager.append({
+      batchId: created.id,
+      offeringId: "offer-alternate",
+      prompt: "must not run",
+      count: 2,
+      requestKey: "append-once"
+    });
+    assert.deepEqual(duplicate.appendedJobIds, appended.appendedJobIds);
+    assert.equal(duplicate.batch.total, 3);
+
+    const completed = await waitForBatch(manager, created.id);
+    assert.equal(completed.succeeded, 3);
+    assert.equal(manager.list(10).length, 1);
+    assert.equal(completed.estimatedCost, 0.21);
+    assert.deepEqual(requests.map((request) => request.model).sort(), ["alternate-image-model", "alternate-image-model", "gpt-image-2"]);
+    assert.equal(requests.find((request) => request.model === "gpt-image-2")?.size, "1024x1024");
+    assert(requests.filter((request) => request.model === "alternate-image-model").every((request) => request.size === undefined));
+
+    const reloaded = new BatchManager(store, registry, paths);
+    await reloaded.initialize();
+    const persistedDuplicate = await reloaded.append({
+      batchId: created.id,
+      prompt: "must remain idempotent after restart",
+      count: 2,
+      requestKey: "append-once"
+    });
+    assert.deepEqual(persistedDuplicate.appendedJobIds, appended.appendedJobIds);
+    assert.equal(persistedDuplicate.batch.total, 3);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("Codex generation delegates to the current Agent and imports terminal results", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-agent-generation-"));
   try {
@@ -316,6 +378,75 @@ test("deleting a terminal batch removes its managed images and record", async ()
   }
 });
 
+test("deleting a terminal batch waits for pending persistence and cannot resurrect its record", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-delete-race-"));
+  try {
+    const { manager, store } = await createManager(root, async () => { throw new Error("Agent generation must not call a Provider."); });
+    const created = await manager.create({ offeringId: CODEX_GENERATION_OFFERING_ID, prompt: "delete race", count: 1 });
+    const job = created.jobs[0]!;
+    await manager.startAgentJob(created.id, job.id);
+
+    const originalSave = store.save.bind(store);
+    let releaseSave!: () => void;
+    let markSaveEntered!: () => void;
+    const saveGate = new Promise<void>((resolve) => { releaseSave = resolve; });
+    const saveEntered = new Promise<void>((resolve) => { markSaveEntered = resolve; });
+    let delayNextSave = true;
+    store.save = async (batch) => {
+      if (delayNextSave) {
+        delayNextSave = false;
+        markSaveEntered();
+        await saveGate;
+      }
+      await originalSave(batch);
+    };
+
+    const failing = manager.failAgentJob(created.id, job.id, "terminal failure");
+    await saveEntered;
+    let deletionSettled = false;
+    const deleting = manager.delete(created.id).then(() => { deletionSettled = true; });
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(deletionSettled, false, "delete must wait for the pending record write");
+    assert.throws(() => manager.get(created.id), /Unknown image batch/);
+    releaseSave();
+    await Promise.all([failing, deleting]);
+    assert.equal(await store.get(created.id), undefined);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(await store.get(created.id), undefined, "a delayed save must not recreate the deleted record");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("generation size and quality survive restart and are reused by manual retry", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-generation-options-"));
+  try {
+    let failTransport = true;
+    const payloads: Array<Record<string, unknown>> = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      if (failTransport) throw new Error("connection dropped");
+      payloads.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
+      return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
+    };
+    const { manager, store, registry, paths } = await createManager(root, fetchImpl);
+    const created = await manager.create({ offeringId: "offer-default", prompt: "persistent options", count: 1, size: "1536x1024", quality: "high" });
+    const failed = await waitForBatch(manager, created.id);
+    assert.deepEqual(failed.generationOptions, { size: "1536x1024", quality: "high" });
+
+    failTransport = false;
+    const restored = new BatchManager(store, registry, paths);
+    await restored.initialize();
+    const retrying = await restored.retry(created.id, [failed.jobs[0]!.id], true);
+    const completed = await waitForBatch(restored, retrying.id);
+    assert.equal(completed.status, "completed");
+    assert.equal(payloads.length, 1);
+    assert.equal(payloads[0]?.size, "1536x1024");
+    assert.equal(payloads[0]?.quality, "high");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("deleting exact images removes managed files without renumbering survivors", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-delete-images-"));
   try {
@@ -437,13 +568,16 @@ async function createManager(root: string, fetchImpl: typeof fetch) {
   const registry = new ProviderRegistry(settings, fetchImpl);
   const manager = new BatchManager(store, registry, paths);
   await manager.initialize();
-  return { manager, store, registry, settings };
+  return { manager, store, registry, settings, paths };
 }
 
 async function waitForBatch(manager: BatchManager, id: string) {
   for (let index = 0; index < 200; index += 1) {
     const batch = manager.get(id);
-    if (!["queued", "running"].includes(batch.status)) return batch;
+    if (!["queued", "running"].includes(batch.status)) {
+      await manager.waitForPersistence(id);
+      return manager.get(id);
+    }
     await new Promise((resolve) => setTimeout(resolve, 15));
   }
   throw new Error("Timed out waiting for local batch.");

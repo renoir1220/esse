@@ -13,6 +13,7 @@ import { ProviderRegistry } from "../src/providers/registry.js";
 import { BatchManager } from "../src/jobs/batch-manager.js";
 import { Thumbnailer } from "../src/files/thumbnailer.js";
 import { createLocalEsseServer, WIDGET_URI } from "../src/mcp/app.js";
+import { ORIGINAL_IMAGE_RESOURCE_TEMPLATE } from "../src/files/original-image-registry.js";
 import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
@@ -47,9 +48,10 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await client.connect(clientTransport);
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
-    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_check_for_updates", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_image_metadata", "ui_save_image_as", "ui_copy_image_to_clipboard", "ui_delete_esse_images", "ui_delete_image_batch"]) {
+    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "append_image_batch_jobs", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_check_for_updates", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_original_image_resource", "ui_get_image_metadata", "ui_save_image_as", "ui_copy_image_to_clipboard", "ui_delete_esse_images", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
     }
+    assert(!names.includes("get_local_media_status"), "PoC-only media diagnostics must not be published");
     const settingsTool = tools.tools.find((tool) => tool.name === "ui_save_provider_profile");
     assert.deepEqual((settingsTool?._meta as { ui?: { visibility?: string[] } })?.ui?.visibility, ["app"]);
     const openTool = tools.tools.find((tool) => tool.name === "open_esse");
@@ -57,16 +59,28 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const createTool = tools.tools.find((tool) => tool.name === "create_image_batch");
     assert(!((createTool?.inputSchema as { required?: string[] })?.required || []).includes("offeringId"), "create_image_batch must use the configured default when offeringId is omitted");
     assert((createTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.referenceImages, "create_image_batch must accept existing Esse image references");
+    const appendTool = tools.tools.find((tool) => tool.name === "append_image_batch_jobs");
+    assert((appendTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.batchId, "append_image_batch_jobs must target one existing batch");
+    assert(!((appendTool?.inputSchema as { required?: string[] })?.required || []).includes("offeringId"), "append_image_batch_jobs must reuse the batch model when offeringId is omitted");
     const listTool = tools.tools.find((tool) => tool.name === "list_image_batches");
     assert.equal((listTool?.inputSchema as { properties?: { limit?: { maximum?: number } } })?.properties?.limit?.maximum, 50);
     const modifyTool = tools.tools.find((tool) => tool.name === "modify_selected_images");
     assert((modifyTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.imageIds, "modify_selected_images must accept exact image IDs");
-    for (const headlessName of ["create_image_batch", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "list_image_batches", "get_image_batch", "render_image_batch", "modify_selected_images", "delete_esse_images", "merge_image_batches"]) {
+    for (const headlessName of ["create_image_batch", "append_image_batch_jobs", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "list_image_batches", "get_image_batch", "render_image_batch", "modify_selected_images", "delete_esse_images", "merge_image_batches"]) {
       const headless = tools.tools.find((tool) => tool.name === headlessName);
       assert.equal((headless?._meta as { ui?: { resourceUri?: string } })?.ui?.resourceUri, undefined, `${headlessName} must not reopen an inline widget`);
     }
     const resources = await client.listResources();
     assert(resources.resources.some((resource) => resource.uri === WIDGET_URI));
+    const templates = await client.listResourceTemplates();
+    assert(templates.resourceTemplates.some((resource) => resource.uriTemplate === ORIGINAL_IMAGE_RESOURCE_TEMPLATE));
+    const widget = await client.readResource({ uri: WIDGET_URI });
+    assert.equal((widget.contents[0]?._meta as { ui?: { csp?: unknown } } | undefined)?.ui?.csp, undefined, "the widget must not request localhost CSP access");
+    const legacyWidget = await client.readResource({ uri: "ui://esse/local-v1.html" });
+    assert.equal(legacyWidget.contents[0]?.uri, "ui://esse/local-v1.html");
+    const priorProcessWidgetUri = "ui://esse/local-v2-0123456789abcdef.html";
+    const priorProcessWidget = await client.readResource({ uri: priorProcessWidgetUri });
+    assert.equal(priorProcessWidget.contents[0]?.uri, priorProcessWidgetUri);
     const open = await client.callTool({ name: "open_esse", arguments: { tab: "settings" } });
     assert.equal((open.structuredContent as { state?: { providers?: unknown[] } }).state?.providers?.length, 0);
     const update = await client.callTool({ name: "ui_check_for_updates", arguments: {} });
@@ -124,6 +138,25 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     }
     assert(completedJobId);
     assert(completedOutputPath);
+    const appended = await client.callTool({
+      name: "append_image_batch_jobs",
+      arguments: {
+        batchId: createdBatch?.id,
+        offeringId: defaultOfferingId,
+        jobs: [{ prompt: "append directly to this batch" }],
+        requestKey: "mcp-append-once"
+      }
+    });
+    const appendedContent = appended.structuredContent as { batch?: { id?: string; total?: number; jobs?: Array<{ id?: string; name?: string }> }; appendedJobIds?: string[] };
+    assert.equal(appendedContent.batch?.id, createdBatch?.id);
+    assert.equal(appendedContent.batch?.total, 2);
+    assert.equal(appendedContent.batch?.jobs?.[1]?.name, "图2");
+    assert.deepEqual(appendedContent.appendedJobIds, [appendedContent.batch?.jobs?.[1]?.id]);
+    const duplicateAppend = await client.callTool({
+      name: "append_image_batch_jobs",
+      arguments: { batchId: createdBatch?.id, prompt: "must not duplicate", requestKey: "mcp-append-once" }
+    });
+    assert.equal((duplicateAppend.structuredContent as { batch?: { total?: number } }).batch?.total, 2);
     const imagePreviews = await client.callTool({
       name: "ui_get_image_previews",
       arguments: {
@@ -136,6 +169,15 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert(previewItems.every((preview) => preview.dataUrl?.startsWith("data:image/")));
     assert.deepEqual(previewItems.map((preview) => preview.full), [false, true]);
     assert(!JSON.stringify(imagePreviews.structuredContent).includes("data:image/"), "preview bytes must remain hidden from model-visible structured content");
+    const originalImage = await client.callTool({ name: "ui_get_original_image_resource", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
+    const originalImageUri = (originalImage._meta as { resourceUri?: string } | undefined)?.resourceUri;
+    assert(originalImageUri?.startsWith("esse-image://original/"));
+    assert(!JSON.stringify(originalImage.structuredContent).includes("esse-image://"), "original image URI must remain hidden from model-visible structured content");
+    const originalImageBytes = await client.readResource({ uri: originalImageUri! });
+    const originalImageContent = originalImageBytes.contents[0];
+    assert.equal(originalImageContent?.mimeType, "image/png");
+    assert("blob" in originalImageContent!);
+    assert.deepEqual(Buffer.from(originalImageContent.blob!, "base64"), Buffer.from(onePixelPng, "base64"));
     const imageMetadata = await client.callTool({ name: "ui_get_image_metadata", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
     assert.deepEqual(imageMetadata.structuredContent, { batchId: createdBatch?.id, jobId: completedJobId, available: true, width: 1, height: 1, sizeBytes: Buffer.from(onePixelPng, "base64").length });
     const listed = await client.callTool({ name: "list_image_batches", arguments: { limit: 5 } });

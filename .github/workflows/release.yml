@@ -6,7 +6,7 @@ on:
       - "v*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   verify:
@@ -15,10 +15,11 @@ jobs:
       run:
         working-directory: plugins/esse
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v5
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
@@ -27,7 +28,12 @@ jobs:
       - run: npm run check
       - name: Verify tag and release metadata
         shell: pwsh
-        run: npm run verify:release -- $env:GITHUB_REF_NAME
+        run: |
+          npm run verify:release -- $env:GITHUB_REF_NAME
+          $tagCommit = git rev-list -n 1 $env:GITHUB_REF_NAME
+          $containingBranches = @(git branch -r --contains $tagCommit | ForEach-Object { $_.Trim() })
+          $trustedBranch = $containingBranches | Where-Object { $_ -match '^origin/(main|release/.+|beta/.+|\d+\.\d+\.\d+)$' } | Select-Object -First 1
+          if (-not $trustedBranch) { throw "Release tag commit is not contained in main or a dedicated release/beta branch." }
 
   package:
     needs: verify
@@ -46,19 +52,24 @@ jobs:
       run:
         working-directory: plugins/esse
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: plugins/esse/package-lock.json
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         if: matrix.target == 'windows-x64'
         with:
           bun-version: 1.3.11
       - run: npm ci
-      - run: npm run build
+      - run: npm run check
       - run: node scripts/package-releases.mjs --target ${{ matrix.target }}
+      - name: Run Windows installation user-path E2E
+        if: matrix.target == 'windows-x64'
+        run: npm run e2e:windows
       - name: Verify macOS safe-launcher package
         if: startsWith(matrix.target, 'macos-')
         shell: bash
@@ -77,22 +88,26 @@ jobs:
           fi
           grep -q '"command": "/bin/bash"' "$extracted/plugins/esse/.mcp.json"
           ESSE_NODE_BIN="$(command -v node)" /bin/bash "$launcher" --self-test
-      - uses: actions/upload-artifact@v7
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: esse-${{ matrix.target }}
           path: release/esse-${{ matrix.target }}-v*.zip
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 7
 
   publish:
     needs: package
     runs-on: windows-latest
+    permissions:
+      contents: write
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           node-version: 22
-      - uses: actions/download-artifact@v8
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           pattern: esse-*
           path: release
@@ -117,9 +132,26 @@ jobs:
           $tag = $env:GITHUB_REF_NAME
           $assets = Get-ChildItem -LiteralPath .\release -File | Select-Object -ExpandProperty FullName
           $releaseNotes = Get-Content -Raw -Encoding UTF8 .\.github\release-notes-prefix.md
-          gh release view $tag *> $null
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag @assets --clobber
-          } else {
-            gh release create $tag @assets --verify-tag --title "Esse $tag" --generate-notes --notes $releaseNotes
+          $lastFailure = ""
+          foreach ($attempt in 1..5) {
+            $viewOutput = (& gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1 | Out-String)
+            $viewExit = $LASTEXITCODE
+            if ($viewExit -eq 0) {
+              $publishOutput = (& gh release upload $tag @assets --clobber 2>&1 | Out-String)
+              $publishExit = $LASTEXITCODE
+            } elseif ($viewOutput -match 'HTTP 404|Not Found') {
+              if ($tag -match "-") {
+                $publishOutput = (& gh release create $tag @assets --verify-tag --prerelease --title "Esse $tag" --notes $releaseNotes 2>&1 | Out-String)
+              } else {
+                $publishOutput = (& gh release create $tag @assets --verify-tag --title "Esse $tag" --notes $releaseNotes 2>&1 | Out-String)
+              }
+              $publishExit = $LASTEXITCODE
+            } else {
+              $publishOutput = $viewOutput
+              $publishExit = $viewExit
+            }
+            if ($publishExit -eq 0) { exit 0 }
+            $lastFailure = $publishOutput.Trim()
+            if ($attempt -lt 5) { Start-Sleep -Seconds ([Math]::Pow(2, $attempt)) }
           }
+          throw "GitHub Release publish failed after 5 attempts: $lastFailure"

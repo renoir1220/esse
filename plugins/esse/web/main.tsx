@@ -1,15 +1,18 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowUpRight, ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, Copy, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
+import { ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, Copy, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
 import { bridge } from "./bridge";
 import { shouldSubmitComposerKey } from "./composer-keyboard";
 import { contextMenuPoint } from "./context-menu";
 import { formatImageFileSize, formatImageResolution } from "./image-metadata";
 import type { ImageMetadata } from "./image-metadata";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
+import { originalImageDataUrl } from "./original-image-resource";
 import { providerSavePayload } from "./provider-payload";
 import { DataUrlLruCache, jobFileSignature, jobPreviewRevision, versionedPreviewSignature } from "./preview-cache";
+import { progressivePreviewChunks } from "./preview-batching";
 import { offeringPriceLabel } from "./pricing";
+import { errorMessage, resolveBackgroundPollingError } from "./polling-error";
 import {
   blankOffering,
   createCustomProviderDraft,
@@ -29,7 +32,6 @@ type SidebarStatus = "opening" | "docked" | "inline";
 type PersistedWidgetState = NonNullable<NonNullable<Window["openai"]>["widgetState"]>;
 
 const previewDataUrlCache = new DataUrlLruCache(32 * 1024 * 1024);
-const PREVIEW_BATCH_SIZE = 8;
 
 function initialState(): WorkbenchState {
   const direct = window.__ESSE_PREVIEW__ || window.openai?.toolOutput?.state;
@@ -65,12 +67,12 @@ function App() {
   const [displayMode, setDisplayMode] = useState(window.openai?.displayMode || "inline");
   const [notice, setNotice] = useState<string>();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>();
-  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string>();
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [batchSwitcherOpen, setBatchSwitcherOpen] = useState(false);
   const [batchMenuOpen, setBatchMenuOpen] = useState(false);
   const [confirmDeleteBatch, setConfirmDeleteBatch] = useState(false);
   const [headerBusy, setHeaderBusy] = useState<string>();
+  const transportClosedRef = useRef(false);
   const isPreview = Boolean(window.__ESSE_PREVIEW__);
   const [sidebarStatus, setSidebarStatus] = useState<SidebarStatus>(() => isPreview ? "inline" : window.openai?.displayMode === "fullscreen" ? "docked" : "opening");
 
@@ -112,11 +114,18 @@ function App() {
     }
   }, []);
 
+  const handleBackgroundPollingError = useCallback((error: unknown): boolean => {
+    const result = resolveBackgroundPollingError(error, transportClosedRef.current);
+    if (result.notice) setNotice(result.notice);
+    if (result.stop) transportClosedRef.current = true;
+    return result.stop;
+  }, []);
+
   useEffect(() => bridge.subscribe(applyResult), [applyResult]);
 
   useEffect(() => {
     if (isPreview) return;
-    void bridge.callTool("ui_get_local_state", { batchId: activeBatchId }).then(applyResult).catch((error) => setNotice(errorMessage(error)));
+    void bridge.callTool("ui_get_local_state", { batchId: activeBatchId }).then(applyResult).catch(handleBackgroundPollingError);
   }, []);
 
   useEffect(() => {
@@ -132,14 +141,14 @@ function App() {
     let canceled = false;
     let timer: number | undefined;
     const refresh = async () => {
-      if (canceled || document.hidden) return;
+      if (canceled || transportClosedRef.current || document.hidden) return;
       try {
         const result = await bridge.callTool("ui_get_local_state", { batchId: activeBatchId });
         if (!canceled) applyResult(result);
       } catch (error) {
-        if (!canceled) setNotice(errorMessage(error));
+        if (!canceled && handleBackgroundPollingError(error)) canceled = true;
       } finally {
-        if (!canceled && !document.hidden) timer = window.setTimeout(() => void refresh(), 2_500);
+        if (!canceled && !transportClosedRef.current && !document.hidden) timer = window.setTimeout(() => void refresh(), 2_500);
       }
     };
     const onVisibilityChange = () => {
@@ -153,7 +162,7 @@ function App() {
       if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [activeBatchId, applyResult, isPreview]);
+  }, [activeBatchId, applyResult, handleBackgroundPollingError, isPreview]);
 
   useEffect(() => {
     if (isPreview) return;
@@ -197,12 +206,12 @@ function App() {
     let canceled = false;
     let timer: number | undefined;
     const schedule = (delay: number) => {
-      if (canceled || document.hidden) return;
+      if (canceled || transportClosedRef.current || document.hidden) return;
       if (timer !== undefined) window.clearTimeout(timer);
       timer = window.setTimeout(() => void refresh(), delay);
     };
     const refresh = async () => {
-      if (canceled || document.hidden || !activeBatchId) return;
+      if (canceled || transportClosedRef.current || document.hidden || !activeBatchId) return;
       let nextDelay = batchPollDelay(activeBatch);
       try {
         const result = await bridge.callTool("ui_get_batch_state", { batchId: activeBatchId });
@@ -210,8 +219,8 @@ function App() {
         applyResult(result);
         nextDelay = batchPollDelay(result.structuredContent.batch);
       }
-      catch (error) { if (!canceled) setNotice(errorMessage(error)); }
-      finally { if (!canceled) schedule(nextDelay); }
+      catch (error) { if (!canceled && handleBackgroundPollingError(error)) canceled = true; }
+      finally { if (!canceled && !transportClosedRef.current) schedule(nextDelay); }
     };
     const onVisibilityChange = () => {
       if (timer !== undefined) window.clearTimeout(timer);
@@ -224,7 +233,7 @@ function App() {
       if (timer !== undefined) window.clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
-  }, [activeBatchId, applyResult, isPreview]);
+  }, [activeBatchId, applyResult, handleBackgroundPollingError, isPreview]);
 
   useEffect(() => {
     bridge.persistState({ tab, batchId: activeBatch?.id, selectedImageIds: [...selected], modificationRequest });
@@ -320,17 +329,19 @@ function App() {
           <button className={tab === "batches" ? "is-active" : ""} onClick={() => switchTab("batches")}><ImageSquare size={15} /><span>任务</span></button>
           <button onClick={() => setLibraryOpen(true)} disabled={!activeBatch}><SquaresFour size={15} /><span>浏览</span></button>
           <button className={tab === "settings" ? "is-active" : ""} onClick={() => switchTab("settings")}><SlidersHorizontal size={15} /><span>设置</span></button>
+          {updateStatus?.updateAvailable && updateStatus.releaseUrl && <a
+            className="header-update-link"
+            href={updateStatus.releaseUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={updateStatus.latestVersion ? `Esse ${updateStatus.latestVersion} 已发布` : "Esse 有新版本"}
+            title={updateStatus.latestVersion ? `Esse ${updateStatus.latestVersion} 已发布` : "Esse 有新版本"}
+          >有新版本</a>}
           <button className="header-icon-action" onClick={() => void requestFullscreen()} aria-label={displayMode === "fullscreen" ? "收起预览" : "在侧边栏展开"} title="在侧边栏展开"><ArrowsOutSimple size={16} /></button>
         </div>
       </header>
 
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice(undefined)} aria-label="关闭">×</button></div>}
-
-      {updateStatus?.updateAvailable && updateStatus.latestVersion !== dismissedUpdateVersion && updateStatus.releaseUrl && <div className="update-notice" role="status">
-        <div><strong>Esse {updateStatus.latestVersion} 已发布</strong><span>当前版本 {updateStatus.currentVersion}</span></div>
-        <a href={updateStatus.releaseUrl} target="_blank" rel="noopener noreferrer">查看更新<ArrowUpRight size={14} /></a>
-        <button type="button" onClick={() => setDismissedUpdateVersion(updateStatus.latestVersion)} aria-label="暂时关闭更新提示"><X size={14} /></button>
-      </div>}
 
       {tab === "settings" ? (
         <SettingsView state={state} applyResult={applyResult} onNotice={setNotice} />
@@ -771,6 +782,7 @@ type ImageAsset = {
 
 type CachedPreview = { signature: string; dataUrl: string };
 type ImageContextMenu = { asset: ImageAsset; scope: "thumbnail" | "lightbox"; left: number; top: number };
+type PreviewTransport = "idle" | "resource-loading" | "resource" | "error";
 
 type ModificationOffering = Pick<PublicOffering, "id" | "displayName" | "providerName" | "tierName" | "adapterId" | "price">;
 
@@ -780,6 +792,9 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   const [previews, setPreviews] = useState<Record<string, CachedPreview>>(() => Object.fromEntries(batch.jobs.filter((job) => job.previewUrl && (job.outputPath || job.inputPath)).map((job) => [job.id, { signature: jobFileSignature(job, (job.outputPath || job.inputPath)!), dataUrl: job.previewUrl! }])));
   const [previewAsset, setPreviewAsset] = useState<ImageAsset>();
   const [previewFull, setPreviewFull] = useState<string>();
+  const [previewTransport, setPreviewTransport] = useState<PreviewTransport>("idle");
+  const [previewError, setPreviewError] = useState<string>();
+  const [previewLoadAttempt, setPreviewLoadAttempt] = useState(0);
   const [previewZoom, setPreviewZoom] = useState(initialImageZoom);
   const [detailAsset, setDetailAsset] = useState<ImageAsset>();
   const [detailMetadata, setDetailMetadata] = useState<ImageMetadata>();
@@ -962,17 +977,11 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       return next;
     });
   };
-  const fullDataUrl = async (asset: ImageAsset) => {
-    const filePath = asset.outputPath || asset.inputPath;
-    if (!filePath) throw new Error("无法读取本地原图。");
-    const cacheKey = previewMemoryKey(batch.id, asset.id, filePath, true, undefined, assetFileSignature(asset, filePath));
-    const cached = previewDataUrlCache.get(cacheKey);
-    if (cached) return cached;
-    const result = await bridge.callTool("ui_get_image_preview", { batchId: batch.id, jobId: asset.id, full: true });
-    const dataUrl = typeof result._meta?.dataUrl === "string" ? result._meta.dataUrl : undefined;
-    if (!dataUrl) throw new Error("无法读取本地原图。");
-    previewDataUrlCache.set(cacheKey, dataUrl);
-    return dataUrl;
+  const originalImageUrl = async (asset: ImageAsset) => {
+    const result = await bridge.callTool("ui_get_original_image_resource", { batchId: batch.id, jobId: asset.id });
+    const resourceUri = typeof result._meta?.resourceUri === "string" ? result._meta.resourceUri : undefined;
+    if (!resourceUri) throw new Error("Esse 未返回原图资源地址。");
+    return originalImageDataUrl(await bridge.readResource(resourceUri));
   };
   const openImageContextMenu = (event: React.MouseEvent, asset: ImageAsset, scope: ImageContextMenu["scope"]) => {
     if (!(asset.outputPath || asset.inputPath) || asset.job && isProcessing(asset.job)) return;
@@ -1016,19 +1025,31 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
   useEffect(() => {
     if (!previewAsset) return;
     let canceled = false;
-    const filePath = previewAsset.outputPath || previewAsset.inputPath;
-    const cached = filePath ? previewDataUrlCache.get(previewMemoryKey(batch.id, previewAsset.id, filePath, true, undefined, assetFileSignature(previewAsset, filePath))) : undefined;
-    setPreviewFull(cached);
+    setPreviewFull(undefined);
+    setPreviewError(undefined);
+    setPreviewTransport("resource-loading");
     setPreviewZoom(initialImageZoom);
-    if (!cached) void fullDataUrl(previewAsset).then((dataUrl) => { if (!canceled) setPreviewFull(dataUrl); }).catch((error) => { if (!canceled) props.onNotice(errorMessage(error)); });
+    void originalImageUrl(previewAsset).then((dataUrl) => {
+      if (canceled) return;
+      setPreviewFull(dataUrl);
+    }).catch((error) => {
+      if (canceled) return;
+      const message = `原图读取失败：${errorMessage(error)}`;
+      setPreviewTransport("error");
+      setPreviewError(message);
+      props.onNotice(message);
+    });
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") setPreviewAsset(undefined);
       if (event.key === "ArrowLeft") { event.preventDefault(); movePreview(-1); }
       if (event.key === "ArrowRight") { event.preventDefault(); movePreview(1); }
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => { canceled = true; window.removeEventListener("keydown", onKeyDown); };
-  }, [previewAsset?.id, previewIndex, previewableAssets.length]);
+    return () => {
+      canceled = true;
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, [previewAsset?.id, previewIndex, previewableAssets.length, previewLoadAttempt]);
   const zoomPreview = (event: React.WheelEvent<HTMLDivElement>) => {
     event.preventDefault();
     event.stopPropagation();
@@ -1136,7 +1157,38 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
         </section>
       </div>
       {batch.queued > 0 && <footer className="batch-actions"><button className="secondary-button" onClick={() => void cancel()} disabled={Boolean(busy)}>取消排队</button></footer>}
-      {previewAsset && <div className="lightbox" role="dialog" aria-modal="true" aria-label={previewAsset.name}><button className="lightbox-close" onClick={() => setPreviewAsset(undefined)} aria-label="关闭预览">×</button>{previewableAssets.length > 1 && <><button className="lightbox-nav previous" onClick={() => movePreview(-1)} aria-label="上一张" title="上一张（←）"><CaretLeft size={24} /></button><button className="lightbox-nav next" onClick={() => movePreview(1)} aria-label="下一张" title="下一张（→）"><CaretRight size={24} /></button></>}<div className="lightbox-stage" onClick={() => setPreviewAsset(undefined)} onWheel={zoomPreview}>{previewFull ? <img className={previewZoom.scale > 1.0001 ? "is-zoomed" : ""} src={previewFull} alt={previewAsset.name} style={{ transform: `translate3d(${previewZoom.x}px, ${previewZoom.y}px, 0) scale(${previewZoom.scale})` }} onClick={(event) => event.stopPropagation()} onContextMenu={(event) => openImageContextMenu(event, previewAsset, "lightbox")} onDoubleClick={() => setPreviewZoom(initialImageZoom)} /> : <span className="spinner large lightbox-spinner" />}</div><div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span><button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div></div>}
+      {previewAsset && <div className="lightbox" role="dialog" aria-modal="true" aria-label={previewAsset.name}>
+        <button className="lightbox-close" onClick={() => setPreviewAsset(undefined)} aria-label="关闭预览">×</button>
+        {previewableAssets.length > 1 && <>
+          <button className="lightbox-nav previous" onClick={() => movePreview(-1)} aria-label="上一张" title="上一张（←）"><CaretLeft size={24} /></button>
+          <button className="lightbox-nav next" onClick={() => movePreview(1)} aria-label="下一张" title="下一张（→）"><CaretRight size={24} /></button>
+        </>}
+        <div className="lightbox-stage" onClick={() => setPreviewAsset(undefined)} onWheel={zoomPreview}>
+          {previewFull ? <img
+            className={previewZoom.scale > 1.0001 ? "is-zoomed" : ""}
+            src={previewFull}
+            alt={previewAsset.name}
+            style={{ transform: `translate3d(${previewZoom.x}px, ${previewZoom.y}px, 0) scale(${previewZoom.scale})` }}
+            onLoad={() => { if (previewTransport === "resource-loading") setPreviewTransport("resource"); }}
+            onError={() => {
+              if (previewTransport !== "resource-loading") return;
+              const message = "原图数据无法显示，请重试。";
+              setPreviewFull(undefined);
+              setPreviewTransport("error");
+              setPreviewError(message);
+              props.onNotice(message);
+            }}
+            onClick={(event) => event.stopPropagation()}
+            onContextMenu={(event) => openImageContextMenu(event, previewAsset, "lightbox")}
+            onDoubleClick={() => setPreviewZoom(initialImageZoom)}
+          /> : previewTransport === "error" ? <div className="lightbox-error" onClick={(event) => event.stopPropagation()}>
+            <strong>无法打开原图</strong>
+            <span>{previewError}</span>
+            <button type="button" onClick={() => setPreviewLoadAttempt((value) => value + 1)}>重试</button>
+          </div> : <span className="spinner large lightbox-spinner" />}
+        </div>
+        <div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span>{previewTransport === "resource" && <span title="通过 MCP Apps 资源读取本地原始图片">原图</span>}<button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div>
+      </div>}
       {detailAsset && <TaskDetailDialog asset={detailAsset} metadata={detailMetadata} referencePaths={detailReferencePaths} previews={previews} onClose={() => setDetailAsset(undefined)} />}
       {contextMenu && <ImageContextMenuView menu={contextMenu} selected={Boolean(contextMenu.asset.selectableImage && props.selected.has(contextMenu.asset.selectableImage.id))} onSelect={contextMenu.asset.selectableImage ? () => { toggle(contextMenu.asset.selectableImage!); setContextMenu(undefined); } : undefined} onCopy={() => void copyImage(contextMenu.asset)} onDelete={contextMenu.scope === "thumbnail" ? () => void deleteImage(contextMenu.asset) : undefined} />}
     </div>
@@ -1383,9 +1435,7 @@ function previewMemoryKey(batchId: string, jobId: string, filePath: string, full
 }
 
 function previewChunks<T>(values: T[]): T[][] {
-  const chunks: T[][] = [];
-  for (let index = 0; index < values.length; index += PREVIEW_BATCH_SIZE) chunks.push(values.slice(index, index + PREVIEW_BATCH_SIZE));
-  return chunks;
+  return progressivePreviewChunks(values);
 }
 
 async function fetchPreviewBatch(batchId: string, requests: PreviewRequest[]): Promise<Array<{ request: PreviewRequest; dataUrl: string }>> {
@@ -1432,12 +1482,6 @@ function fileName(filePath: string): string {
 
 function sourcePreviewKey(jobId: string, sourceIndex: number): string {
   return `${jobId}:source:${sourceIndex}`;
-}
-
-function errorMessage(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (error && typeof error === "object" && "message" in error) return String((error as { message: unknown }).message);
-  return "本地插件操作失败。";
 }
 
 const root = document.getElementById("root");

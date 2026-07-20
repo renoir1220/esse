@@ -2,33 +2,37 @@ import { constants } from "node:fs";
 import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { GenerateResult } from "../types.js";
+import { decodedBase64Length, detectImageFormat, MAX_GENERATED_IMAGE_BYTES } from "./image-format.js";
+import { downloadRemoteImage } from "./remote-image-download.js";
 
 export async function saveGeneratedImage(options: {
   result: GenerateResult;
   outputDirectory: string;
   sourceName: string;
   fetchImpl?: typeof fetch;
+  trustedBaseUrl?: string;
+  maxBytes?: number;
 }): Promise<string> {
   await mkdir(options.outputDirectory, { recursive: true });
+  const maxBytes = options.maxBytes ?? MAX_GENERATED_IMAGE_BYTES;
   let bytes: Buffer;
-  let mime = options.result.mimeType || "image/png";
   if (options.result.b64Json) {
+    if (decodedBase64Length(options.result.b64Json) > maxBytes) throw new Error("Generated image exceeds the 60 MB image limit.");
     bytes = Buffer.from(options.result.b64Json, "base64");
   } else if (options.result.outputUrl) {
-    const response = await (options.fetchImpl ?? fetch)(options.result.outputUrl, { signal: AbortSignal.timeout(90_000) });
-    if (!response.ok) throw new Error(`Could not download generated image (HTTP ${response.status}).`);
-    const length = Number(response.headers.get("content-length") || "0");
-    if (length > 60 * 1024 * 1024) throw new Error("Generated image exceeds the 60 MB download limit.");
-    bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > 60 * 1024 * 1024) throw new Error("Generated image exceeds the 60 MB download limit.");
-    mime = response.headers.get("content-type")?.split(";")[0] || mime;
+    bytes = Buffer.from(await downloadRemoteImage({
+      initialUrl: options.result.outputUrl,
+      trustedBaseUrl: options.trustedBaseUrl,
+      maxBytes,
+      fetchImpl: options.fetchImpl
+    }));
   } else {
     throw new Error("Provider returned no image data.");
   }
-  if (!looksLikeImage(bytes)) throw new Error("Provider output is not a recognized image file.");
-  const extension = extensionForMime(mime, bytes);
+  const format = detectImageFormat(bytes);
+  if (!format) throw new Error("Provider output is not a recognized image file.");
   const baseName = sanitizeBaseName(path.parse(options.sourceName).name || "generated");
-  return writeUnique(options.outputDirectory, `${baseName}-generated`, extension, bytes);
+  return writeUnique(options.outputDirectory, `${baseName}-generated`, format.extension, bytes);
 }
 
 export async function importGeneratedImage(options: {
@@ -39,21 +43,23 @@ export async function importGeneratedImage(options: {
   const sourcePath = path.resolve(options.sourcePath);
   const fileStat = await stat(sourcePath);
   if (!fileStat.isFile()) throw new Error("Agent output is not a file.");
-  if (fileStat.size > 60 * 1024 * 1024) throw new Error("Agent output exceeds the 60 MB image limit.");
+  if (fileStat.size > MAX_GENERATED_IMAGE_BYTES) throw new Error("Agent output exceeds the 60 MB image limit.");
   const bytes = await readFile(sourcePath);
-  if (!looksLikeImage(bytes)) throw new Error("Agent output is not a recognized image file.");
+  const format = detectImageFormat(bytes);
+  if (!format) throw new Error("Agent output is not a recognized image file.");
   await mkdir(options.outputDirectory, { recursive: true });
-  const mime = mimeForBytes(bytes, path.extname(sourcePath));
-  const extension = extensionForMime(mime, bytes);
   const baseName = sanitizeBaseName(path.parse(options.sourceName).name || "generated");
-  return writeUnique(options.outputDirectory, `${baseName}-generated`, extension, bytes);
+  return writeUnique(options.outputDirectory, `${baseName}-generated`, format.extension, bytes);
 }
 
 export async function fileDataUrl(filePath: string, maxBytes = 30 * 1024 * 1024): Promise<string> {
   const fileStat = await stat(filePath);
+  if (!fileStat.isFile()) throw new Error("Image preview source is not a file.");
   if (fileStat.size > maxBytes) throw new Error("Image is too large to preview in the widget.");
   const bytes = await readFile(filePath);
-  return `data:${mimeForBytes(bytes, path.extname(filePath))};base64,${bytes.toString("base64")}`;
+  const format = detectImageFormat(bytes);
+  if (!format) throw new Error("Image preview source is not a recognized image file.");
+  return `data:${format.mimeType};base64,${bytes.toString("base64")}`;
 }
 
 export async function backupImageVersion(options: {
@@ -89,29 +95,6 @@ async function writeUnique(directory: string, baseName: string, extension: strin
     }
   }
   throw new Error("Could not allocate a unique output filename.");
-}
-
-function looksLikeImage(bytes: Buffer): boolean {
-  if (bytes.length < 12) return false;
-  return bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
-    || bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))
-    || bytes.subarray(0, 4).toString("ascii") === "RIFF"
-    || bytes.subarray(0, 3).toString("ascii") === "GIF"
-    || bytes.subarray(4, 12).toString("ascii").includes("ftyp");
-}
-
-function extensionForMime(mime: string, bytes: Buffer): string {
-  if (mime.includes("jpeg") || bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return "jpg";
-  if (mime.includes("webp") || bytes.subarray(8, 12).toString("ascii") === "WEBP") return "webp";
-  if (mime.includes("avif")) return "avif";
-  return "png";
-}
-
-function mimeForBytes(bytes: Buffer, extension: string): string {
-  if (bytes.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff]))) return "image/jpeg";
-  if (bytes.subarray(8, 12).toString("ascii") === "WEBP") return "image/webp";
-  if (extension.toLowerCase() === ".avif") return "image/avif";
-  return "image/png";
 }
 
 function sanitizeBaseName(value: string): string {

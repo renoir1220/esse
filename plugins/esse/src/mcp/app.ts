@@ -1,11 +1,12 @@
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
 import type { BatchManager } from "../jobs/batch-manager.js";
 import { scanImageFolder } from "../files/image-files.js";
 import { readImageFileMetadata } from "../files/image-metadata.js";
+import { ORIGINAL_IMAGE_RESOURCE_TEMPLATE, OriginalImageRegistry } from "../files/original-image-registry.js";
 import { saveFileAs } from "../files/save-file-dialog.js";
 import { openLocalFolder } from "../files/open-folder.js";
 import { copyImageFileToClipboard } from "../files/system-image-clipboard.js";
@@ -16,7 +17,8 @@ import type { AdapterId, BatchSnapshot, JobRecord, OfferingConfig } from "../typ
 import { GitHubReleaseChecker } from "../update-checker.js";
 import type { UpdateCheckerLike } from "../update-checker.js";
 
-export const WIDGET_URI = "ui://esse/local-v1.html";
+export const WIDGET_URI = "ui://esse/local-v4.html";
+const LEGACY_WIDGET_URI = "ui://esse/local-v1.html";
 const THUMBNAIL_PREVIEW_MAX_DIMENSION = 640;
 const FULL_PREVIEW_MAX_DIMENSION = 2400;
 
@@ -60,32 +62,55 @@ export function createLocalEsseServer(options: {
   updateChecker?: UpdateCheckerLike;
 }): McpServer {
   const updateChecker = options.updateChecker || new GitHubReleaseChecker();
+  const widgetUri = WIDGET_URI;
+  const originalImages = new OriginalImageRegistry();
+  const widgetResource = (uri: string) => ({
+    contents: [{
+      uri,
+      mimeType: RESOURCE_MIME_TYPE,
+      text: options.widgetHtml,
+      _meta: {
+        ui: {
+          prefersBorder: false
+        },
+        "openai/widgetDescription": "本地图片工作台：Provider 设置、文件夹批处理、并行进度、预览、选择和再次修改。"
+      }
+    }]
+  });
   const server = new McpServer(
     { name: "esse", version: options.version },
     {
       instructions:
-        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself."
+        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Append new generation tasks to an existing batch with append_image_batch_jobs; never simulate append by creating and merging a temporary batch. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself."
     }
   );
 
-  registerAppResource(server, "esse-ui", WIDGET_URI, {}, async () => ({
-    contents: [{
-      uri: WIDGET_URI,
-      mimeType: RESOURCE_MIME_TYPE,
-      text: options.widgetHtml,
-      _meta: {
-        ui: { prefersBorder: false },
-        "openai/widgetDescription": "本地图片工作台：Provider 设置、文件夹批处理、并行进度、预览、选择和再次修改。"
-      }
-    }]
-  }));
+  registerAppResource(server, "esse-ui", widgetUri, {}, async () => widgetResource(widgetUri));
+  registerAppResource(server, "esse-ui-v1-compatible", LEGACY_WIDGET_URI, {}, async () => widgetResource(LEGACY_WIDGET_URI));
+  registerAppResource(server, "esse-ui-v3-compatible", "ui://esse/local-v3.html", {}, async () => widgetResource("ui://esse/local-v3.html"));
+  server.registerResource(
+    "esse-ui-v2-compatible",
+    new ResourceTemplate("ui://esse/local-v2-{mediaIdentity}.html", { list: undefined }),
+    { mimeType: RESOURCE_MIME_TYPE },
+    async (uri) => widgetResource(uri.toString())
+  );
+  server.registerResource(
+    "esse-original-image",
+    new ResourceTemplate(ORIGINAL_IMAGE_RESOURCE_TEMPLATE, { list: undefined }),
+    { description: "Exact local image bytes for the Esse app lightbox.", mimeType: "application/octet-stream" },
+    async (uri, variables) => {
+      const token = resourceVariable(variables.token);
+      const image = await originalImages.read(token);
+      return { contents: [{ uri: uri.toString(), mimeType: image.mimeType, blob: image.blob }] };
+    }
+  );
 
   registerAppTool(server, "open_esse", {
     title: "Open esse",
     description: "Opens esse for provider setup, recent batches, progress, previews, and selections.",
     inputSchema: { tab: z.enum(["batches", "settings"]).default("batches"), batchId: z.string().optional() },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
-    _meta: widgetToolMeta("正在打开本地图片工作台…", "本地图片工作台已打开")
+    _meta: widgetToolMeta(widgetUri, "正在打开本地图片工作台…", "本地图片工作台已打开")
   }, async ({ tab, batchId }) => appResult(await uiState(options, tab, batchId)));
 
   registerAppTool(server, "list_image_offerings", {
@@ -212,6 +237,66 @@ export function createLocalEsseServer(options: {
     return batchResult(batch, message, true);
   });
 
+  registerAppTool(server, "append_image_batch_jobs", {
+    title: "Append generation jobs to an Esse batch",
+    description: "Adds new generation jobs directly to one existing batch, whether it is active or terminal. It never creates a temporary batch and never requires a merge. Uses the batch model when offeringId is omitted; pass offeringId only when the user explicitly requests another model. Each jobs[] item keeps its own prompt and references.",
+    inputSchema: {
+      batchId: z.string().min(1),
+      offeringId: z.string().min(1).optional(),
+      prompt: z.string().min(1).max(5000).optional(),
+      referenceImagePaths: z.array(z.string()).max(20).optional(),
+      referenceImages: z.array(existingImageReferenceSchema).max(20).optional(),
+      jobs: z.array(z.object({
+        prompt: z.string().min(1).max(5000),
+        referenceImagePaths: z.array(z.string()).max(20).default([]),
+        referenceImages: z.array(existingImageReferenceSchema).max(20).default([])
+      })).min(1).max(50).optional(),
+      count: z.number().int().min(1).max(50).optional(),
+      size: z.string().optional(),
+      quality: z.string().optional(),
+      requestKey: z.string().max(200).optional()
+    },
+    annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
+    _meta: headlessToolMeta()
+  }, async (input) => {
+    if (!input.prompt && !input.jobs?.length) throw new Error("请提供追加任务的 prompt，或为每个 jobs[] 子任务分别提供 prompt。");
+    const referenceImagePaths = [
+      ...(input.referenceImagePaths || []),
+      ...resolveExistingImagePaths(options.batches, input.referenceImages)
+    ];
+    const jobs = input.jobs?.map((job) => ({
+      prompt: job.prompt,
+      referenceImagePaths: [
+        ...(job.referenceImagePaths || []),
+        ...resolveExistingImagePaths(options.batches, job.referenceImages)
+      ]
+    }));
+    const appended = await options.batches.append({
+      batchId: input.batchId,
+      offeringId: input.offeringId,
+      prompt: input.prompt || "各追加子任务使用独立 Prompt",
+      referenceImagePaths,
+      jobs,
+      count: input.count,
+      size: input.size,
+      quality: input.quality,
+      requestKey: input.requestKey
+    });
+    const appendedJobs = appended.batch.jobs.filter((job) => appended.appendedJobIds.includes(job.id));
+    const agentGenerated = appendedJobs.some((job) => job.offering?.adapterId === "agent-generation");
+    const message = agentGenerated
+      ? `已向“${appended.batch.title}”直接追加 ${appendedJobs.length} 个 Codex 生成任务。当前 Agent 必须完成返回的 appendedJobIds 并逐项回传结果。`
+      : `已向“${appended.batch.title}”直接追加 ${appendedJobs.length} 个任务；未创建新批次。`;
+    return {
+      structuredContent: {
+        batch: appended.batch,
+        appendedJobIds: appended.appendedJobIds,
+        activateBatchId: appended.batch.id
+      },
+      content: [{ type: "text" as const, text: message }]
+    };
+  });
+
   registerAppTool(server, "start_agent_image_job", {
     title: "Start Agent image job",
     description: "Marks one Codex 生成 job as running and returns its exact prompt and local reference paths. Use only when the batch offering adapterId is agent-generation. The Agent may use subagents, native batching, or any other available generation method; no specific concurrency mechanism is required.",
@@ -293,7 +378,6 @@ export function createLocalEsseServer(options: {
       jobIds: z.array(z.string()).min(1).max(50).optional().describe("Deprecated alias for imageIds; retained for older widgets."),
       instructions: z.string().min(1).max(5000),
       offeringId: z.string().optional(),
-      outputDirectory: z.string().optional(),
       requestKey: z.string().max(200).optional()
     },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
@@ -339,11 +423,16 @@ export function createLocalEsseServer(options: {
     return batchResult(batch, `已将 ${input.sourceBatchIds.length} 个批次合并到“${batch.title}”${sourceAction}。`, true);
   });
 
-  registerUiTools(server, options, updateChecker);
+  registerUiTools(server, options, updateChecker, originalImages);
   return server;
 }
 
-function registerUiTools(server: McpServer, options: Parameters<typeof createLocalEsseServer>[0], updateChecker: UpdateCheckerLike): void {
+function registerUiTools(
+  server: McpServer,
+  options: Parameters<typeof createLocalEsseServer>[0],
+  updateChecker: UpdateCheckerLike,
+  originalImages: OriginalImageRegistry
+): void {
   const appOnly = { ui: { visibility: ["app"] as Array<"app"> } };
 
   registerAppTool(server, "ui_get_local_state", {
@@ -501,6 +590,23 @@ function registerUiTools(server: McpServer, options: Parameters<typeof createLoc
     return { structuredContent: { batchId, jobId, sourceIndex, available: true }, content: [{ type: "text", text: "Local image preview ready." }], _meta: { dataUrl } };
   });
 
+  registerAppTool(server, "ui_get_original_image_resource", {
+    title: "Get original image resource",
+    description: "Widget-only short-lived MCP resource for loading the exact original image bytes without transcoding.",
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), sourceIndex: z.number().int().min(0).max(19).optional() },
+    annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId, jobId, sourceIndex }) => {
+    const batch = options.batches.get(batchId);
+    const filePath = previewFilePath(batch, jobId, sourceIndex);
+    const resourceUri = await originalImages.register(filePath);
+    return {
+      structuredContent: { batchId, jobId, sourceIndex, available: true },
+      content: [{ type: "text", text: "Original image resource ready." }],
+      _meta: { resourceUri }
+    };
+  });
+
   registerAppTool(server, "ui_get_image_metadata", {
     title: "Get local image metadata",
     description: "Widget-only dimensions and file size from the original local image file.",
@@ -618,13 +724,19 @@ async function uiState(options: Parameters<typeof createLocalEsseServer>[0], tab
   };
 }
 
-function widgetToolMeta(invoking: string, invoked: string) {
+function widgetToolMeta(resourceUri: string, invoking: string, invoked: string) {
   return {
-    ui: { resourceUri: WIDGET_URI, visibility: ["model", "app"] as Array<"model" | "app"> },
-    "openai/outputTemplate": WIDGET_URI,
+    ui: { resourceUri, visibility: ["model", "app"] as Array<"model" | "app"> },
+    "openai/outputTemplate": resourceUri,
     "openai/toolInvocation/invoking": invoking,
     "openai/toolInvocation/invoked": invoked
   };
+}
+
+function resourceVariable(value: string | string[] | undefined): string {
+  const resolved = Array.isArray(value) ? value[0] : value;
+  if (!resolved) throw new Error("Original image resource token is missing.");
+  return resolved;
 }
 
 function headlessToolMeta() {

@@ -72,6 +72,7 @@ export interface JobRecord {
   generationInputPaths?: string[];
   backups?: JobBackup[];
   offering?: OfferingSnapshot;
+  generationOptions?: GenerationOptions;
   prompt: string;
   status: JobStatus;
   progress: number;
@@ -125,10 +126,16 @@ export interface OfferingSnapshot {
   price: PriceConfig;
 }
 
+export interface GenerationOptions {
+  size?: string;
+  quality?: string;
+}
+
 export interface BatchRecord {
   id: string;
   parentBatchId?: string;
   requestKey?: string;
+  appendKeys?: Record<string, string[]>;
   modificationKeys?: Record<string, string[]>;
   mergeKeys?: Record<string, string[]>;
   title: string;
@@ -136,6 +143,7 @@ export interface BatchRecord {
   inputDirectory?: string;
   outputDirectory: string;
   offering: OfferingSnapshot;
+  generationOptions?: GenerationOptions;
   jobs: JobRecord[];
   createdAt: string;
   updatedAt: string;

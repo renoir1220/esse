@@ -1,4 +1,5 @@
 import type { ToolResult } from "./types";
+import type { ResourceReadResult } from "./original-image-resource";
 import { compactToolArgs } from "./tool-args";
 import { requestDisplayModeWithRetry, type EsseDisplayMode } from "./display-mode";
 
@@ -34,6 +35,12 @@ class HostBridge {
     if (window.openai?.callTool) return window.openai.callTool(name, cleanArgs);
     await this.ensureInitialized();
     return this.request("tools/call", { name, arguments: cleanArgs }) as Promise<ToolResult>;
+  }
+
+  async readResource(uri: string): Promise<ResourceReadResult> {
+    if (window.__ESSE_PREVIEW__) throw new Error("本地静态预览不包含原图资源。");
+    await this.ensureInitialized();
+    return this.request("resources/read", { uri }) as Promise<ResourceReadResult>;
   }
 
   persistState(state: Record<string, unknown>): void {
@@ -175,6 +182,9 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
     const sourceIndex = typeof args.sourceIndex === "number" ? args.sourceIndex : undefined;
     const dataUrl = sourceIndex === undefined ? backup?.previewUrl || job?.previewUrl : job?.referencePreviewUrls?.[sourceIndex] || (sourceIndex === 0 ? job?.previewUrl : undefined);
     return { structuredContent: { available: Boolean(dataUrl), sourceIndex }, _meta: { dataUrl } };
+  }
+  if (name === "ui_get_original_image_resource") {
+    return { structuredContent: { available: false } };
   }
   if (name === "ui_get_image_previews") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);
