@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
-import { ArrowUpRight, ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, Copy, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
+import { ArrowsOutSimple, CaretDown, CaretLeft, CaretRight, Check, Copy, DotsThree, DownloadSimple, FolderSimple, ImageSquare, Info, Lightning, LockSimple, Plus, SlidersHorizontal, SquaresFour, Trash, X } from "@phosphor-icons/react";
 import { bridge } from "./bridge";
 import { shouldSubmitComposerKey } from "./composer-keyboard";
 import { contextMenuPoint } from "./context-menu";
@@ -66,7 +66,6 @@ function App() {
   const [displayMode, setDisplayMode] = useState(window.openai?.displayMode || "inline");
   const [notice, setNotice] = useState<string>();
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus>();
-  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string>();
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [batchSwitcherOpen, setBatchSwitcherOpen] = useState(false);
   const [batchMenuOpen, setBatchMenuOpen] = useState(false);
@@ -321,17 +320,19 @@ function App() {
           <button className={tab === "batches" ? "is-active" : ""} onClick={() => switchTab("batches")}><ImageSquare size={15} /><span>任务</span></button>
           <button onClick={() => setLibraryOpen(true)} disabled={!activeBatch}><SquaresFour size={15} /><span>浏览</span></button>
           <button className={tab === "settings" ? "is-active" : ""} onClick={() => switchTab("settings")}><SlidersHorizontal size={15} /><span>设置</span></button>
+          {updateStatus?.updateAvailable && updateStatus.releaseUrl && <a
+            className="header-update-link"
+            href={updateStatus.releaseUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            aria-label={updateStatus.latestVersion ? `Esse ${updateStatus.latestVersion} 已发布` : "Esse 有新版本"}
+            title={updateStatus.latestVersion ? `Esse ${updateStatus.latestVersion} 已发布` : "Esse 有新版本"}
+          >有新版本</a>}
           <button className="header-icon-action" onClick={() => void requestFullscreen()} aria-label={displayMode === "fullscreen" ? "收起预览" : "在侧边栏展开"} title="在侧边栏展开"><ArrowsOutSimple size={16} /></button>
         </div>
       </header>
 
       {notice && <div className="notice" role="status"><span>{notice}</span><button onClick={() => setNotice(undefined)} aria-label="关闭">×</button></div>}
-
-      {updateStatus?.updateAvailable && updateStatus.latestVersion !== dismissedUpdateVersion && updateStatus.releaseUrl && <div className="update-notice" role="status">
-        <div><strong>Esse {updateStatus.latestVersion} 已发布</strong><span>当前版本 {updateStatus.currentVersion}</span></div>
-        <a href={updateStatus.releaseUrl} target="_blank" rel="noopener noreferrer">查看更新<ArrowUpRight size={14} /></a>
-        <button type="button" onClick={() => setDismissedUpdateVersion(updateStatus.latestVersion)} aria-label="暂时关闭更新提示"><X size={14} /></button>
-      </div>}
 
       {tab === "settings" ? (
         <SettingsView state={state} applyResult={applyResult} onNotice={setNotice} />
