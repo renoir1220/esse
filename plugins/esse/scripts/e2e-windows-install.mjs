@@ -32,6 +32,8 @@ try {
   await mkdir(packageRoot, { recursive: true });
   await run("tar.exe", ["-xf", archivePath, "-C", packageRoot], repositoryRoot);
   const installer = path.join(packageRoot, "install.ps1");
+  const installerBytes = await readFile(installer);
+  assert(installerBytes.every((byte) => byte < 0x80), "install.ps1 must remain ASCII-compatible for Windows PowerShell 5 system code pages.");
   const fakeCodex = path.join(repositoryRoot, "plugins", "esse", "test", "fixtures", "fake-codex.ps1");
   const install = await runInstaller(installer, fakeCodex);
   const resultLine = install.stdout.split(/\r?\n/u).find((line) => line.startsWith("ESSE_INSTALL_RESULT="));

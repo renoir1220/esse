@@ -250,7 +250,7 @@ try {
 
   Write-Host "Esse $version installed and enabled." -ForegroundColor Green
   Write-Host "Restart the Codex/ChatGPT desktop app, start a new task, and say: Open Esse settings"
-  Write-Host "Choose Codex 生成, or configure an optional Provider in the Esse settings UI. Never paste a Provider API Key into chat."
+  Write-Host "Choose Codex generation, or configure an optional Provider in the Esse settings UI. Never paste a Provider API Key into chat."
   $result = [ordered]@{ status = "installed"; version = $version; marketplace = $marketplaceName; installRoot = $InstallRoot; restartRequired = $true }
   Write-Output "ESSE_INSTALL_RESULT=$(($result | ConvertTo-Json -Compress))"
 } catch {
