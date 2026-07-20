@@ -9,7 +9,6 @@ import {
 } from "../types.js";
 import type { SettingsStore } from "../storage/settings-store.js";
 import { OpenAiImagesAdapter } from "./openai-images.js";
-import { TuziJsonImagesAdapter } from "./tuzi-json-images.js";
 import { parseResponse, providerError, type FetchLike } from "./http.js";
 
 export interface ResolvedOffering {
@@ -55,7 +54,6 @@ export class ProviderRegistry {
     }
     const apiKey = await this.settings.getApiKey(profile.id);
     const options = { baseUrl: profile.baseUrl, apiKey, fetchImpl: this.fetchImpl };
-    if (profile.adapterId === "tuzi-json-images") return new TuziJsonImagesAdapter(options);
     if (profile.adapterId === "openai-images") return new OpenAiImagesAdapter(options);
     return assertNever(profile.adapterId);
   }
@@ -134,5 +132,5 @@ function assertNever(value: never): never {
 }
 
 export function isAdapterId(value: string): value is AdapterId {
-  return value === "tuzi-json-images" || value === "openai-images" || value === "agent-generation";
+  return value === "openai-images" || value === "agent-generation";
 }

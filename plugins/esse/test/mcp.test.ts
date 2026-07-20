@@ -89,10 +89,10 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const saved = await client.callTool({
       name: "ui_save_provider_profile",
       arguments: {
-        displayName: "兔子",
+        displayName: "AIBuff",
         tierName: "default",
-        baseUrl: "https://api.tu-zi.com",
-        adapterId: "tuzi-json-images",
+        baseUrl: "https://aibuff.cc",
+        adapterId: "openai-images",
         concurrency: 3,
         apiKey: secret,
         offerings: [{
@@ -109,7 +109,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     });
     assert(!JSON.stringify(saved).includes(secret));
     assert.equal((saved.structuredContent as { state?: { providers?: Array<{ hasApiKey?: boolean }> } }).state?.providers?.[0]?.hasApiKey, true);
-    const publicOffering = (saved.structuredContent as { state?: { offerings?: Array<{ adapterId?: string; supportsTextToImage?: boolean; supportsImageToImage?: boolean; sizes?: string[]; qualities?: string[] }> } }).state?.offerings?.find((entry) => entry.adapterId === "tuzi-json-images");
+    const publicOffering = (saved.structuredContent as { state?: { offerings?: Array<{ adapterId?: string; supportsTextToImage?: boolean; supportsImageToImage?: boolean; sizes?: string[]; qualities?: string[] }> } }).state?.offerings?.find((entry) => entry.adapterId === "openai-images");
     assert.equal(publicOffering?.supportsTextToImage, true);
     assert.equal(publicOffering?.supportsImageToImage, true);
     assert.deepEqual(publicOffering?.sizes, []);

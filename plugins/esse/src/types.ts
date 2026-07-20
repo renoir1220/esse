@@ -1,7 +1,7 @@
 export const CODEX_GENERATION_OFFERING_ID = "esse-codex-generation";
 export const CODEX_GENERATION_PROFILE_ID = "esse-codex";
 
-export type AdapterId = "tuzi-json-images" | "openai-images" | "agent-generation";
+export type AdapterId = "openai-images" | "agent-generation";
 export type PriceMode = "per_request" | "token" | "model_quota" | "unknown";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 export type JobCallStatus = "running" | "succeeded" | "failed" | "canceled";

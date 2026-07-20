@@ -26,10 +26,10 @@ test("provider keys stay out of settings JSON", async () => {
     const settingsPath = path.join(root, "settings.json");
     const store = new SettingsStore(settingsPath, secrets);
     const profile = await store.saveProvider({
-      displayName: "兔子",
+      displayName: "AIBuff",
       tierName: "default",
-      baseUrl: "https://api.tu-zi.com/",
-      adapterId: "tuzi-json-images",
+      baseUrl: "https://aibuff.cc/",
+      adapterId: "openai-images",
       concurrency: 3,
       apiKey: "secret-test-key",
       offerings: [offering]
@@ -38,7 +38,7 @@ test("provider keys stay out of settings JSON", async () => {
     assert.equal(await store.getApiKey(profile.id), "secret-test-key");
     const raw = await readFile(settingsPath, "utf8");
     assert(!raw.includes("secret-test-key"));
-    assert.equal(JSON.parse(raw).providers[0].baseUrl, "https://api.tu-zi.com");
+    assert.equal(JSON.parse(raw).providers[0].baseUrl, "https://aibuff.cc");
   } finally {
     await rm(root, { recursive: true, force: true });
   }

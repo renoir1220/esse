@@ -14,11 +14,11 @@ import { offeringPriceLabel } from "./pricing";
 import {
   blankOffering,
   createCustomProviderDraft,
-  createTuziProviderDraft,
-  offeringFromTuziModel,
-  TUZI_PROVIDER_PRESETS,
-  tuziProviderPresetForDraft,
-} from "./tuzi-catalog";
+  createAibuffProviderDraft,
+  offeringFromAibuffModel,
+  AIBUFF_PROVIDER_PRESETS,
+  aibuffProviderPresetForDraft,
+} from "./aibuff-catalog";
 import { imagesMentionedInRequest, selectableImages, selectionModelContext } from "./selection-context";
 import type { SelectableImage } from "./selection-context";
 import { batchIdAfterStateRefresh, batchIdAfterUpdate, batchPollDelay, hasNewBatchActivation, isStaleStateRefresh, mergeBatchWithoutReordering } from "./workbench-state";
@@ -356,14 +356,14 @@ function App() {
 }
 
 function SettingsView(props: { state: WorkbenchState; applyResult: (result: ToolResult) => void; onNotice: (message?: string) => void }) {
-  const [draft, setDraft] = useState<ProviderDraft>(() => props.state.providers[0] ? providerDraftFromProfile(props.state.providers[0]) : createTuziProviderDraft("tuzi-default"));
+  const [draft, setDraft] = useState<ProviderDraft>(() => props.state.providers[0] ? providerDraftFromProfile(props.state.providers[0]) : createAibuffProviderDraft("aibuff-default"));
   const [busy, setBusy] = useState<string>();
   const [models, setModels] = useState<string[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const editing = Boolean(draft.id);
-  const activeTuziPreset = tuziProviderPresetForDraft(draft);
-  const configuredTuziPresetIds = useMemo(() => new Set(props.state.providers.flatMap((profile) => {
-    const preset = tuziProviderPresetForDraft(providerDraftFromProfile(profile));
+  const activeAibuffPreset = aibuffProviderPresetForDraft(draft);
+  const configuredAibuffPresetIds = useMemo(() => new Set(props.state.providers.flatMap((profile) => {
+    const preset = aibuffProviderPresetForDraft(providerDraftFromProfile(profile));
     return preset ? [preset.id] : [];
   })), [props.state.providers]);
 
@@ -386,15 +386,15 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
   };
 
   const startProviderDraft = (choiceId: string) => {
-    const preset = TUZI_PROVIDER_PRESETS.find((entry) => entry.id === choiceId);
-    setDraft(preset ? createTuziProviderDraft(preset.id) : createCustomProviderDraft());
+    const preset = AIBUFF_PROVIDER_PRESETS.find((entry) => entry.id === choiceId);
+    setDraft(preset ? createAibuffProviderDraft(preset.id) : createCustomProviderDraft());
     setModels([]);
     setConfirmDelete(false);
   };
 
   const addOffering = (choiceId: string) => {
-    const presetModel = activeTuziPreset?.models.find((entry) => entry.catalogId === choiceId);
-    const offering = presetModel ? offeringFromTuziModel(presetModel) : blankOffering();
+    const presetModel = activeAibuffPreset?.models.find((entry) => entry.catalogId === choiceId);
+    const offering = presetModel ? offeringFromAibuffModel(presetModel) : blankOffering();
     setDraft((current) => ({ ...current, offerings: [...current.offerings, offering] }));
   };
 
@@ -428,7 +428,7 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
     setBusy("delete");
     try {
       props.applyResult(await bridge.callTool("ui_delete_provider_profile", { id: draft.id }));
-      setDraft(createTuziProviderDraft("tuzi-default"));
+      setDraft(createAibuffProviderDraft("aibuff-default"));
       props.onNotice("Provider 配置和对应的本地密钥已删除。");
     } catch (error) { props.onNotice(errorMessage(error)); }
     finally { setBusy(undefined); setConfirmDelete(false); }
@@ -466,11 +466,11 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
             ariaLabel="新建 Provider"
             title="选择 Provider"
             options={[
-              ...TUZI_PROVIDER_PRESETS.map((preset) => ({
+              ...AIBUFF_PROVIDER_PRESETS.map((preset) => ({
                 id: preset.id,
                 label: preset.label,
-                description: configuredTuziPresetIds.has(preset.id) ? "已配置，可从左侧列表编辑" : `${adapterDisplayName(preset.adapterId)} · ${preset.models.length} 个预制模型`,
-                disabled: configuredTuziPresetIds.has(preset.id),
+                description: configuredAibuffPresetIds.has(preset.id) ? "已配置，可从左侧列表编辑" : `${adapterDisplayName(preset.adapterId)} · ${preset.models.length} 个预制模型`,
+                disabled: configuredAibuffPresetIds.has(preset.id),
                 disabledLabel: "已配置",
               })),
               { id: "custom", label: "添加自定义", description: "手动填写接口、模型参数和价格", custom: true },
@@ -491,9 +491,9 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
 
       <div className="provider-editor">
         <div className="editor-heading"><h1>{draft.displayName || "Provider"} · {draft.tierName || "档位"}</h1></div>
-        {activeTuziPreset && <div className="preset-config-banner">
-          <span><strong>预制配置</strong> · {activeTuziPreset.label}</span>
-          <small>接口与模型已填好；目录价格为 2026-07-19 固定值，暂不自动同步。每个分组独立保存 API Key。</small>
+        {activeAibuffPreset && <div className="preset-config-banner">
+          <span><strong>预制配置</strong> · {activeAibuffPreset.label}</span>
+          <small>接口与模型已填好；价格记录于 2026-07-20，暂不自动同步。API Key 独立保存在本机。</small>
         </div>}
         <section className="settings-section">
           <div className="settings-section-heading"><strong>连接</strong></div>
@@ -501,24 +501,24 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
             <Field label="服务商名称"><input value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
             <Field label="档位名称"><input value={draft.tierName} onChange={(event) => setDraft({ ...draft, tierName: event.target.value })} /></Field>
             <Field label="API 地址" wide><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} /></Field>
-            <Field label="接口格式" labelAccessory={<InfoTip label="查看兔子分组与接口格式的对应关系"><strong>兔子分组对应关系</strong>{TUZI_PROVIDER_PRESETS.map((preset) => <span key={preset.id}><b>{preset.tierName}</b> → {adapterDisplayName(preset.adapterId)}</span>)}<span>其他分组请选择“添加自定义”，按接口文档填写。</span></InfoTip>}><SettingsSelect ariaLabel="接口格式" value={draft.adapterId} options={[{ value: "tuzi-json-images", label: "兔子 JSON Images" }, { value: "openai-images", label: "OpenAI Images" }]} onChange={(value) => setDraft({ ...draft, adapterId: value as ProviderDraft["adapterId"] })} /></Field>
+            <Field label="接口格式" labelAccessory={<InfoTip label="查看 AIBuff 接口格式"><strong>AIBuff 接口格式</strong>{AIBUFF_PROVIDER_PRESETS.map((preset) => <span key={preset.id}><b>{preset.tierName}</b> → {adapterDisplayName(preset.adapterId)}</span>)}<span>其他分组请选择“添加自定义”，按接口文档填写。</span></InfoTip>}><SettingsSelect ariaLabel="接口格式" value={draft.adapterId} options={[{ value: "openai-images", label: "OpenAI Images" }]} onChange={(value) => setDraft({ ...draft, adapterId: value as ProviderDraft["adapterId"] })} /></Field>
             <Field label="并发数"><input type="number" min="1" max="12" value={draft.concurrency} onChange={(event) => setDraft({ ...draft, concurrency: Number(event.target.value) })} /></Field>
-            <Field label="API Key" wide hint={draft.hasApiKey ? "留空保留现有密钥" : activeTuziPreset ? `仅用于 ${activeTuziPreset.label} 分组，安全存储在本机` : "安全存储在本机"}>
+            <Field label="API Key" wide hint={draft.hasApiKey ? "留空保留现有密钥" : activeAibuffPreset ? `仅用于 ${activeAibuffPreset.label} 分组，安全存储在本机` : "安全存储在本机"}>
               <div className="secret-input"><input type="password" autoComplete="off" placeholder={draft.hasApiKey ? "•••••••• 已安全保存" : "粘贴 API Key"} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} /><button onClick={() => void test()} disabled={Boolean(busy) || !draft.baseUrl || (!draft.hasApiKey && !draft.apiKey.trim())}>{busy === "test" ? "测试中…" : "测试连接"}</button></div>
             </Field>
           </div>
         </section>
 
-        {models.length > 0 && !activeTuziPreset && <div className="models-found"><strong>已发现模型</strong><div>{models.slice(0, 20).map((model) => <button key={model} onClick={() => updateOffering(0, { providerModelId: model, canonicalModelId: model, displayName: model })}>{model}</button>)}</div></div>}
+        {models.length > 0 && !activeAibuffPreset && <div className="models-found"><strong>已发现模型</strong><div>{models.slice(0, 20).map((model) => <button key={model} onClick={() => updateOffering(0, { providerModelId: model, canonicalModelId: model, displayName: model })}>{model}</button>)}</div></div>}
 
         <section className="settings-section models-section">
           <div className="offerings-heading">
-            <span className="offerings-title"><strong>模型</strong>{activeTuziPreset && <small>价格仅供参考，请以 Tuzi 官网为准。</small>}</span>
+            <span className="offerings-title"><strong>模型</strong>{activeAibuffPreset && <small>价格仅供参考，请以 AIBuff 控制台为准。</small>}</span>
             <AddChoiceMenu
               ariaLabel="添加模型"
-              title={activeTuziPreset ? `${activeTuziPreset.label} 支持的模型` : "添加模型"}
+              title={activeAibuffPreset ? `${activeAibuffPreset.label} 支持的模型` : "添加模型"}
               options={[
-                ...(activeTuziPreset?.models.map((model) => ({
+                ...(activeAibuffPreset?.models.map((model) => ({
                   id: model.catalogId,
                   label: model.displayName,
                   description: `${model.providerModelId} · ${offeringPriceLabel(model.price)}`,
@@ -1336,7 +1336,6 @@ function providerDraftFromProfile(profile: ProviderProfile): ProviderDraft {
 }
 
 function adapterDisplayName(adapterId: ProviderDraft["adapterId"]): string {
-  if (adapterId === "tuzi-json-images") return "兔子 JSON Images";
   if (adapterId === "openai-images") return "OpenAI Images";
   return "Codex 生成";
 }

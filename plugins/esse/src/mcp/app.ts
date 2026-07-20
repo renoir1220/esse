@@ -440,7 +440,7 @@ function registerUiTools(
       displayName: z.string().min(1).max(100),
       tierName: z.string().min(1).max(100),
       baseUrl: z.string().url(),
-      adapterId: z.enum(["tuzi-json-images", "openai-images"]),
+      adapterId: z.enum(["openai-images"]),
       concurrency: z.number().int().min(1).max(12),
       apiKey: z.string().max(1000).optional(),
       offerings: z.array(offeringInputSchema).min(1).max(50)

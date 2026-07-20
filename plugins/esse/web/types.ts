@@ -1,4 +1,4 @@
-export type AdapterId = "tuzi-json-images" | "openai-images" | "agent-generation";
+export type AdapterId = "openai-images" | "agent-generation";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 export type JobCallStatus = "running" | "succeeded" | "failed" | "canceled";
 

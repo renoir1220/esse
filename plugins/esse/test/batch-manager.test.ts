@@ -21,10 +21,10 @@ test("persistent local batch respects profile concurrency and writes unique outp
     const settings = new SettingsStore(paths.settingsFile, new MemorySecretStore());
     await settings.saveProvider({
       id: "profile-default",
-      displayName: "兔子",
+      displayName: "AIBuff",
       tierName: "default",
       baseUrl: "https://provider.invalid",
-      adapterId: "tuzi-json-images",
+      adapterId: "openai-images",
       concurrency: 2,
       apiKey: "test-key",
       offerings: [{
@@ -85,9 +85,14 @@ test("each child task keeps its own prompt and zero-to-many reference images", a
       await writeFile(filePath, Buffer.from(onePixelPng, "base64"));
       return filePath;
     }));
-    const requests: Array<{ prompt?: string; image?: unknown[] }> = [];
+    const requests: Array<{ prompt?: string; imageCount: number }> = [];
     const { manager } = await createManager(root, async (_input, init) => {
-      requests.push(JSON.parse(String(init?.body || "{}")) as { prompt?: string; image?: unknown[] });
+      if (init?.body instanceof FormData) {
+        requests.push({ prompt: String(init.body.get("prompt") || ""), imageCount: init.body.getAll("image").length });
+      } else {
+        const body = JSON.parse(String(init?.body || "{}")) as { prompt?: string };
+        requests.push({ prompt: body.prompt, imageCount: 0 });
+      }
       return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
     });
     const created = await manager.create({
@@ -103,8 +108,8 @@ test("each child task keeps its own prompt and zero-to-many reference images", a
     assert.equal(completed.jobs[0]?.inputPaths?.length || 0, 0);
     assert.deepEqual(completed.jobs[1]?.inputPaths, referencePaths);
     assert.deepEqual(completed.jobs[1]?.referenceImagePaths, referencePaths);
-    assert.equal(requests.find((request) => request.prompt === "text-only child")?.image, undefined);
-    assert.equal(requests.find((request) => request.prompt === "four-reference child")?.image?.length, 4);
+    assert.equal(requests.find((request) => request.prompt === "text-only child")?.imageCount, 0);
+    assert.equal(requests.find((request) => request.prompt === "four-reference child")?.imageCount, 4);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -174,7 +179,10 @@ test("in-place modification keeps the batch, refreshes the main image, and creat
   try {
     const requestedModels: string[] = [];
     const { manager } = await createManager(root, async (_input, init) => {
-      requestedModels.push(String((JSON.parse(String(init?.body || "{}")) as { model?: string }).model || ""));
+      const model = init?.body instanceof FormData
+        ? init.body.get("model")
+        : (JSON.parse(String(init?.body || "{}")) as { model?: string }).model;
+      requestedModels.push(String(model || ""));
       return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
     });
     const created = await manager.create({ offeringId: "offer-default", prompt: "original", count: 1, requestKey: "edit-source" });
@@ -405,10 +413,10 @@ async function createManager(root: string, fetchImpl: typeof fetch) {
   const settings = new SettingsStore(paths.settingsFile, new MemorySecretStore());
   await settings.saveProvider({
     id: "profile-default",
-    displayName: "兔子",
+    displayName: "AIBuff",
     tierName: "default",
     baseUrl: "https://provider.invalid",
-    adapterId: "tuzi-json-images",
+    adapterId: "openai-images",
     concurrency: 2,
     apiKey: "test-key",
     offerings: [{
