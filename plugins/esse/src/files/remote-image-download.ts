@@ -9,6 +9,7 @@ const DOWNLOAD_TIMEOUT_MS = 90_000;
 const DOH_TIMEOUT_MS = 8_000;
 const TRUSTED_DOH_ENDPOINTS = [
   "https://dns.alidns.com/resolve",
+  "https://doh.pub/dns-query",
   "https://cloudflare-dns.com/dns-query",
   "https://dns.google/resolve"
 ] as const;

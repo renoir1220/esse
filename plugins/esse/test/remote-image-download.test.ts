@@ -134,12 +134,41 @@ test("trusted DoH answers replace OS Fake-IP results", async () => {
   assert.ok(queries.includes("dns.alidns.com:28"));
 });
 
-test("trusted DoH resolution falls back when AliDNS is unavailable", async () => {
+test("trusted DoH resolution falls back to DNSPod when AliDNS is unavailable", async () => {
   const queries: string[] = [];
   const addresses = await resolveHostnameWithTrustedDoh("cdn.provider.example", async (input) => {
     const url = new URL(String(input));
     queries.push(`${url.hostname}:${url.searchParams.get("type")}`);
     if (url.hostname === "dns.alidns.com") throw new Error("resolver unavailable");
+    assert.equal(url.hostname, "doh.pub");
+    const type = Number(url.searchParams.get("type"));
+    return Response.json({
+      Status: 0,
+      Answer: type === 1
+        ? [{ name: "cdn.provider.example.", type: 1, data: "119.29.29.29" }]
+        : [{ name: "cdn.provider.example.", type: 28, data: "2402:4e00::" }]
+    });
+  });
+  assert.deepEqual(addresses, [
+    { address: "119.29.29.29", family: 4 },
+    { address: "2402:4e00::", family: 6 }
+  ]);
+  assert.deepEqual(queries.sort(), [
+    "dns.alidns.com:1",
+    "dns.alidns.com:28",
+    "doh.pub:1",
+    "doh.pub:28"
+  ]);
+});
+
+test("trusted DoH resolution reaches overseas fallback after domestic resolvers fail", async () => {
+  const queries: string[] = [];
+  const addresses = await resolveHostnameWithTrustedDoh("cdn.provider.example", async (input) => {
+    const url = new URL(String(input));
+    queries.push(`${url.hostname}:${url.searchParams.get("type")}`);
+    if (url.hostname === "dns.alidns.com" || url.hostname === "doh.pub") {
+      throw new Error("domestic resolver unavailable");
+    }
     assert.equal(url.hostname, "cloudflare-dns.com");
     const type = Number(url.searchParams.get("type"));
     return Response.json({
@@ -157,7 +186,9 @@ test("trusted DoH resolution falls back when AliDNS is unavailable", async () =>
     "cloudflare-dns.com:1",
     "cloudflare-dns.com:28",
     "dns.alidns.com:1",
-    "dns.alidns.com:28"
+    "dns.alidns.com:28",
+    "doh.pub:1",
+    "doh.pub:28"
   ]);
 });
 
