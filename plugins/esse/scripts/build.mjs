@@ -45,6 +45,19 @@ await build({
   banner: { js: "#!/usr/bin/env node" }
 });
 
+await build({
+  entryPoints: [path.join(root, "src", "core-main.ts")],
+  bundle: true,
+  format: "cjs",
+  platform: "node",
+  target: ["node20"],
+  outfile: path.join(mcpDir, "core.cjs"),
+  minify: false,
+  sourcemap: false,
+  define: { __ESSE_VERSION__: JSON.stringify(manifest.version) },
+  banner: { js: "#!/usr/bin/env node" }
+});
+
 const previewTemplate = await readFile(path.join(root, "web", "preview.template.html"), "utf8");
 const previewHtml = previewTemplate.replace("/*__WIDGET_CSS__*/", () => css).replace("/*__WIDGET_JS__*/", () => javascript);
 if (previewHtml.includes("/*__WIDGET_CSS__*/") || previewHtml.includes("/*__WIDGET_JS__*/")) {
@@ -56,4 +69,4 @@ await writeFile(
   "utf8"
 );
 
-console.log(`Built Esse ${manifest.version}: mcp/server.cjs, mcp/widget.html, and web/preview.html`);
+console.log(`Built Esse ${manifest.version}: mcp/server.cjs, mcp/core.cjs, mcp/widget.html, and web/preview.html`);

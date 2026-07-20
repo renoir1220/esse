@@ -195,9 +195,10 @@ try {
 
   $packageMarketplace = Join-Path $packageRoot ".agents\plugins\marketplace.json"
   $pluginSource = Join-Path $packageRoot "plugins\esse"
+  $packageCoreBinary = Join-Path $pluginSource "bin\esse-core.exe"
   $manifestPath = Join-Path $pluginSource ".codex-plugin\plugin.json"
   $widgetPath = Join-Path $pluginSource "mcp\widget.html"
-  foreach ($required in @($packageMarketplace, $packageBinary, $manifestPath, $widgetPath)) {
+  foreach ($required in @($packageMarketplace, $packageBinary, $packageCoreBinary, $manifestPath, $widgetPath)) {
     if (-not (Test-Path -LiteralPath $required -PathType Leaf)) { throw "Release package is missing required file: $required" }
   }
 
@@ -206,6 +207,7 @@ try {
   if ($version -notmatch "^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$") { throw "Release manifest has an invalid version: $version" }
 
   Invoke-EsseSelfTest -Binary $packageBinary -PluginRoot $pluginSource
+  Invoke-EsseSelfTest -Binary $packageCoreBinary -PluginRoot $pluginSource
 
   New-Item -ItemType Directory -Path (Join-Path $InstallRoot "versions") -Force | Out-Null
   $versionRoot = Join-Path $InstallRoot "versions\$version"
@@ -222,6 +224,7 @@ try {
     }
   }
   Invoke-EsseSelfTest -Binary (Join-Path $targetPlugin "bin\esse.exe") -PluginRoot $targetPlugin
+  Invoke-EsseSelfTest -Binary (Join-Path $targetPlugin "bin\esse-core.exe") -PluginRoot $targetPlugin
 
   $catalogPath = Join-Path $InstallRoot ".agents\plugins\marketplace.json"
   New-Item -ItemType Directory -Path (Split-Path -Parent $catalogPath) -Force | Out-Null

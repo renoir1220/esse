@@ -34,7 +34,8 @@ assert(releaseWorkflow.includes("--prerelease"), "prerelease tags must not repla
 await Promise.all([
   access(path.join(repositoryRoot, "AGENTS.md")),
   access(path.join(repositoryRoot, "LICENSE")),
-  access(path.join(pluginRoot, "mcp", "widget.html"))
+  access(path.join(pluginRoot, "mcp", "widget.html")),
+  access(path.join(pluginRoot, "mcp", "core.cjs"))
 ]);
 
 console.log(JSON.stringify({ status: "ok", version: manifest.version, tag: expectedTag || null, marketplace: marketplace.name }));

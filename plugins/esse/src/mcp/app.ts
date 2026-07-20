@@ -49,6 +49,10 @@ const existingImageReferenceSchema = z.object({
   image: z.string().min(1).describe("Exact image name such as 图1 or 图1-1, or its returned job/backup ID.")
 });
 
+const stateOutputSchema = { state: z.record(z.unknown()) };
+const batchOutputSchema = { batch: z.record(z.unknown()), activateBatchId: z.string().optional() };
+const agentJobOutputSchema = { batch: z.record(z.unknown()), job: z.record(z.unknown()) };
+
 export function createLocalEsseServer(options: {
   version: string;
   widgetHtml: string;
@@ -109,6 +113,7 @@ export function createLocalEsseServer(options: {
     title: "Open esse",
     description: "Opens esse for provider setup, recent batches, progress, previews, and selections.",
     inputSchema: { tab: z.enum(["batches", "settings"]).default("batches"), batchId: z.string().optional() },
+    outputSchema: stateOutputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: widgetToolMeta(widgetUri, "正在打开本地图片工作台…", "本地图片工作台已打开")
   }, async ({ tab, batchId }) => appResult(await uiState(options, tab, batchId)));
@@ -117,6 +122,7 @@ export function createLocalEsseServer(options: {
     title: "List local image offerings",
     description: "Lists configured offerings only when the user explicitly asks to inspect or override the default model. Do not use this list to choose a model on the user's behalf.",
     inputSchema: {},
+    outputSchema: { offerings: z.array(z.record(z.unknown())) },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: { ui: { visibility: ["model", "app"] } }
   }, async () => {
@@ -135,6 +141,14 @@ export function createLocalEsseServer(options: {
       recursive: z.boolean().default(false),
       page: z.number().int().min(1).default(1),
       pageSize: z.number().int().min(1).max(12).default(8)
+    },
+    outputSchema: {
+      folderPath: z.string(),
+      files: z.array(z.record(z.unknown())),
+      page: z.number().int(),
+      pageSize: z.number().int(),
+      total: z.number().int(),
+      hasMore: z.boolean()
     },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: { ui: { visibility: ["model", "app"] } }
@@ -190,8 +204,9 @@ export function createLocalEsseServer(options: {
       count: z.number().int().min(1).max(50).optional(),
       size: z.string().optional(),
       quality: z.string().optional(),
-      requestKey: z.string().max(200).optional()
+      requestKey: z.string().min(1).max(200)
     },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async (input) => {
@@ -254,8 +269,9 @@ export function createLocalEsseServer(options: {
       count: z.number().int().min(1).max(50).optional(),
       size: z.string().optional(),
       quality: z.string().optional(),
-      requestKey: z.string().max(200).optional()
+      requestKey: z.string().min(1).max(200)
     },
+    outputSchema: { ...batchOutputSchema, appendedJobIds: z.array(z.string()) },
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async (input) => {
@@ -301,6 +317,7 @@ export function createLocalEsseServer(options: {
     title: "Start Agent image job",
     description: "Marks one Codex 生成 job as running and returns its exact prompt and local reference paths. Use only when the batch offering adapterId is agent-generation. The Agent may use subagents, native batching, or any other available generation method; no specific concurrency mechanism is required.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    outputSchema: agentJobOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async ({ batchId, jobId }) => {
@@ -313,6 +330,7 @@ export function createLocalEsseServer(options: {
     title: "Complete Agent image job",
     description: "Copies one image produced by the current Agent into the matching Codex 生成 job. Call exactly once after successful generation and pass the real absolute local image path.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), imagePath: z.string().min(1) },
+    outputSchema: agentJobOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async ({ batchId, jobId, imagePath }) => {
@@ -325,6 +343,7 @@ export function createLocalEsseServer(options: {
     title: "Fail Agent image job",
     description: "Marks one Codex 生成 job failed. Use when the current Agent lacks image-generation capability or generation failed; state the actual reason instead of leaving the job pending.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), error: z.string().min(1).max(2000) },
+    outputSchema: agentJobOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async ({ batchId, jobId, error }) => {
@@ -337,6 +356,7 @@ export function createLocalEsseServer(options: {
     title: "List recent local image batches",
     description: "Lists recent Esse batch IDs, titles, image names, IDs, and statuses. Use this when the user refers to an earlier result such as 图1 but its batchId is not already known.",
     inputSchema: { limit: z.number().int().min(1).max(50).default(10) },
+    outputSchema: { batches: z.array(z.record(z.unknown())) },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async ({ limit }) => {
@@ -357,6 +377,7 @@ export function createLocalEsseServer(options: {
     title: "Get local image batch",
     description: "Gets current persistent batch status and local output paths.",
     inputSchema: { batchId: z.string().min(1) },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: { ui: { visibility: ["model", "app"] } }
   }, async ({ batchId }) => batchResult(options.batches.get(batchId)));
@@ -365,6 +386,7 @@ export function createLocalEsseServer(options: {
     title: "Render local image batch",
     description: "Returns an existing local image batch without opening a duplicate inline workbench. An already docked esse sidebar refreshes itself.",
     inputSchema: { batchId: z.string().min(1) },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async ({ batchId }) => batchResult(options.batches.get(batchId)));
@@ -378,8 +400,9 @@ export function createLocalEsseServer(options: {
       jobIds: z.array(z.string()).min(1).max(50).optional().describe("Deprecated alias for imageIds; retained for older widgets."),
       instructions: z.string().min(1).max(5000),
       offeringId: z.string().optional(),
-      requestKey: z.string().max(200).optional()
+      requestKey: z.string().min(1).max(200)
     },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: headlessToolMeta()
   }, async (input) => {
@@ -399,6 +422,7 @@ export function createLocalEsseServer(options: {
       batchId: z.string().min(1),
       imageIds: z.array(z.string()).min(1).max(50)
     },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
     _meta: headlessToolMeta()
   }, async ({ batchId, imageIds }) => {
@@ -413,8 +437,9 @@ export function createLocalEsseServer(options: {
       targetBatchId: z.string().min(1),
       sourceBatchIds: z.array(z.string().min(1)).min(1).max(50),
       deleteSourceBatches: z.boolean().default(false),
-      requestKey: z.string().max(200).optional()
+      requestKey: z.string().min(1).max(200)
     },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
     _meta: headlessToolMeta()
   }, async (input) => {
@@ -439,6 +464,7 @@ function registerUiTools(
     title: "Get local workbench state",
     description: "Widget-only local state refresh.",
     inputSchema: { batchId: z.string().optional() },
+    outputSchema: stateOutputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId }) => appResult(await uiState(options, "batches", batchId)));
@@ -447,6 +473,7 @@ function registerUiTools(
     title: "Get one local batch state",
     description: "Widget-only lightweight refresh for the currently selected batch.",
     inputSchema: { batchId: z.string().min(1) },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId }) => batchResult(options.batches.get(batchId)));
@@ -455,6 +482,7 @@ function registerUiTools(
     title: "Check for Esse updates",
     description: "Widget-only low-frequency check of the latest trusted Esse GitHub Release metadata.",
     inputSchema: {},
+    outputSchema: { update: z.record(z.unknown()) },
     annotations: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
     _meta: appOnly
   }, async () => ({
@@ -466,6 +494,7 @@ function registerUiTools(
     title: "Open batch output folder",
     description: "Widget-only request to open the current batch output directory in Finder or File Explorer.",
     inputSchema: { batchId: z.string().min(1) },
+    outputSchema: { opened: z.boolean(), path: z.string() },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId }) => {
@@ -480,6 +509,13 @@ function registerUiTools(
     inputSchema: {
       page: z.number().int().min(1).default(1),
       pageSize: z.number().int().min(4).max(20).default(8)
+    },
+    outputSchema: {
+      batches: z.array(z.record(z.unknown())),
+      page: z.number().int(),
+      pageSize: z.number().int(),
+      total: z.number().int(),
+      totalPages: z.number().int()
     },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
@@ -504,6 +540,7 @@ function registerUiTools(
       apiKey: z.string().max(1000).optional(),
       offerings: z.array(offeringInputSchema).min(1).max(50)
     },
+    outputSchema: stateOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async (input) => {
@@ -516,6 +553,7 @@ function registerUiTools(
     title: "Delete local provider profile",
     description: "Widget-only provider deletion from settings and secure storage.",
     inputSchema: { id: z.string().min(1) },
+    outputSchema: stateOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
     _meta: appOnly
   }, async ({ id }) => {
@@ -527,6 +565,7 @@ function registerUiTools(
     title: "Test local provider profile",
     description: "Widget-only provider connection test and model discovery.",
     inputSchema: { baseUrl: z.string().url(), profileId: z.string().optional(), apiKey: z.string().max(1000).optional() },
+    outputSchema: { ok: z.boolean(), modelCount: z.number().int() },
     annotations: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
     _meta: appOnly
   }, async (input) => {
@@ -538,6 +577,7 @@ function registerUiTools(
     title: "Set default local offering",
     description: "Widget-only default offering selection.",
     inputSchema: { offeringId: z.string().min(1) },
+    outputSchema: stateOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ offeringId }) => {
@@ -555,6 +595,7 @@ function registerUiTools(
     title: "Get local image previews",
     description: "Widget-only batch image preview bytes. Image data is not exposed to the model.",
     inputSchema: { batchId: z.string().min(1), items: z.array(previewItemSchema).min(1).max(16) },
+    outputSchema: { batchId: z.string(), requested: z.number().int(), available: z.number().int() },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, items }) => {
@@ -580,6 +621,7 @@ function registerUiTools(
     title: "Get local image preview",
     description: "Widget-only image preview bytes. Image data is not exposed to the model.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), full: z.boolean().default(false), sourceIndex: z.number().int().min(0).max(19).optional() },
+    outputSchema: { batchId: z.string(), jobId: z.string(), sourceIndex: z.number().int().optional(), available: z.boolean() },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobId, full, sourceIndex }) => {
@@ -594,6 +636,7 @@ function registerUiTools(
     title: "Get original image resource",
     description: "Widget-only short-lived MCP resource for loading the exact original image bytes without transcoding.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1), sourceIndex: z.number().int().min(0).max(19).optional() },
+    outputSchema: { batchId: z.string(), jobId: z.string(), sourceIndex: z.number().int().optional(), available: z.boolean() },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobId, sourceIndex }) => {
@@ -611,6 +654,7 @@ function registerUiTools(
     title: "Get local image metadata",
     description: "Widget-only dimensions and file size from the original local image file.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    outputSchema: { batchId: z.string(), jobId: z.string(), available: z.boolean(), width: z.number().int().optional(), height: z.number().int().optional(), sizeBytes: z.number().int().optional() },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobId }) => {
@@ -631,6 +675,7 @@ function registerUiTools(
     title: "Save local image as",
     description: "Widget-only native Save As dialog for a generated image or preserved version.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    outputSchema: { saved: z.boolean(), canceled: z.boolean(), path: z.string().optional() },
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobId }) => {
@@ -652,6 +697,7 @@ function registerUiTools(
     title: "Copy local image to clipboard",
     description: "Widget-only native clipboard copy for an exact generated image, failed-job source, or preserved version.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    outputSchema: { batchId: z.string(), jobId: z.string(), copied: z.boolean() },
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobId }) => {
@@ -668,6 +714,7 @@ function registerUiTools(
     title: "Cancel local queued jobs",
     description: "Widget-only cancellation for jobs not yet sent to a provider.",
     inputSchema: { batchId: z.string().min(1), jobIds: z.array(z.string()).max(50).optional() },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobIds }) => batchResult(await options.batches.cancelQueued(batchId, jobIds)));
@@ -676,6 +723,7 @@ function registerUiTools(
     title: "Retry local image jobs",
     description: "Widget-only retry. Clicking the retry control is the user's explicit retry action, including when the previous charge state is unknown.",
     inputSchema: { batchId: z.string().min(1), jobIds: z.array(z.string()).min(1).max(50), allowUnknownCharge: z.boolean().default(false) },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: true, destructiveHint: false },
     _meta: appOnly
   }, async ({ batchId, jobIds, allowUnknownCharge }) => batchResult(await options.batches.retry(batchId, jobIds, allowUnknownCharge)));
@@ -684,6 +732,7 @@ function registerUiTools(
     title: "Delete local Esse images",
     description: "Widget-only deletion of exact current-image or backup IDs from one local batch. Active jobs cannot be deleted.",
     inputSchema: { batchId: z.string().min(1), imageIds: z.array(z.string()).min(1).max(50) },
+    outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
     _meta: appOnly
   }, async ({ batchId, imageIds }) => batchResult(await options.batches.deleteImages(batchId, imageIds)));
@@ -692,6 +741,7 @@ function registerUiTools(
     title: "Delete local image batch",
     description: "Widget-only batch deletion. Removes the batch record and every generated or backup image managed by that batch.",
     inputSchema: { batchId: z.string().min(1) },
+    outputSchema: stateOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: true },
     _meta: appOnly
   }, async ({ batchId }) => {

@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/
 import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -48,23 +49,35 @@ try {
   assert.equal(receipt.version, manifest.version);
   const installedPlugin = path.resolve(receipt.pluginPath);
   const installedBinary = path.join(installedPlugin, "bin", "esse.exe");
+  const installedCoreBinary = path.join(installedPlugin, "bin", "esse-core.exe");
   const packagedBinary = path.join(packageRoot, "plugins", "esse", "bin", "esse.exe");
+  const packagedCoreBinary = path.join(packageRoot, "plugins", "esse", "bin", "esse-core.exe");
   assert.equal(await sha256(installedBinary), await sha256(packagedBinary), "Installed runtime must match the verified package runtime.");
+  assert.equal(await sha256(installedCoreBinary), await sha256(packagedCoreBinary), "Installed Core must match the verified package Core.");
 
   const version = await run(installedBinary, ["--version"], installedPlugin);
   assert.equal(version.stdout.trim(), manifest.version);
   const selfTest = await run(installedBinary, ["--self-test"], installedPlugin, { env: { ...process.env, ESSE_DATA_DIR: dataRoot } });
   assert.equal(JSON.parse(selfTest.stdout).status, "ok");
+  const coreSelfTest = await run(installedCoreBinary, ["--self-test"], installedPlugin, { env: { ...process.env, ESSE_DATA_DIR: dataRoot, ESSE_PLUGIN_ROOT: installedPlugin } });
+  assert.equal(JSON.parse(coreSelfTest.stdout).component, "core");
 
   const transport = new StdioClientTransport({
     command: installedBinary,
     args: [],
     cwd: installedPlugin,
-    env: { ...process.env, ESSE_DATA_DIR: dataRoot },
+    env: { ...process.env, ESSE_DATA_DIR: dataRoot, ESSE_CORE_IDLE_MS: "100" },
+  });
+  const secondTransport = new StdioClientTransport({
+    command: installedBinary,
+    args: [],
+    cwd: installedPlugin,
+    env: { ...process.env, ESSE_DATA_DIR: dataRoot, ESSE_CORE_IDLE_MS: "100" },
   });
   const client = new Client({ name: "esse-windows-install-e2e", version: "1.0.0" });
+  const secondClient = new Client({ name: "esse-windows-install-e2e-second", version: "1.0.0" });
   try {
-    await client.connect(transport);
+    await Promise.all([client.connect(transport), secondClient.connect(secondTransport)]);
     const tools = await client.listTools();
     assert(tools.tools.some((tool) => tool.name === "open_esse"));
     const opened = await client.callTool({ name: "open_esse", arguments: { tab: "settings" } });
@@ -73,6 +86,12 @@ try {
 
     const defaultResult = await client.callTool({ name: "ui_set_default_offering", arguments: { offeringId: "esse-codex-generation" } });
     assert.equal(defaultResult.isError, undefined);
+    const sharedArguments = { title: "Windows multi-client E2E", prompt: "one shared batch", count: 1, requestKey: "windows-install-multi-client-e2e" };
+    const [firstShared, secondShared] = await Promise.all([
+      client.callTool({ name: "create_image_batch", arguments: sharedArguments }),
+      secondClient.callTool({ name: "create_image_batch", arguments: sharedArguments }),
+    ]);
+    assert.equal(secondShared.structuredContent?.batch?.id, firstShared.structuredContent?.batch?.id, "Installed adapters must share one idempotent Core.");
     const created = await client.callTool({ name: "create_image_batch", arguments: { title: "Windows E2E", prompt: "one pixel", count: 1, requestKey: "windows-install-e2e" } });
     const batch = created.structuredContent?.batch;
     assert(batch && typeof batch === "object");
@@ -92,7 +111,11 @@ try {
     const resource = await client.readResource({ uri: resourceUri });
     assert.deepEqual(Buffer.from(resource.contents[0].blob, "base64"), onePixelPng);
   } finally {
-    await client.close().catch(() => undefined);
+    await Promise.all([
+      client.close().catch(() => undefined),
+      secondClient.close().catch(() => undefined),
+    ]);
+    await delay(300);
   }
 
   const fakeCalls = await readFile(fakeCodexLog, "utf8");
@@ -112,7 +135,7 @@ try {
   assert.equal(await sha256(installedWidget), await sha256(packagedWidget), "Same-version reinstall must repair changed installed files.");
   const installedVersions = await readdir(path.join(installRoot, "versions"));
   assert.deepEqual(installedVersions, [manifest.version]);
-  console.log(JSON.stringify({ status: "ok", version: manifest.version, archive: archiveName, install: "ok", registration: "ok", installedStdio: "ok", originalResource: "ok", sameVersionRepair: "ok", versionCleanup: "ok" }));
+  console.log(JSON.stringify({ status: "ok", version: manifest.version, archive: archiveName, install: "ok", registration: "ok", installedStdio: "ok", installedMultiClientCore: "ok", originalResource: "ok", sameVersionRepair: "ok", versionCleanup: "ok" }));
 } finally {
   await rm(temporaryRoot, { recursive: true, force: true });
 }

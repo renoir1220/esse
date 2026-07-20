@@ -38,4 +38,9 @@ if [[ ! "$NODE_MAJOR" =~ ^[0-9]+$ || "$NODE_MAJOR" -lt 20 ]]; then
 fi
 
 cd "$PLUGIN_ROOT"
-exec "$NODE_BIN" "$PLUGIN_ROOT/mcp/server.cjs" "$@"
+ENTRYPOINT="$PLUGIN_ROOT/mcp/server.cjs"
+if [[ "${1:-}" == "--core" ]]; then
+  ENTRYPOINT="$PLUGIN_ROOT/mcp/core.cjs"
+  shift
+fi
+exec "$NODE_BIN" "$ENTRYPOINT" "$@"

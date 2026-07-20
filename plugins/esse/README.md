@@ -6,13 +6,14 @@ Local ChatGPT Work/Codex plugin for parallel image generation and editing. Say `
 
 ```text
 ChatGPT desktop Work/Codex
-  -> plugin-launched local stdio MCP
-     -> local folder inspection and persistent batch queue
-     -> current Agent image capability or selected Provider API
-     -> local output folder
+  -> plugin-launched local stdio MCP adapter
+     -> per-user single-instance Esse Core over restricted local IPC
+        -> local folder inspection and persistent batch queue
+        -> current Agent image capability or selected Provider API
+        -> local output folder
 ```
 
-There is no public MCP endpoint. The widget calls app-only settings tools so API keys do not enter model-visible tool input or output.
+There is no public MCP endpoint. The stdio adapter owns no writable state; the single-instance Core exclusively owns Provider credentials, batch persistence, and scheduling so parallel Codex tasks cannot overwrite each other. Active Provider work continues if one stdio adapter disconnects. The widget calls app-only settings tools so API keys do not enter model-visible tool input or output.
 
 Windows Releases use a self-contained executable. macOS Releases contain the bundled JS service and a Bash launcher that accepts only the signed Node.js runtime managed by Codex/ChatGPT. Users do not install Node separately, and Esse does not ship its own unsigned macOS executable.
 
@@ -55,4 +56,4 @@ npm run check
 npm run preview
 ```
 
-`npm run preview` is a development-only static UI preview. Production uses only local stdio.
+`npm run preview` is a development-only static UI preview. Production enters through local stdio and reaches the single-instance Core through user-restricted local IPC.

@@ -82,12 +82,14 @@ jobs:
           launcher="$extracted/plugins/esse/bin/esse"
           /bin/bash -n "$launcher"
           test -f "$extracted/plugins/esse/mcp/server.cjs"
+          test -f "$extracted/plugins/esse/mcp/core.cjs"
           if /usr/bin/file "$launcher" | grep -q 'Mach-O'; then
             echo "macOS package must not contain an Esse-built Mach-O launcher" >&2
             exit 1
           fi
           grep -q '"command": "/bin/bash"' "$extracted/plugins/esse/.mcp.json"
           ESSE_NODE_BIN="$(command -v node)" /bin/bash "$launcher" --self-test
+          ESSE_NODE_BIN="$(command -v node)" /bin/bash "$launcher" --core --self-test
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: esse-${{ matrix.target }}
