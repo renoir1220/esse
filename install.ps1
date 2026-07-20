@@ -26,6 +26,17 @@ function Resolve-FullPath([string]$Path) {
   return [IO.Path]::GetFullPath($Path).TrimEnd([char[]]@("\", "/"))
 }
 
+function Get-Sha256([string]$Path) {
+  $stream = [IO.File]::OpenRead($Path)
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    return ([BitConverter]::ToString($algorithm.ComputeHash($stream))).Replace("-", "").ToLowerInvariant()
+  } finally {
+    $algorithm.Dispose()
+    $stream.Dispose()
+  }
+}
+
 function Test-DirectoriesMatch([string]$Source, [string]$Target) {
   if (-not (Test-Path -LiteralPath $Target -PathType Container)) { return $false }
   $sourceRoot = Resolve-FullPath $Source
@@ -37,7 +48,7 @@ function Test-DirectoriesMatch([string]$Source, [string]$Target) {
     $relative = $sourceFile.FullName.Substring($sourceRoot.Length).TrimStart([char[]]@(92, 47))
     $targetFile = Join-Path $targetRoot $relative
     if (-not (Test-Path -LiteralPath $targetFile -PathType Leaf)) { return $false }
-    if ((Get-FileHash -Algorithm SHA256 -LiteralPath $sourceFile.FullName).Hash -ne (Get-FileHash -Algorithm SHA256 -LiteralPath $targetFile).Hash) { return $false }
+    if ((Get-Sha256 $sourceFile.FullName) -ne (Get-Sha256 $targetFile)) { return $false }
   }
   return $true
 }
@@ -175,7 +186,7 @@ try {
     if (-not $archiveName -or $expectedHash -notmatch "^[0-9a-f]{64}$") { throw "latest.json does not contain a valid Windows x64 asset." }
     $archivePath = Join-Path $downloadRoot $archiveName
     Invoke-WebRequest -UseBasicParsing -Uri "$releaseBase/$archiveName" -OutFile $archivePath
-    $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $archivePath).Hash.ToLowerInvariant()
+    $actualHash = Get-Sha256 $archivePath
     if ($actualHash -ne $expectedHash) { throw "SHA256 mismatch for $archiveName. Expected $expectedHash, got $actualHash." }
     $packageRoot = Join-Path $downloadRoot "package"
     Expand-ZipSafely -ArchivePath $archivePath -Destination $packageRoot
