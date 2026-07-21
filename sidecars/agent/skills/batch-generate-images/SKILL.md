@@ -1,0 +1,43 @@
+---
+name: batch-generate-images
+description: Use Esse for durable image batches from an Agent; preserve every job prompt and reference, resolve prior results structurally, use the configured default model, and return after Provider work is durably accepted.
+---
+
+# Esse batch generation
+
+Use the authenticated local Esse MCP. Esse is the durable owner of batch state, original files, retries, and history. Provider work must return control to the calling Agent after durable acceptance and continue in the background. `agent-generation` is cooperation with the current Agent, not a Provider credential flow.
+
+## Workflow
+
+1. Call `open_esse` only when the user asks to see the Esse workbench. Use `tab: settings` only for setup; otherwise use `tab: batches` and include a known `batchId`. Routine headless work must not focus the app or interrupt the user.
+2. A direct request to generate or modify images with Esse is sufficient authorization to submit the work. For ordinary work, do not call `list_image_offerings`, do not ask for a second confirmation, and omit the legacy `approvedEstimatedCostMicros` field. Esse silently uses the configured Provider and displays price information locally.
+3. Omit `offeringId` so Esse uses the user's configured model. Never select a model based on price, subject, or your own preference. Call `list_image_offerings` and pass another exact `offeringId` only when the user explicitly asks about models/prices or names another model. Select `workbuddy-agent-generation` only when the user explicitly asks the current Agent's image capability to own the jobs. Never ask for Provider credentials in conversation; API Keys are entered and protected inside Esse.
+4. When a request depends on local image content, call `inspect_image_folder` before writing prompts. Page through the directory when needed and preserve the returned paths exactly; do not claim to have inspected unseen files.
+5. Treat every batch child as an independent job with its own prompt and references. Use `jobs[]` whenever prompts or references differ. Use top-level references only when every child intentionally shares them. `folderPath` or `imagePaths` creates one aligned job per input image, and `perImagePrompts` may key prompts by full path, basename, one-based index, or zero-based index. Each job supports at most 20 references.
+6. Use `referenceImagePaths` for ordinary local files. A picture pasted or attached to the current WorkBuddy message is a real input attachment: materialize it to a real absolute local path, then pass that path through `referenceImagePaths`. For `modify_selected_images`, keep the Esse target in `imageIds` and put every pasted or attached background/style/content reference in `referenceImagePaths`; describing the attachment in `prompt` is not a substitute for sending it. When the user names an existing Esse result such as `图1` or `图1-1`, pass `referenceImages: [{ batchId, image }]`. If the exact batch is unknown, call `list_image_batches` with a limit from 1 to 50 and resolve it. Ask when multiple batches are plausible. Never invent an output path or silently omit a requested reference. If an attachment cannot be materialized to a readable local file, do not submit a misleading text-only edit; report that the attachment could not be transferred.
+7. For genuinely new work, call `create_image_batch` once with a stable `requestKey`. Never use it to modify an existing image. Esse discovers and activates the accepted batch without another `open_esse` call.
+8. For more work in an existing batch, call `append_image_batch_jobs` with the exact `batchId` and a stable `requestKey`. Append to active or terminal batches in place; never create a temporary batch or merge to simulate append. Omit `offeringId` to reuse the batch model unless the user explicitly names another.
+9. Inspect the returned execution mode. When managed create, append, or modification returns `accepted: true` with `execution: background`, reply only `已交给 Esse 后台生成。` and stop. Esse has persisted the work and will continue independently. Do not poll, list, fetch, copy, attach, display, or summarize results unless the user explicitly asks for status or asks to bring specific output back into WorkBuddy.
+10. When the returned offering uses `adapterId: agent-generation` or `execution: current-agent`, complete every accepted Agent-owned job instead of returning after acceptance. For append, act only on `appendedJobIds`:
+    - Call `start_agent_image_job` before each generation and use its exact `prompt` and every `referenceImagePaths` entry.
+    - Use the current Agent's available image capability; do not require OAuth, Provider keys, Codex CLI, or a particular image tool.
+    - On success, call `complete_agent_image_job` with the real absolute `imagePath`. On failure, call `fail_agent_image_job` with the real `error`. If generation is unavailable, fail every pending Agent-owned job instead of leaving it queued.
+    - Do not poll Esse; start, completion, and failure callbacks update Esse directly.
+11. Resolve modification targets before calling `modify_selected_images`:
+    - Use exact image IDs for named current results, numbered backups such as `图2-1`, and failed-job source images.
+    - If the request names no target and the batch has multiple available images, ask which image to change. A sole image may be inferred only when the request is otherwise unambiguous.
+    - Call `modify_selected_images` once with the exact `batchId` and `imageIds`. Never create a replacement batch. Current results update in place while prior versions remain as `图1-1`, `图1-2`, and so on; selecting a backup or failed source creates a new job in the same batch from that exact asset.
+    - Omit `offeringId` to reuse the batch model unless the user explicitly names another, then follow the managed or Agent-owned execution branch above.
+12. Delete only explicitly authorized exact image IDs with `delete_esse_images`. Deleting a current image also deletes its preserved versions. Do not delete queued/running images or interpret image deletion as permission to delete a batch.
+13. Combine distinct terminal batches only with `merge_image_batches`, one exact target and exact source IDs, and a stable `requestKey`. Preserve source batches unless the user explicitly requests `deleteSourceBatches: true`. Do not use merge for append work.
+
+## Guardrails
+
+- Do ordinary work without a pricing preamble or progress narration. Do not mention Provider, model, balance, unit price, total price, micros, tool choice, batch ID, or queued-job details unless the user explicitly asks. Price and progress remain visible in Esse.
+- Esse is the destination for Provider output. After handing off work, do not call `list_image_batches`, `get_image_batch`, `render_image_batch`, `open_esse`, or any file-copy/display action merely to retrieve finished output. Do not copy generated images into the Agent workspace, attach them to chat, or announce unrelated images that happened to finish. Materializing a user-provided input attachment to a temporary or workspace path solely so it can be passed to Esse through `referenceImagePaths` is allowed and required. Only retrieve output when the user explicitly requests status, asks to see/export particular results, or names an existing result for a new operation; structural reference lookup for that new operation is allowed without displaying or copying the file.
+- Tell the user when selected local files will be sent to the chosen external Provider or the current Agent's image-generation service/model.
+- Never overwrite source images. Use the Esse-owned batch output and native Save As flow.
+- Never automatically retry a Provider request whose `chargeState` is `unknown`; leave it for review. A direct click on Esse's `确认重试` action is already the user's duplicate-charge decision and must not open a second confirmation. Definitely-not-charged transient failures may retry automatically up to three times.
+- Preserve paths, image IDs, prompts, references, and request keys exactly. Say only that work was handed to the background; do not claim image completion from queued or running state.
+- Never infer one target from a multi-image batch without a name or exact selection context.
+- Limit one batch creation, append, image-ID mutation, merge source list, and `list_image_batches` query to 50 items. Split larger work deliberately with distinct request keys.

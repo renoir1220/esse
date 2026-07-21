@@ -2,72 +2,73 @@
 
 **语言：简体中文 | [English](README.en.md)**
 
-Esse 是面向 Codex 和 ChatGPT Work 的本地图片工作台。它以本机 `stdio MCP` 作为插件入口，并由用户级单实例 Esse Core 持有批次与 Provider 调度；多个任务不会各自写同一份状态，单个 stdio 连接中断也不会终止已提交的 Provider 请求。它不需要云端 Esse 服务、HTTPS 隧道、`.env` 或 `npm start`。
+Esse 是由 Agent 指挥的本地图片工作台。用户只需要说“用 Esse 生成图片”；无论安装的是 Codex Plugin 还是面向 WorkBuddy 等 Agent 的本地客户端，产品名称始终是 Esse。
 
-只有实际生图或改图请求会把所选参考图发往当前 Agent 的图像模型或用户选择的 Provider。Provider Key、任务记录、输入路径和输出图片都保留在本机。
+Esse 在本机保存 Provider 配置、API Key、批次记录和原始图片。只有实际生图或改图请求会把选中的参考图发给用户配置的 Provider或当前 Agent 的图片能力。仓库和发行包不内置 API Key，也不依赖 Esse 云端后端。
 
-## 让 Codex 安装
+## 两种发行形态
 
-只需要把下面这句话发给 Codex：
+- **Codex Plugin**：适用于 Codex/ChatGPT 桌面端，支持 Windows x64、macOS arm64 和 macOS x64。
+- **Agent Sidecar**：适用于 WorkBuddy 等支持本地 HTTP MCP 的 Agent；当前发布 Windows x64 安装包，带完整 Esse 工作台和后台任务执行能力。
+
+这是同一个产品的两种技术分发方式，不是两个用户品牌。通常只安装适合当前 Agent 的一种。
+
+## 安装 Codex Plugin
+
+把下面这句话发给 Codex：
 
 > 安装这个插件：https://github.com/renoir1220/esse
 
-Codex 应先阅读仓库中的 [`INSTALL.md`](INSTALL.md)，再完成平台识别、Release 下载、SHA256 校验、用户目录安装、插件注册和安装验证。用户不需要手动选择安装包或解压目录。
+Codex 应先阅读 [`INSTALL.md`](INSTALL.md)，再识别平台、下载 Release、校验 SHA256、完成用户目录安装和插件注册。重启桌面端并开启新任务后，说“打开 Esse 设置”，在 Esse 里配置 Provider、API Key 和默认模型。不要把 API Key 发到聊天里。
 
-安装成功后，Codex 会提示重启桌面端。重启后开启一个新任务，说“打开 Esse 设置”，可以直接选择“Codex 生成”，也可以配置 Provider、API Key 和默认模型。不要把 API Key 发到聊天里。
+也可以从 [GitHub Releases](https://github.com/renoir1220/esse/releases) 下载对应平台的 Plugin ZIP，解压后运行 `install.ps1` 或 `install.sh`。
 
-支持的平台：
+## 安装到 WorkBuddy 等 Agent
 
-- Windows x64
-- macOS Apple Silicon
-- macOS Intel
+从 [GitHub Releases](https://github.com/renoir1220/esse/releases) 下载 `esse-agent-sidecar-windows-x64-*.exe`，核对 `sidecar-latest.json` 或 `checksums.txt` 后安装并打开 Esse。在 Esse 的设置页：
 
-macOS Release 不再包含 Esse 自行编译的 Mach-O 可执行文件，而是通过一个可审阅的 Bash 启动器使用 Codex/ChatGPT 管理的已签名 Node.js 运行时。用户无需自行安装 Node，也无需申请 Apple 开发者认证。安装器只调用通过 Gatekeeper 检查的桌面 App 内置 Codex，不会执行 `PATH` 中来源不明的同名命令，也不会要求绕过系统安全设置。
+1. 选择内置的兔子 Provider 预设或添加 OpenAI 兼容 Provider。
+2. 在 Esse 内填写 API Key、测试连接并保存默认模型。
+3. 复制 MCP 配置并粘贴到 Agent 的用户级 HTTP MCP 配置中。
 
-## 手动安装
-
-如果不通过 Codex，可以从 [GitHub Releases](https://github.com/renoir1220/esse/releases/latest) 下载对应平台的 ZIP，解压后运行：
-
-Windows：
-
-```powershell
-.\install.ps1
-```
-
-macOS：
-
-```bash
-bash ./install.sh
-```
-
-安装器是幂等的。再次运行会安装或切换到该版本；直接运行仓库里的安装器会下载并校验最新正式 Release。
+之后直接对 Agent 说“用 Esse 生成图片”。Agent 把任务交给 Esse 后应立即返回；除非用户明确要求查看或导出结果，否则不应把产物复制回聊天工作区，也不应反复播报价格和进度。
 
 ## 本地数据
 
-- Windows：`%LOCALAPPDATA%\esse`
-- macOS：`~/Library/Application Support/esse`
+- Codex Plugin：Windows `%LOCALAPPDATA%\esse`；macOS `~/Library/Application Support/esse`
+- Agent Sidecar：Windows `%LOCALAPPDATA%\esse-agent-sidecar`
 
-Windows Key 使用当前用户 DPAPI 加密；macOS Key 写入系统 Keychain。生成结果默认写入源文件夹下的 `esse Output/<batch-id>/`，不会覆盖原图。
+两个目录刻意隔离。迁移仓库不会移动、覆盖或删除旧 `esse-desktop` 数据。Windows API Key 由当前用户 DPAPI 保护；macOS Plugin 使用系统 Keychain。
 
-插件运行时安装在：
+## 仓库结构
 
-- Windows：`%LOCALAPPDATA%\esse\plugin`
-- macOS：`~/Library/Application Support/esse/plugin`
+```text
+plugins/codex/       Codex Plugin
+sidecars/agent/      面向本地 Agent 的 Sidecar
+apps/standalone/     未来独立应用占位
+docs/                路线图、协议和开发文档
+```
+
+暂时不抽取共享 Core。两个运行形态必须独立构建，不得相互产生运行时依赖；有意义的行为移植记录在 [`SYNC.md`](SYNC.md)。
 
 ## 开发
 
-插件源码位于 [`plugins/esse`](plugins/esse)。
+Codex Plugin：
 
 ```bash
-cd plugins/esse
+cd plugins/codex
 npm install
 npm run check
 ```
 
-Release 工作流在各原生 Runner 上生成 Windows 自带运行时包和两个 macOS 安全启动包，再汇总 Release 元数据：
+Agent Sidecar（当前仅在 Windows x64 发布）：
 
 ```bash
-npm run package:releases
+cd sidecars/agent
+npm install
+npm run typecheck
+npm test
+npm run make
 ```
 
-开发阶段的 `npm run preview` 只用于浏览器视觉验收，不是插件运行架构。
+MIT License，见 [`LICENSE`](LICENSE)。

@@ -8,7 +8,7 @@
       "name": "esse",
       "source": {
         "source": "local",
-        "path": "./plugins/esse"
+        "path": "./plugins/codex"
       },
       "policy": {
         "installation": "AVAILABLE",
