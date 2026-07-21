@@ -20,7 +20,7 @@ assert.equal(packageJson.version, manifest.version, "package.json and plugin.jso
 if (expectedTag) assert.equal(expectedTag, `v${manifest.version}`, "Git tag must match the plugin version");
 assert.equal(manifest.repository, "https://github.com/renoir1220/esse");
 assert.equal(marketplace.name, "esse-local");
-assert.equal(marketplace.plugins[0].source.path, "./plugins/esse");
+assert.equal(marketplace.plugins[0].source.path, "./plugins/codex");
 assert(installGuide.includes("ESSE_INSTALL_RESULT"));
 assert(windowsInstaller.includes("latest.json") && windowsInstaller.includes("ESSE_INSTALL_RESULT"));
 assert(macInstaller.includes("latest.json") && macInstaller.includes("ESSE_INSTALL_RESULT"));

@@ -13,7 +13,7 @@ jobs:
     runs-on: windows-latest
     defaults:
       run:
-        working-directory: plugins/esse
+        working-directory: plugins/codex
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -23,7 +23,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: plugins/esse/package-lock.json
+          cache-dependency-path: plugins/codex/package-lock.json
       - run: npm ci
       - run: npm run check
       - name: Verify tag and release metadata
@@ -50,7 +50,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     defaults:
       run:
-        working-directory: plugins/esse
+        working-directory: plugins/codex
     steps:
       - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
         with:
@@ -59,7 +59,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: plugins/esse/package-lock.json
+          cache-dependency-path: plugins/codex/package-lock.json
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         if: matrix.target == 'windows-x64'
         with:
@@ -97,8 +97,41 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  package-agent-sidecar:
+    needs: verify
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: sidecars/agent
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sidecars/agent/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run make
+      - name: Stage Esse Agent Sidecar installer
+        shell: pwsh
+        run: |
+          $version = (Get-Content -Raw -Encoding UTF8 .\package.json | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Agent Sidecar version does not match Git tag." }
+          New-Item -ItemType Directory -Force -Path ..\..\release | Out-Null
+          Copy-Item -LiteralPath .\out\make\squirrel.windows\x64\Esse-Setup.exe -Destination "..\..\release\esse-agent-sidecar-windows-x64-v$version.exe"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: esse-agent-sidecar-windows-x64
+          path: release/esse-agent-sidecar-windows-x64-v*.exe
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: package
+    needs: [package, package-agent-sidecar]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -117,7 +150,7 @@ jobs:
       - name: Create and verify release metadata
         shell: pwsh
         run: |
-          node .\plugins\esse\scripts\create-release-metadata.mjs
+          node .\plugins\codex\scripts\create-release-metadata.mjs
           $metadata = Get-Content -Raw -Encoding UTF8 .\release\latest.json | ConvertFrom-Json
           if ($metadata.tag -ne $env:GITHUB_REF_NAME) { throw "latest.json tag does not match Git tag" }
           foreach ($prefix in @("windowsX64", "macosArm64", "macosX64")) {
@@ -126,6 +159,10 @@ jobs:
             $actual = (Get-FileHash -Algorithm SHA256 (Join-Path .\release $asset)).Hash.ToLowerInvariant()
             if ($actual -ne $expected) { throw "Checksum mismatch for $asset" }
           }
+          $sidecar = Get-Content -Raw -Encoding UTF8 .\release\sidecar-latest.json | ConvertFrom-Json
+          if ($sidecar.tag -ne $env:GITHUB_REF_NAME) { throw "sidecar-latest.json tag does not match Git tag" }
+          $sidecarActual = (Get-FileHash -Algorithm SHA256 (Join-Path .\release $sidecar.windowsX64Asset)).Hash.ToLowerInvariant()
+          if ($sidecarActual -ne $sidecar.windowsX64Sha256) { throw "Checksum mismatch for $($sidecar.windowsX64Asset)" }
       - name: Publish GitHub Release
         shell: pwsh
         env:

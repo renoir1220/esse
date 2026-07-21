@@ -1,10 +1,10 @@
-# Install Esse with Codex
+# Install Esse
 
-This file is the installation contract for an Agent given only this repository URL.
+This file is the installation contract for an Agent given only this repository URL. `Codex Plugin` and `Agent Sidecar` below are technical distribution names; after installation the product is always called Esse.
 
 ## Required outcome
 
-Install the latest stable Esse GitHub Release into the current user's profile, register the `esse-local` marketplace, install and enable `esse`, verify the result, then guide the user through restart and UI-only default model setup.
+For Codex/ChatGPT, install the Plugin from the requested Esse GitHub Release into the current user's profile, register the `esse-local` marketplace, install and enable `esse`, verify the result, then guide the user through restart and UI-only default model setup.
 
 Do not ask the user to download an archive manually. Do not ask for a Provider API key in chat. Never disable or bypass Gatekeeper.
 
@@ -15,6 +15,8 @@ Do not ask the user to download an archive manually. Do not ask for a Provider A
 3. Run the repository installer. It downloads `latest.json` and the matching versioned archive from the latest GitHub Release, verifies SHA256, and performs an idempotent user-scoped installation.
 4. Treat an `ESSE_INSTALL_RESULT` line with `status: "installed"` as the structured success marker. The installer performs plugin registration and verification with its selected Codex executable; do not repeat those commands through a bare `codex` from `PATH`.
 5. Do not try to open Esse in the same task. Newly installed skills and MCP tools load after the desktop app restarts and a new task begins.
+
+This procedure installs the Codex Plugin. For WorkBuddy or another Agent that consumes a local HTTP MCP, use the Windows Agent Sidecar procedure below instead; do not install both merely to offer a choice.
 
 ### Windows
 
@@ -61,6 +63,24 @@ After verification, report the installed version and say:
 4. In the Esse UI, choose `Codex 生成` as the default model, or add a Provider, paste the API Key there, test the connection, choose one of its image models, and save.
 
 Explicitly remind the user that the API Key belongs only in the Esse settings UI and should never be pasted into chat.
+
+## Windows Agent Sidecar procedure
+
+The Agent Sidecar is currently released only for Windows x64. Download these two assets from the same requested GitHub Release:
+
+- `sidecar-latest.json`
+- the `esse-agent-sidecar-windows-x64-v*.exe` named by that metadata file
+
+Verify the installer SHA256 against `windowsX64Sha256` before running it. It is an unsigned alpha installer, so report the publisher limitation honestly; never disable Windows security controls. The installed application and window are named Esse.
+
+After installation, the user opens Esse and completes setup inside its settings page:
+
+1. Choose a built-in Tuzi preset or add an OpenAI-compatible Provider.
+2. Paste the API Key inside Esse, test it, and save a default image model.
+3. Copy the MCP server configuration from Esse into the Agent's user-level HTTP MCP settings.
+4. Start a new Agent task and say `用 Esse 生成图片`.
+
+Never request the API Key in chat or put it in an Agent configuration file. The MCP configuration contains only a local loopback endpoint and per-install pairing token. Once Esse accepts Provider work in the background, the Agent should return control immediately and should not poll or copy output back unless the user explicitly asks.
 
 ## Update behavior
 

@@ -1,0 +1,24 @@
+# Plugin and Agent Sidecar parity
+
+Esse currently has two independent implementations. They intentionally do not share a runtime Core yet. When behavior is ported between `plugins/codex` and `sidecars/agent`, record the user-visible contract here instead of adding a cross-package dependency.
+
+## 2026-07-21 — initial Sidecar import
+
+The Agent Sidecar snapshot preserves the following Plugin behavior semantically:
+
+- durable batches with independently queued jobs and background Provider execution;
+- local Provider profiles, Tuzi presets, per-offering model and price metadata, configurable concurrency, and OS-protected API keys;
+- original-file persistence, history versions, selection, modification, deletion, previews, zoom, and overlay dismissal;
+- real reference-image transfer by absolute path or registered Esse image ID;
+- MCP submission that returns after durable acceptance, without routine polling, price narration, or automatic result retrieval;
+- unknown-charge outcomes are not automatically retried;
+- Provider-returned remote image URLs use China-first trusted DNS resolution, private-network rejection, redirect revalidation, and pinned public-address downloads;
+- one user-facing product name: Esse.
+
+The initial import deliberately excludes the private commercial server, user accounts, balances, channel administration, hosted billing, and all credentials. It also leaves the Plugin and Sidecar stores isolated.
+
+## Deferred
+
+- shared domain/provider/UI packages;
+- macOS Agent Sidecar packaging and manual validation;
+- a true standalone application under `apps/standalone`.

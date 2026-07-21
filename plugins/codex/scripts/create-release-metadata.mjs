@@ -21,6 +21,9 @@ for (const target of targets) {
   const content = await readFile(archivePath);
   archives.push({ ...target, archiveName, sha256: createHash("sha256").update(content).digest("hex") });
 }
+const sidecarAsset = `esse-agent-sidecar-windows-x64-v${version}.exe`;
+const sidecarContent = await readFile(path.join(releaseRoot, sidecarAsset));
+const sidecarSha256 = createHash("sha256").update(sidecarContent).digest("hex");
 
 const metadata = {
   schemaVersion: 1,
@@ -33,5 +36,18 @@ for (const archive of archives) {
   metadata[`${archive.metadata}Sha256`] = archive.sha256;
 }
 await writeFile(path.join(releaseRoot, "latest.json"), `${JSON.stringify(metadata, null, 2)}\n`, "utf8");
-await writeFile(path.join(releaseRoot, "checksums.txt"), `${archives.map((archive) => `${archive.sha256}  ${archive.archiveName}`).join("\n")}\n`, "utf8");
-console.log(`Created latest.json and checksums.txt for v${version}`);
+await writeFile(path.join(releaseRoot, "sidecar-latest.json"), `${JSON.stringify({
+  schemaVersion: 1,
+  repository: metadata.repository,
+  version,
+  tag: metadata.tag,
+  distribution: "agent-sidecar",
+  windowsX64Asset: sidecarAsset,
+  windowsX64Sha256: sidecarSha256
+}, null, 2)}\n`, "utf8");
+const checksumEntries = [
+  ...archives.map((archive) => `${archive.sha256}  ${archive.archiveName}`),
+  `${sidecarSha256}  ${sidecarAsset}`
+];
+await writeFile(path.join(releaseRoot, "checksums.txt"), `${checksumEntries.join("\n")}\n`, "utf8");
+console.log(`Created latest.json, sidecar-latest.json, and checksums.txt for v${version}`);

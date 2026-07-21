@@ -6,6 +6,13 @@ plugins/esse/bin/
 plugins/esse/mcp/server.cjs
 plugins/esse/mcp/core.cjs
 plugins/esse/mcp/widget.html
+plugins/codex/web/preview.html
+plugins/codex/bin/
+plugins/codex/mcp/server.cjs
+plugins/codex/mcp/core.cjs
+plugins/codex/mcp/widget.html
+sidecars/agent/.vite/
+sidecars/agent/out/
 release/
 inputs/
 outputs/

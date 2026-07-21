@@ -2,72 +2,73 @@
 
 **Language: [简体中文](README.md) | English**
 
-Esse is a local image workspace for Codex and ChatGPT Work. A local `stdio MCP` is the plugin entry point, while one per-user Esse Core owns batch state and Provider scheduling. Parallel tasks no longer write separate copies of the same state, and disconnecting one stdio adapter does not terminate an already submitted Provider request. No hosted Esse service, HTTPS tunnel, `.env`, or `npm start` process is required.
+Esse is a local image workspace directed by an Agent. Users only need to say “use Esse to generate images.” Whether the installed distribution is the Codex Plugin or the local client for WorkBuddy and similar Agents, the product is always called Esse.
 
-Only image generation and editing requests send the selected reference images to the current Agent's image model or to a Provider chosen by the user. Provider keys, task records, input paths, and output images remain on the local computer.
+Provider settings, API keys, batch records, and original images stay on the local computer. Selected references leave the computer only for an actual generation or edit request to the configured Provider or the current Agent image capability. No API key is bundled, and no hosted Esse backend is required.
 
-## Install with Codex
+## Two distributions
 
-Send this sentence to Codex:
+- **Codex Plugin** for the Codex/ChatGPT desktop app on Windows x64, macOS arm64, and macOS x64.
+- **Agent Sidecar** for WorkBuddy and other Agents that support a local HTTP MCP. The current release is a Windows x64 installer with the complete Esse workspace and background task execution.
+
+These are technical distributions of one product, not separate user-facing brands. Most users install only the one that matches their Agent.
+
+## Install the Codex Plugin
+
+Send this to Codex:
 
 > Install this plugin: https://github.com/renoir1220/esse
 
-Codex should read [`INSTALL.md`](INSTALL.md) first, then detect the platform, download the matching Release, verify its SHA256 checksum, install it into the user profile, register the plugin, and verify the installation. The user does not need to select an archive or extraction directory manually.
+Codex should read [`INSTALL.md`](INSTALL.md), detect the platform, download the Release, verify SHA256, install it in the user profile, and register the plugin. After restarting the desktop app and opening a new task, say “Open Esse settings,” then configure the Provider, API key, and default model inside Esse. Never paste an API key into chat.
 
-After installation, Codex will ask you to restart the desktop app. Start a new task after restarting and say “Open Esse settings.” You can choose “Codex generation” directly, or configure a Provider, API key, and default model. Do not paste API keys into the chat.
+You can also download the matching Plugin ZIP from [GitHub Releases](https://github.com/renoir1220/esse/releases), extract it, and run `install.ps1` or `install.sh`.
 
-Supported platforms:
+## Install for WorkBuddy and other Agents
 
-- Windows x64
-- macOS Apple Silicon
-- macOS Intel
+Download `esse-agent-sidecar-windows-x64-*.exe` from [GitHub Releases](https://github.com/renoir1220/esse/releases), verify it against `sidecar-latest.json` or `checksums.txt`, and open Esse after installation. In Esse settings:
 
-The macOS Release no longer contains an Esse-built Mach-O executable. A reviewable Bash launcher uses the signed Node.js runtime managed by Codex/ChatGPT, so users do not need to install Node or obtain an Apple Developer identity. The installer invokes only the desktop app's Gatekeeper-approved Codex executable, never an arbitrary command with the same name from `PATH`, and never asks users to bypass macOS security.
+1. Select a built-in Tuzi Provider preset or add an OpenAI-compatible Provider.
+2. Enter the API key inside Esse, test the connection, and save a default model.
+3. Copy the MCP configuration into the Agent's user-level HTTP MCP settings.
 
-## Manual installation
-
-To install without Codex, download the ZIP for your platform from [GitHub Releases](https://github.com/renoir1220/esse/releases/latest), extract it, and run:
-
-Windows:
-
-```powershell
-.\install.ps1
-```
-
-macOS:
-
-```bash
-bash ./install.sh
-```
-
-The installer is idempotent. Running it again installs or switches to that version. Running the installer directly from this repository downloads and verifies the latest stable Release.
+Then simply tell the Agent to “use Esse to generate images.” Once durable background work is accepted, the Agent should return control immediately. It should not copy outputs back into the chat workspace or narrate prices and progress unless the user explicitly asks.
 
 ## Local data
 
-- Windows: `%LOCALAPPDATA%\esse`
-- macOS: `~/Library/Application Support/esse`
+- Codex Plugin: `%LOCALAPPDATA%\esse` on Windows; `~/Library/Application Support/esse` on macOS
+- Agent Sidecar: `%LOCALAPPDATA%\esse-agent-sidecar` on Windows
 
-Windows keys are encrypted with current-user DPAPI. macOS keys are stored in the system Keychain. Generated images are written to `esse Output/<batch-id>/` under the source folder by default and never overwrite the originals.
+The directories are intentionally isolated. Repository migration does not move, overwrite, or delete legacy `esse-desktop` data. Windows API keys are protected with current-user DPAPI; the macOS Plugin uses Keychain.
 
-The plugin runtime is installed in:
+## Repository layout
 
-- Windows: `%LOCALAPPDATA%\esse\plugin`
-- macOS: `~/Library/Application Support/esse/plugin`
+```text
+plugins/codex/       Codex Plugin
+sidecars/agent/      Sidecar for local Agents
+apps/standalone/     Placeholder for a future standalone app
+docs/                Roadmap, contracts, and development documentation
+```
+
+A shared Core is intentionally deferred. Each distribution must build and run independently; meaningful behavior ports are recorded in [`SYNC.md`](SYNC.md).
 
 ## Development
 
-The plugin source is under [`plugins/esse`](plugins/esse).
+Codex Plugin:
 
 ```bash
-cd plugins/esse
+cd plugins/codex
 npm install
 npm run check
 ```
 
-The Release workflow builds a self-contained Windows runtime and two safe macOS launcher archives on native runners, then creates the Release metadata:
+Agent Sidecar (currently released for Windows x64 only):
 
 ```bash
-npm run package:releases
+cd sidecars/agent
+npm install
+npm run typecheck
+npm test
+npm run make
 ```
 
-`npm run preview` is only for visual browser testing during development; it is not part of the plugin runtime architecture.
+Licensed under MIT; see [`LICENSE`](LICENSE).

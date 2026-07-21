@@ -52,6 +52,13 @@ for (const target of targets) {
     copyPath(path.join(pluginRoot, "mcp", "widget.html"), path.join(stagedPlugin, "mcp", "widget.html"))
   ]);
 
+  // Source checkouts use plugins/codex. Keep the historical plugins/esse
+  // layout inside Plugin archives so existing installers and upgrades remain compatible.
+  const stagedMarketplacePath = path.join(staging, ".agents", "plugins", "marketplace.json");
+  const stagedMarketplace = JSON.parse(await readFile(stagedMarketplacePath, "utf8"));
+  stagedMarketplace.plugins[0].source.path = "./plugins/esse";
+  await writeFile(stagedMarketplacePath, `${JSON.stringify(stagedMarketplace, null, 2)}\n`, "utf8");
+
   const binaryPath = path.join(stagedPlugin, "bin", target.binary);
   if (target.runtime === "compiled") {
     await run("bun", ["build", path.join(pluginRoot, "mcp", "server.cjs"), "--compile", "--compile-exec-argv=--use-system-ca", `--target=${target.bunTarget}`, `--outfile=${binaryPath}`], pluginRoot);
