@@ -100,7 +100,7 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
 
   server.registerPrompt('batch-generate-images', {
     title: 'Use Esse for a durable image batch',
-    description: 'Agent workflow for submitting image batches and returning while Esse continues in the background.',
+    description: 'Provider-neutral Esse workflow: submit fully specified image work without extra capability warnings, then stop after background acceptance.',
   }, async () => ({ messages: [{ role: 'user', content: { type: 'text', text: DESKTOP_BATCH_SKILL } }] }));
 
   server.registerTool('open_esse', {
@@ -184,7 +184,7 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
 
   server.registerTool('create_image_batch', {
     title: 'Create an Esse image batch',
-    description: '持久化一个新批次并立即返回；图片由 Esse 后台并行生成。普通生成不要先询价、不要复述金额。每个 jobs[] 保留自己的 prompt 和引用，成功后不要轮询。',
+    description: 'Esse 是调用用户已配置 Provider/模型的本地图片任务工作台，不是某种图像模型或模型架构。用户点名用 Esse 且任务信息充分时直接派工；不要因文字、数字、图表或你推测的模型能力而二次确认。持久化后立即返回；收到 execution=background 后回复 message 并立即结束当前任务，不得等待、轮询或调用其他 Esse 工具。',
     inputSchema: {
       title: z.string().trim().min(1).max(160).optional(),
       offeringId: z.string().trim().min(1).max(200).optional(),
@@ -245,12 +245,12 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
       approvedEstimatedCostMicros: args.approvedEstimatedCostMicros,
       requestKey: args.requestKey,
     });
-    return accepted(await enrichBatch(options, batch));
+    return accepted(batch);
   }));
 
   server.registerTool('append_image_batch_jobs', {
     title: 'Append jobs to an Esse batch',
-    description: '向现有批次原位追加图片任务并立即返回。不要新建临时批次或用合并模拟追加。',
+    description: '向现有批次原位追加图片任务并立即返回。不要新建临时批次或用合并模拟追加。收到 execution=background 后回复 message 并立即结束当前任务，不得等待、轮询或查询完成情况。',
     inputSchema: {
       batchId: z.string().uuid(),
       offeringId: z.string().trim().min(1).max(200).optional(),
@@ -286,12 +286,15 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
       approvedEstimatedCostMicros: args.approvedEstimatedCostMicros,
       requestKey: args.requestKey,
     });
-    return { ...accepted(await enrichBatch(options, result.batch)), appendedJobIds: result.appendedJobIds };
+    const response = accepted(result.batch);
+    return response.execution === 'current-agent'
+      ? { ...response, appendedJobIds: result.appendedJobIds }
+      : response;
   }));
 
   server.registerTool('modify_selected_images', {
     title: 'Modify exact images in an Esse batch',
-    description: '用准确的当前图片或备份 image ID 在同一批次内修改；当前版本会保留为图1-1等备份。用户粘贴或附加的图片必须通过 referenceImagePaths 作为额外参考图传入，不能只写进提示词。任务持久化后立即返回。',
+    description: '用准确的当前图片或备份 image ID 在同一批次内修改；当前版本会保留为图1-1等备份。用户粘贴或附加的图片必须通过 referenceImagePaths 作为额外参考图传入，不能只写进提示词。任务持久化后立即返回；收到 execution=background 后回复 message 并立即结束当前任务，不得等待、轮询或查询完成情况。',
     inputSchema: {
       batchId: z.string().uuid(),
       imageIds: z.array(z.string().uuid()).min(1).max(50).optional(),
@@ -335,12 +338,15 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
       approvedEstimatedCostMicros: args.approvedEstimatedCostMicros,
       requestKey: args.requestKey,
     });
-    return { ...accepted(await enrichBatch(options, result.batch)), modifiedJobIds: result.modifiedJobIds };
+    const response = accepted(result.batch);
+    return response.execution === 'current-agent'
+      ? { ...response, modifiedJobIds: result.modifiedJobIds }
+      : response;
   }));
 
   server.registerTool('list_image_batches', {
     title: 'List Esse image batches',
-    description: '仅在用户明确需要查找历史批次、查询状态或引用既有结果时调用。派工后不得用它取回、复制或展示产物。',
+    description: '仅在用户另行明确要求查找历史批次、查询状态或引用既有结果时调用。刚刚成功派工不等于用户要求跟踪；派工后不得主动调用它等待完成、取回、复制或展示产物。',
     inputSchema: { limit: z.number().int().min(1).max(50).default(20) },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ limit }) => toolResult(async () => ({
@@ -349,14 +355,14 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
 
   server.registerTool('get_image_batch', {
     title: 'Get an Esse image batch',
-    description: '仅在用户明确查询状态/详情或需要引用既有结果时，获取批次、图片 ID、路径、进度和扣费状态。不得因此把产物复制或展示到 WorkBuddy。',
+    description: '仅在用户另行明确查询状态/详情或需要引用既有结果时，获取批次、图片 ID、路径和进度。刚刚成功派工不等于用户要求跟踪；不得主动轮询，也不得因此把产物复制或展示到 Agent 对话。',
     inputSchema: { batchId: z.string().uuid() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ batchId }) => toolResult(async () => ({ batch: await enrichBatch(options, options.batchManager.get(batchId)) })));
 
   server.registerTool('render_image_batch', {
     title: 'Show an Esse image batch',
-    description: '仅在用户明确要求查看时，在 Esse 内激活指定批次；不是把图片取回或展示到 Agent 对话的工具。',
+    description: '仅在用户另行明确要求查看时，在 Esse 内激活指定批次；派工成功后不要主动调用，也不要把图片取回或展示到 Agent 对话。',
     inputSchema: { batchId: z.string().uuid() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ batchId }) => toolResult(async () => {
@@ -446,7 +452,7 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
 
   server.registerTool('generate_image', {
     title: 'Generate images with Esse (compatibility)',
-    description: 'Compatibility alias that queues a durable Esse batch and returns immediately. Prefer create_image_batch.',
+    description: '兼容入口：Esse 是调用用户已配置 Provider/模型的本地图片任务工作台，不是某种图像模型。任务信息充分时直接派工，不要基于推测的模型能力二次确认。收到 execution=background 后回复 message 并立即结束当前任务，不得等待、轮询或查询完成情况。优先使用 create_image_batch。',
     inputSchema: {
       prompt: z.string().trim().min(1).max(20_000),
       model: z.string().trim().min(1).max(200).optional(),
@@ -456,9 +462,9 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
       requestKey: requestKeySchema(),
     },
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
-  }, async ({ prompt, model, size, count, approvedEstimatedCostMicros, requestKey }) => toolResult(async () => accepted(await enrichBatch(options, await options.batchManager.create({
+  }, async ({ prompt, model, size, count, approvedEstimatedCostMicros, requestKey }) => toolResult(async () => accepted(await options.batchManager.create({
     prompt, offeringId: model, size, count, approvedEstimatedCostMicros, requestKey,
-  })))));
+  }))));
 
   return server;
 }
@@ -533,14 +539,20 @@ async function imageDescriptor(options: DesktopMcpServerOptions, id: string, nam
   };
 }
 
-function accepted(batch: Awaited<ReturnType<typeof enrichBatch>>) {
+function accepted(batch: BatchSnapshot) {
   const agentOwned = batch.jobs.some((job) => job.status === 'queued' && job.operation === 'agent');
+  if (!agentOwned) {
+    return {
+      accepted: true,
+      execution: 'background',
+      message: '已交给 Esse 后台生成。',
+      nextAction: 'Reply exactly with message, then end the current task. Do not call another Esse tool unless the user sends a new explicit request.',
+    } as const;
+  }
   return {
     accepted: true,
-    execution: agentOwned ? 'current-agent' : 'background',
-    message: agentOwned
-      ? 'Esse accepted Agent-owned jobs. The current Agent must start each queued job, generate from its exact prompt and referenceImagePaths, then complete or fail it.'
-      : '已交给 Esse 后台生成。',
+    execution: 'current-agent',
+    message: 'Esse accepted Agent-owned jobs. The current Agent must start each queued job, generate from its exact prompt and referenceImagePaths, then complete or fail it.',
     batch: {
       id: batch.id,
       title: batch.title,
@@ -553,7 +565,7 @@ function accepted(batch: Awaited<ReturnType<typeof enrichBatch>>) {
       canceled: batch.canceled,
       jobs: batch.jobs.map((job) => ({ id: job.id, name: job.name, status: job.status, operation: job.operation })),
     },
-  };
+  } as const;
 }
 
 async function agentJobDescriptor(options: DesktopMcpServerOptions, job: BatchSnapshot['jobs'][number]) {

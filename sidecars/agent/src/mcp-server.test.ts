@@ -54,6 +54,10 @@ describe('Esse MCP server', () => {
     });
     const client = new Client({ name: 'workbuddy-test', version: '1.0.0' });
     await client.connect(transport);
+    const serverInstructions = client.getInstructions();
+    expect(serverInstructions).toContain('not an image-generation model or model architecture');
+    expect(serverInstructions).toContain('do not ask for another confirmation');
+    expect(serverInstructions).toContain('end the current task immediately');
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
       'open_esse',
@@ -82,8 +86,12 @@ describe('Esse MCP server', () => {
       'referenceImagePaths',
       'referenceImages',
     ]));
-    expect(tools.tools.find((tool) => tool.name === 'list_image_batches')?.description).toContain('不得用它取回、复制或展示产物');
-    expect(tools.tools.find((tool) => tool.name === 'get_image_batch')?.description).toContain('不得因此把产物复制或展示到 WorkBuddy');
+    expect(tools.tools.find((tool) => tool.name === 'create_image_batch')?.description).toContain('不是某种图像模型或模型架构');
+    for (const toolName of ['create_image_batch', 'append_image_batch_jobs', 'modify_selected_images', 'generate_image']) {
+      expect(tools.tools.find((tool) => tool.name === toolName)?.description).toContain('立即结束当前任务');
+    }
+    expect(tools.tools.find((tool) => tool.name === 'list_image_batches')?.description).toContain('刚刚成功派工不等于用户要求跟踪');
+    expect(tools.tools.find((tool) => tool.name === 'get_image_batch')?.description).toContain('不得主动轮询');
 
     const prompts = await client.listPrompts();
     expect(prompts.prompts.map((prompt) => prompt.name)).toContain('batch-generate-images');
@@ -97,6 +105,9 @@ describe('Esse MCP server', () => {
     expect(desktopSkillText).toContain('execution=background');
     expect(desktopSkillText).toContain('chargeState=unknown');
     expect(desktopSkillText).toContain('reply only 已交给 Esse 后台生成。');
+    expect(desktopSkillText).toContain('not an image-generation model or model architecture');
+    expect(desktopSkillText).toContain('generic warning about text, numbers, charts, infographics');
+    expect(desktopSkillText).toContain('end the current task immediately');
     expect(desktopSkillText).toContain('Do not mention Provider, model, balance, unit price, total price, micros');
     expect(desktopSkillText).toContain('do not call list_image_batches, get_image_batch, render_image_batch, open_esse');
     expect(desktopSkillText).toContain('do not copy generated images into the Agent workspace');
@@ -124,13 +135,20 @@ describe('Esse MCP server', () => {
         requestKey: 'workbuddy-test-request-1',
       },
     });
-    const accepted = firstJson(result) as { accepted: boolean; execution: string; message: string; batch: { id: string } };
-    expect(accepted).toMatchObject({ accepted: true, execution: 'background', message: '已交给 Esse 后台生成。' });
-    expect(accepted.batch).not.toHaveProperty('offering');
-    expect(accepted.batch).not.toHaveProperty('estimatedCostMicros');
+    const accepted = firstJson(result) as { accepted: boolean; execution: string; message: string; nextAction: string };
+    expect(accepted).toEqual({
+      accepted: true,
+      execution: 'background',
+      message: '已交给 Esse 后台生成。',
+      nextAction: 'Reply exactly with message, then end the current task. Do not call another Esse tool unless the user sends a new explicit request.',
+    });
+    expect(accepted).not.toHaveProperty('batch');
     expect(JSON.stringify(accepted)).not.toMatch(/Tuzi|price|micros|\.png|\\outputs\\/i);
+    const acceptedBatch = fixture.batchManager.list().find((batch) => batch.title === 'Green cat batch');
+    expect(acceptedBatch).toBeTruthy();
+    const acceptedBatchId = acceptedBatch!.id;
     await vi.waitFor(() => expect(generated).toHaveBeenCalledTimes(1));
-    expect(fixture.batchManager.get(accepted.batch.id).status).toBe('running');
+    expect(fixture.batchManager.get(acceptedBatchId).status).toBe('running');
 
     const generatedBytes = testPng('generated-original');
     completeGeneration({
@@ -138,8 +156,8 @@ describe('Esse MCP server', () => {
       items: [{ b64_json: generatedBytes.toString('base64') }],
       reused: false,
     });
-    await vi.waitFor(() => expect(fixture.batchManager.get(accepted.batch.id).status).toBe('completed'));
-    const completed = fixture.batchManager.get(accepted.batch.id);
+    await vi.waitFor(() => expect(fixture.batchManager.get(acceptedBatchId).status).toBe('completed'));
+    const completed = fixture.batchManager.get(acceptedBatchId);
     const imageId = completed.jobs[0].outputImageId;
     expect(imageId).toBeTruthy();
     expect(await readFile(await fixture.imageStore.pathForId(imageId!))).toEqual(generatedBytes);
@@ -149,34 +167,52 @@ describe('Esse MCP server', () => {
     const modification = firstJson(await client.callTool({
       name: 'modify_selected_images',
       arguments: {
-        batchId: accepted.batch.id,
+        batchId: acceptedBatchId,
         imageIds: [imageId],
         referenceImagePaths: [backgroundPath],
         instructions: 'place the subject in the attached home interior',
         requestKey: 'workbuddy-modify-with-attachment-1',
       },
     })) as { accepted: boolean; execution: string; message: string };
-    expect(modification).toMatchObject({ accepted: true, execution: 'background', message: '已交给 Esse 后台生成。' });
-    await vi.waitFor(() => expect(fixture.batchManager.get(accepted.batch.id).status).toBe('completed'));
-    const modifiedJob = fixture.batchManager.get(accepted.batch.id).jobs[0];
+    expect(modification).toMatchObject({ accepted: true, execution: 'background', message: '已交给 Esse 后台生成。', nextAction: expect.stringContaining('end the current task') });
+    expect(modification).not.toHaveProperty('batch');
+    expect(modification).not.toHaveProperty('modifiedJobIds');
+    await vi.waitFor(() => expect(fixture.batchManager.get(acceptedBatchId).status).toBe('completed'));
+    const modifiedJob = fixture.batchManager.get(acceptedBatchId).jobs[0];
     expect(modifiedJob.referenceImageIds).toHaveLength(2);
     expect(modifiedJob.referenceImageIds[0]).toBe(imageId);
     const importedBackground = await fixture.imageStore.get(modifiedJob.referenceImageIds[1]);
     expect(importedBackground).toMatchObject({ sourceFileName: 'Clipboard_Screenshot.png', prompt: 'Esse reference image' });
 
+    const appended = firstJson(await client.callTool({
+      name: 'append_image_batch_jobs',
+      arguments: {
+        batchId: acceptedBatchId,
+        prompt: 'A second small green cat',
+        requestKey: 'workbuddy-append-background-1',
+      },
+    }));
+    expect(appended).toMatchObject({ accepted: true, execution: 'background', nextAction: expect.stringContaining('end the current task') });
+    expect(appended).not.toHaveProperty('batch');
+    expect(appended).not.toHaveProperty('appendedJobIds');
+    await vi.waitFor(() => expect(fixture.batchManager.get(acceptedBatchId).status).toBe('completed'));
+
     const generatedPath = await fixture.imageStore.pathForId(imageId!);
     const pathBatchResult = await client.callTool({
       name: 'create_image_batch',
       arguments: {
+        title: 'Exact local path batch',
         prompt: 'fallback prompt',
         imagePaths: [generatedPath],
         perImagePrompts: { [path.basename(generatedPath)]: 'edit the exact local input' },
         requestKey: 'workbuddy-path-batch-1',
       },
     });
-    const pathBatch = firstJson(pathBatchResult) as { batch: { id: string } };
-    await vi.waitFor(() => expect(fixture.batchManager.get(pathBatch.batch.id).status).toBe('completed'));
-    expect(fixture.batchManager.get(pathBatch.batch.id).jobs[0]).toMatchObject({
+    expect(firstJson(pathBatchResult)).not.toHaveProperty('batch');
+    const pathBatch = fixture.batchManager.list().find((batch) => batch.title === 'Exact local path batch');
+    expect(pathBatch).toBeTruthy();
+    await vi.waitFor(() => expect(fixture.batchManager.get(pathBatch!.id).status).toBe('completed'));
+    expect(fixture.batchManager.get(pathBatch!.id).jobs[0]).toMatchObject({
       prompt: 'edit the exact local input',
       referenceImageIds: [expect.any(String)],
     });
@@ -184,7 +220,7 @@ describe('Esse MCP server', () => {
     const listed = firstJson(await client.callTool({ name: 'list_image_batches', arguments: { limit: 10 } })) as {
       batches: Array<{ id: string; jobs?: unknown[]; images?: unknown[] }>;
     };
-    expect(listed.batches.find((batch) => batch.id === pathBatch.batch.id)).toMatchObject({
+    expect(listed.batches.find((batch) => batch.id === pathBatch!.id)).toMatchObject({
       jobs: [expect.objectContaining({ prompt: 'edit the exact local input' })],
       images: [expect.objectContaining({ name: '图1' })],
     });

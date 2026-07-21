@@ -17,6 +17,14 @@ The Agent Sidecar snapshot preserves the following Plugin behavior semantically:
 
 The initial import deliberately excludes the private commercial server, user accounts, balances, channel administration, hosted billing, and all credentials. It also leaves the Plugin and Sidecar stores isolated.
 
+## 2026-07-21 — Agent handoff hardening
+
+- Esse is described consistently as a Provider-neutral local image task workspace and execution harness, not as an image model or model architecture. Agents must not infer capabilities such as text or number rendering from Esse itself.
+- A sufficiently specified request that names Esse is submitted without a generic model-capability warning or second confirmation.
+- The same contract is delivered through MCP initialization instructions, the optional MCP prompt, and the model-visible descriptions of every Provider submission tool.
+- Provider-backed acceptance now returns only the background execution flag, the short user reply, and an explicit stop directive. It omits batch IDs, job IDs, status, and other details that could invite unsolicited monitoring. Agent-owned generation still returns the exact IDs required for callbacks.
+- Status and render tools explicitly treat a completed handoff as insufficient authorization to poll; only a later explicit user request permits status lookup or output retrieval.
+
 ## Deferred
 
 - shared domain/provider/UI packages;
