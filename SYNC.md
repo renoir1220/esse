@@ -30,6 +30,12 @@ The initial import deliberately excludes the private commercial server, user acc
 - The Windows Agent Sidecar uses a light integrated draggable title bar with native window controls and removes Electron's default `File / Edit / View / Window` menu. The image workspace no longer opens inside a visually separate black frame.
 - Non-Windows builds retain their native window chrome and menu behavior.
 
+## 2026-07-21 — Agent Sidecar batch output access
+
+- Opening a batch output folder now creates and opens one managed per-batch folder containing the batch's current images and preserved versions, matching the Plugin's batch-scoped output-folder contract.
+- The Sidecar uses filesystem links where supported, keeps the original image-store paths stable, and removes its managed batch links when an image is moved to Esse's trash.
+- The Sidecar home navigation now uses the Esse application icon, and the Electron window no longer imposes a minimum width.
+
 ## Deferred
 
 - shared domain/provider/UI packages;

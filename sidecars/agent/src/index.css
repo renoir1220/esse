@@ -55,6 +55,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .header-actions > button, .header-icon-action { height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; transition: background-color 120ms ease, color 120ms ease; }
 .header-actions > button:hover, .header-icon-action:hover, .header-actions > button.is-active { background: var(--surface-2); color: var(--text); }
 .header-actions > button.is-active { font-weight: 600; }
+.esse-nav-icon { width: 17px; height: 17px; flex: none; border-radius: 4px; object-fit: cover; }
 .header-icon-action { width: 32px; padding: 0; }
 .header-menu { position: absolute; z-index: 48; top: calc(100% + 6px); left: 0; min-width: 172px; padding: 5px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 12px 32px rgba(0,0,0,.14); }
 .header-menu button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: var(--font-size-control); cursor: pointer; }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { access, copyFile, mkdir, readFile, rename, stat, writeFile } from 'node:fs/promises';
+import { access, copyFile, link, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { decodeImageBase64, detectImageFormat, MAX_IMAGE_BYTES } from './image-format';
 import { downloadRemoteImage } from './remote-image-download';
@@ -7,6 +7,7 @@ import type { SavedImage } from './types';
 
 interface StoredImage extends Omit<SavedImage, 'mediaUrl'> {
   relativePath: string;
+  batchLinks?: string[];
   hidden?: boolean;
 }
 
@@ -124,6 +125,58 @@ export class ImageStore {
     return fullPath;
   }
 
+  async prepareBatchFolder(batchId: string, batchTitle: string, images: Array<{ id: string; name: string }>): Promise<string> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(batchId)) throw new Error('Invalid batch ID.');
+    const relativeFolder = path.join('batches', `${safeFileStem(batchTitle)}-${batchId.slice(0, 8)}`);
+    const batchFolder = path.join(this.outputDir, relativeFolder);
+    const task = this.writeQueue.then(async () => {
+      const library = await this.readLibrary();
+      await mkdir(batchFolder, { recursive: true });
+      let changed = false;
+      const uniqueImages = [...new Map(images.map((image) => [image.id, image])).values()];
+      const linkOwners = new Map<string, string>();
+      for (const image of library.images) {
+        for (const batchLink of image.batchLinks ?? []) linkOwners.set(batchLink, image.id);
+      }
+
+      for (const requested of uniqueImages) {
+        const image = library.images.find((candidate) => candidate.id === requested.id);
+        if (!image) continue;
+        const source = this.resolveRelative(image.relativePath);
+        try {
+          await access(source);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+          throw error;
+        }
+        const existingRelative = (image.batchLinks ?? []).find((batchLink) => path.dirname(batchLink) === relativeFolder);
+        const relativeLink = existingRelative || await this.availableBatchLink(relativeFolder, requested.name, source, image.id, linkOwners);
+        const destination = this.resolveRelative(relativeLink);
+        try {
+          await access(destination);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          try {
+            await link(source, destination);
+          } catch (linkError) {
+            if (!['EXDEV', 'EPERM', 'EACCES', 'ENOTSUP'].includes((linkError as NodeJS.ErrnoException).code ?? '')) throw linkError;
+            await copyFile(source, destination);
+          }
+        }
+        if (!image.batchLinks?.includes(relativeLink)) {
+          image.batchLinks = [...(image.batchLinks ?? []), relativeLink];
+          linkOwners.set(relativeLink, image.id);
+          changed = true;
+        }
+      }
+
+      if (changed) await this.writeLibrary(library);
+    });
+    this.writeQueue = task.then(() => undefined, () => undefined);
+    await task;
+    return batchFolder;
+  }
+
   async importFile(input: {
     sourcePath: string;
     requestId: string;
@@ -176,6 +229,13 @@ export class ImageStore {
           continue;
         }
         const source = this.resolveRelative(image.relativePath);
+        for (const batchLink of image.batchLinks ?? []) {
+          try {
+            await unlink(this.resolveRelative(batchLink));
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          }
+        }
         const trashRelative = path.join('.trash', `${Date.now()}-${image.id}-${path.basename(source)}`);
         const destination = this.resolveRelative(trashRelative);
         await mkdir(path.dirname(destination), { recursive: true });
@@ -221,6 +281,25 @@ export class ImageStore {
     return fullPath;
   }
 
+  private async availableBatchLink(relativeFolder: string, imageName: string, source: string, imageId: string, owners: Map<string, string>): Promise<string> {
+    const extension = path.extname(source).toLowerCase();
+    const stem = safeFileStem(imageName);
+    const candidates = [`${stem}${extension}`, `${stem}-${imageId.slice(0, 8)}${extension}`];
+    for (const fileName of candidates) {
+      const relativeLink = path.join(relativeFolder, fileName);
+      const owner = owners.get(relativeLink);
+      if (owner === imageId) return relativeLink;
+      if (owner) continue;
+      try {
+        await access(this.resolveRelative(relativeLink));
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return relativeLink;
+        throw error;
+      }
+    }
+    return path.join(relativeFolder, `${stem}-${imageId}${extension}`);
+  }
+
   private async readLibrary(): Promise<LibraryFile> {
     try {
       const parsed = JSON.parse(await readFile(this.libraryPath, 'utf8')) as LibraryFile;
@@ -247,4 +326,10 @@ export class ImageStore {
     this.writeQueue = task.then(() => undefined, () => undefined);
     await task;
   }
+}
+
+function safeFileStem(value: string): string {
+  const withoutControls = [...value.trim()].map((character) => character.charCodeAt(0) < 32 ? '-' : character).join('');
+  const normalized = withoutControls.replace(/[<>:"/\\|?*]/g, '-').replace(/[. ]+$/g, '').slice(0, 80) || 'image';
+  return /^(con|prn|aux|nul|com[1-9]|lpt[1-9])$/i.test(normalized) ? `_${normalized}` : normalized;
 }

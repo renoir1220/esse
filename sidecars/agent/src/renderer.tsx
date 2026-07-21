@@ -10,7 +10,6 @@ import {
   DotsThree,
   DownloadSimple,
   FolderSimple,
-  HouseSimple,
   ImageSquare,
   Info,
   Lightning,
@@ -27,6 +26,8 @@ import { initialImageZoom, zoomImageAtPoint } from './image-zoom';
 import { shouldDismissOverlay } from './overlay-dismiss';
 import { blankOffering, createCustomProviderDraft, createTuziProviderDraft, offeringFromTuziModel, TUZI_PROVIDER_PRESETS, tuziProviderPresetForDraft } from './provider-catalog';
 import type { BatchSnapshot, DesktopState, ImageMetadata, OfferingConfig, OfferingSummary, ProviderDraft, ProviderProfile, SavedImage, SaveProviderInput } from './types';
+
+const esseIconUrl = new URL('../assets/esse.png', import.meta.url).href;
 
 type Tab = 'batches' | 'browse' | 'settings';
 
@@ -189,7 +190,7 @@ function App() {
           </div> : null}
         </div>
         <nav className="header-actions" aria-label="Esse 页面">
-          <button className={tab === 'batches' ? 'is-active' : ''} onClick={() => setTab('batches')}><HouseSimple size={16} weight={tab === 'batches' ? 'fill' : 'regular'} /><span>首页</span></button>
+          <button className={tab === 'batches' ? 'is-active' : ''} onClick={() => setTab('batches')}><img className="esse-nav-icon" src={esseIconUrl} alt="" /><span>首页</span></button>
           <button className={tab === 'browse' ? 'is-active' : ''} onClick={() => setTab('browse')}><SquaresFour size={16} /><span>浏览</span></button>
           <button className={tab === 'settings' ? 'is-active' : ''} onClick={() => setTab('settings')}><SlidersHorizontal size={16} /><span>设置</span></button>
         </nav>

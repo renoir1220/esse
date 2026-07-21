@@ -88,7 +88,6 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: qaViewport?.width ?? 1320,
     height: qaViewport?.height ?? 860,
-    minWidth: qaViewport ? 720 : 980,
     minHeight: qaViewport ? 640 : 640,
     show: !smokeMode && !qaCapturePath,
     title: 'Esse',
@@ -286,8 +285,13 @@ function registerIpc(): void {
     return result.filePath;
   });
   ipcMain.handle('batches:open-folder', async (_event, batchId: unknown) => {
-    batchManager.get(requiredId(batchId, 'batch'));
-    const error = await shell.openPath(imageStore.outputDir);
+    const batch = batchManager.get(requiredId(batchId, 'batch'));
+    const images = batch.jobs.flatMap((job) => [
+      ...(job.outputImageId ? [{ id: job.outputImageId, name: job.name }] : []),
+      ...job.backups.map((backup) => ({ id: backup.imageId, name: backup.name })),
+    ]);
+    const batchFolder = await imageStore.prepareBatchFolder(batch.id, batch.title, images);
+    const error = await shell.openPath(batchFolder);
     if (error) throw new Error(error);
   });
   ipcMain.handle('mcp:copy-workbuddy-config', async () => {
