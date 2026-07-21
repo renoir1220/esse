@@ -9,6 +9,19 @@ case "$arch" in
   *) echo "Usage: verify-macos-bundle.sh <arm64|x64> [--require-signed]" >&2; exit 2 ;;
 esac
 
+require_square_icon_size() {
+  local expected="$1"
+  local directory="$2"
+  local image width height
+  while IFS= read -r image; do
+    width="$(/usr/bin/sips -g pixelWidth "$image" 2>/dev/null | /usr/bin/awk '/pixelWidth/ { print $2 }')"
+    height="$(/usr/bin/sips -g pixelHeight "$image" 2>/dev/null | /usr/bin/awk '/pixelHeight/ { print $2 }')"
+    if test "$width" = "$expected" && test "$height" = "$expected"; then return 0; fi
+  done < <(/usr/bin/find "$directory" -type f -name '*.png' -print)
+  echo "Esse icon is missing a ${expected}x${expected} frame." >&2
+  return 1
+}
+
 sidecar_root="$(cd "$(dirname "$0")/.." && pwd)"
 app="$sidecar_root/out/Esse-darwin-$arch/Esse.app"
 plist="$app/Contents/Info.plist"
@@ -25,12 +38,14 @@ test -f "$app/Contents/Resources/esse.png"
 cmp "$sidecar_root/assets/esse.icns" "$app/Contents/Resources/$icon_file"
 cmp "$sidecar_root/assets/esse.png" "$app/Contents/Resources/esse.png"
 /usr/bin/file "$app/Contents/MacOS/$executable" | /usr/bin/grep -q "$expected_arch"
+printf 'Verified macOS bundle metadata, resources, and %s executable.\n' "$expected_arch"
 
 iconset="$(mktemp -d)/esse.iconset"
 /usr/bin/iconutil --convert iconset --output "$iconset" "$app/Contents/Resources/$icon_file"
-test -s "$iconset/icon_16x16.png"
-test -s "$iconset/icon_128x128@2x.png"
-test -s "$iconset/icon_512x512@2x.png"
+require_square_icon_size 16 "$iconset"
+require_square_icon_size 256 "$iconset"
+require_square_icon_size 1024 "$iconset"
+printf 'Verified Esse icon frames at 16px, 256px, and 1024px.\n'
 
 if test "$require_signed" = "--require-signed"; then
   /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
