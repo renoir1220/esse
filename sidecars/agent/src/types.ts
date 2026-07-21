@@ -258,6 +258,7 @@ export interface McpStatus {
 }
 
 export interface EsseDesktopBridge {
+  readonly platform: string;
   getState(): Promise<DesktopState>;
   refresh(): Promise<DesktopState>;
   saveProvider(input: SaveProviderInput): Promise<DesktopState>;

@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import type { EsseDesktopBridge, ModifyBatchInput, SaveProviderInput } from './types';
 
 const bridge: EsseDesktopBridge = {
+  platform: process.platform,
   getState: () => ipcRenderer.invoke('state:get'),
   refresh: () => ipcRenderer.invoke('state:get'),
   saveProvider: (input: SaveProviderInput) => ipcRenderer.invoke('providers:save', input),

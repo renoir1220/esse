@@ -30,7 +30,8 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--font-si
 button, input, select, textarea { font: inherit; color: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 
-.window-titlebar { position: fixed; z-index: 200; top: env(titlebar-area-y, 0); left: env(titlebar-area-x, 0); width: env(titlebar-area-width, 100%); height: env(titlebar-area-height, 0); display: flex; align-items: center; overflow: hidden; padding: 0 12px; background: #fff; color: var(--muted); font-size: var(--font-size-control); font-weight: 600; user-select: none; -webkit-app-region: drag; }
+.window-titlebar { position: fixed; z-index: 200; top: env(titlebar-area-y, 0); left: env(titlebar-area-x, 0); width: env(titlebar-area-width, 100%); height: env(titlebar-area-height, 0); display: flex; align-items: center; gap: 7px; overflow: hidden; padding: 0 12px; background: #fff; color: var(--muted); font-size: var(--font-size-control); font-weight: 600; user-select: none; -webkit-app-region: drag; }
+.window-titlebar img { width: 18px; height: 18px; border-radius: 4px; object-fit: cover; }
 .window-titlebar span { white-space: nowrap; }
 .app-shell { width: 100%; max-width: 1180px; min-height: 100vh; margin: 0 auto; padding: env(titlebar-area-height, 0) 18px 18px; }
 .app-header { position: sticky; z-index: 30; top: env(titlebar-area-height, 0); min-height: 58px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: 18px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.96); backdrop-filter: blur(16px); }

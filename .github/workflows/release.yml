@@ -116,6 +116,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run make
+      - run: npm run verify:icons:windows
+      - run: npm run verify:package:windows
       - name: Verify Agent Sidecar Authenticode signatures
         if: github.ref_name != 'v0.3.0-alpha.2' && github.ref_name != 'v0.3.0'
         run: npm run verify:signatures
@@ -133,12 +135,7 @@ jobs:
           }
           Write-Warning "$env:GITHUB_REF_NAME is an explicitly unsigned release and may trigger Windows publisher or reputation warnings."
       - name: Stage Esse Agent Sidecar installer
-        shell: pwsh
-        run: |
-          $version = (Get-Content -Raw -Encoding UTF8 .\package.json | ConvertFrom-Json).version
-          if ($env:GITHUB_REF_NAME -ne "v$version") { throw "Agent Sidecar version does not match Git tag." }
-          New-Item -ItemType Directory -Force -Path ..\..\release | Out-Null
-          Copy-Item -LiteralPath .\out\make\squirrel.windows\x64\Esse-Setup.exe -Destination "..\..\release\esse-agent-sidecar-windows-x64-v$version.exe"
+        run: npm run stage:release -- windows x64
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: esse-agent-sidecar-windows-x64
@@ -146,8 +143,78 @@ jobs:
           if-no-files-found: error
           retention-days: 7
 
+  package-agent-sidecar-macos:
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: x64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        working-directory: sidecars/agent
+    steps:
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: sidecars/agent/package-lock.json
+      - run: npm ci
+      - name: Configure Developer ID signing and notarization
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_NOTARY_API_KEY_BASE64: ${{ secrets.MACOS_NOTARY_API_KEY_BASE64 }}
+          MACOS_NOTARY_API_KEY_ID: ${{ secrets.MACOS_NOTARY_API_KEY_ID }}
+          MACOS_NOTARY_API_ISSUER_ID: ${{ secrets.MACOS_NOTARY_API_ISSUER_ID }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          test -n "$MACOS_CERTIFICATE_P12_BASE64"
+          test -n "$MACOS_CERTIFICATE_PASSWORD"
+          test -n "$MACOS_NOTARY_API_KEY_BASE64"
+          test -n "$MACOS_NOTARY_API_KEY_ID"
+          test -n "$MACOS_NOTARY_API_ISSUER_ID"
+          test -n "$MACOS_SIGN_IDENTITY"
+          certificate="$RUNNER_TEMP/esse-developer-id.p12"
+          notary_key="$RUNNER_TEMP/AuthKey_${{ secrets.MACOS_NOTARY_API_KEY_ID }}.p8"
+          keychain="$RUNNER_TEMP/esse-signing.keychain-db"
+          keychain_password="$(uuidgen)"
+          printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | /usr/bin/base64 -D > "$certificate"
+          printf '%s' "$MACOS_NOTARY_API_KEY_BASE64" | /usr/bin/base64 -D > "$notary_key"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          security list-keychains -d user -s "$keychain"
+      - run: npm run typecheck
+      - run: npm test
+      - name: Build signed and notarized macOS Agent Sidecar
+        env:
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          MACOS_NOTARY_API_KEY_PATH: ${{ runner.temp }}/AuthKey_${{ secrets.MACOS_NOTARY_API_KEY_ID }}.p8
+          MACOS_NOTARY_API_KEY_ID: ${{ secrets.MACOS_NOTARY_API_KEY_ID }}
+          MACOS_NOTARY_API_ISSUER_ID: ${{ secrets.MACOS_NOTARY_API_ISSUER_ID }}
+        run: npm run make:macos:${{ matrix.arch }}
+      - run: bash scripts/verify-macos-bundle.sh ${{ matrix.arch }} --require-signed
+      - run: npm run stage:release -- macos ${{ matrix.arch }}
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: esse-agent-sidecar-macos-${{ matrix.arch }}
+          path: release/esse-agent-sidecar-macos-${{ matrix.arch }}-v*.dmg
+          if-no-files-found: error
+          retention-days: 7
+
   publish:
-    needs: [package, package-agent-sidecar]
+    needs: [package, package-agent-sidecar, package-agent-sidecar-macos]
     runs-on: windows-latest
     permissions:
       contents: write
@@ -177,8 +244,12 @@ jobs:
           }
           $sidecar = Get-Content -Raw -Encoding UTF8 .\release\sidecar-latest.json | ConvertFrom-Json
           if ($sidecar.tag -ne $env:GITHUB_REF_NAME) { throw "sidecar-latest.json tag does not match Git tag" }
-          $sidecarActual = (Get-FileHash -Algorithm SHA256 (Join-Path .\release $sidecar.windowsX64Asset)).Hash.ToLowerInvariant()
-          if ($sidecarActual -ne $sidecar.windowsX64Sha256) { throw "Checksum mismatch for $($sidecar.windowsX64Asset)" }
+          foreach ($prefix in @("windowsX64", "macosArm64", "macosX64")) {
+            $asset = $sidecar."${prefix}Asset"
+            $expected = $sidecar."${prefix}Sha256"
+            $actual = (Get-FileHash -Algorithm SHA256 (Join-Path .\release $asset)).Hash.ToLowerInvariant()
+            if ($actual -ne $expected) { throw "Checksum mismatch for $asset" }
+          }
       - name: Publish GitHub Release
         shell: pwsh
         env:

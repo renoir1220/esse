@@ -36,8 +36,16 @@ The initial import deliberately excludes the private commercial server, user acc
 - The Sidecar uses filesystem links where supported, keeps the original image-store paths stable, and removes its managed batch links when an image is moved to Esse's trash.
 - The Sidecar home navigation now uses the Esse application icon, and the Electron window no longer imposes a minimum width.
 
+## 2026-07-21 — macOS Agent Sidecar parity
+
+- Windows x64 and macOS arm64/x64 now package the same Sidecar source and runtime core; only paths, native window behavior, signing/notarization, and installer artifacts vary by platform.
+- macOS keeps the native title bar and application menu, stays active after the last window closes, uses Keychain-backed Electron safe storage, and stores data under `~/Library/Application Support/esse-agent-sidecar`.
+- The macOS release pipeline builds architecture-specific DMGs, checks bundle IDs, Mach-O architecture, bundled Esse icon resources, and packaged-app startup, and requires Developer ID signing plus Apple notarization for a published Release.
+- The Windows Squirrel application ID no longer owns `%LOCALAPPDATA%\esse`, preventing the installer from deleting Codex Plugin history. The installer root, Plugin data, and Sidecar data now have three distinct identities.
+- Windows executable, installer, runtime title bar, macOS app bundle, and DMG all use the Esse application icon rather than Electron defaults.
+
 ## Deferred
 
 - shared domain/provider/UI packages;
-- macOS Agent Sidecar packaging and manual validation;
+- physical-device macOS UI validation beyond GitHub-hosted arm64/x64 packaging and smoke checks;
 - a true standalone application under `apps/standalone`.

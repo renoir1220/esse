@@ -582,7 +582,8 @@ function EmptyState({ title, copy }: { title: string; copy: string }) {
 }
 
 function WindowTitlebar() {
-  return <div className="window-titlebar" aria-hidden="true"><span>Esse</span></div>;
+  if (window.esse.platform !== 'win32') return null;
+  return <div className="window-titlebar" aria-hidden="true"><img src={esseIconUrl} alt="" /><span>Esse</span></div>;
 }
 
 function isTerminal(batch: BatchSnapshot) { return batch.queued === 0 && batch.running === 0; }
