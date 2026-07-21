@@ -1,41 +1,35 @@
 ## 简体中文
 
-### Esse 0.3.0-alpha.1
+### Esse 0.3.0-alpha.2
 
 #### Agent Sidecar（Windows x64 预览）
 
-- 新增面向 WorkBuddy 等本地 Agent 的 Esse Windows 安装包，提供与 Codex Plugin 对齐的批次、图库、历史版本、选择、修改、大图查看和设置工作台。
-- 改为完全本地的 Provider 配置：内置兔子 Provider 与常用图片模型预设，但不包含 API Key，也不依赖 Esse 云端后端、账户、余额或渠道管理。
-- Agent 提交 Provider 任务后立即返回，Esse 在后台持久执行；普通任务不再反复播报金额、轮询进度或把生成结果主动复制回 Agent 工作区。
-- 修复参考图交接契约：粘贴或附加的图片必须以真实本地文件传入；任务详情保留参考图来源，无法传输时不会退化为误导性的纯文字修改。
-- 修复批次下拉、更多菜单和大图遮罩的鼠标关闭行为；单张图片保持与多图一致的缩略图尺度。
+- Windows 窗口改为与工作台一致的白色一体化标题栏，移除黑色的 Electron 默认菜单框，同时保留原生最小化、最大化和关闭按钮。
+- Esse 品牌图标现在用于程序窗口、`esse.exe` 和 Windows 安装程序，不再显示 Electron 默认图标。
+- Agent 把 Provider 任务持久交给 Esse 后会立即结束当前任务，不再主动轮询、播报状态或把结果复制回 Agent 工作区；用户之后明确询问时仍可查询。
+- 明确 Esse 是调用用户已配置 Provider 与模型的本地图片任务工作台，不会因推测某类模型可能不擅长文字、数字或图表而中断信息充分的请求。
+- 增加公开代码签名政策以及应用程序和安装程序的签名验证门禁，为 SignPath Foundation 审批后的可信发布做好准备。
 
-当前 Agent Sidecar 是未签名的 Windows x64 alpha 预览；macOS 包尚未发布，也不宣称完成 macOS 人工验证。
+⚠️ **本版本仍是未签名的测试版。Windows 可能显示“未知发布者”或 SmartScreen 警告。不要关闭 Windows 安全功能；请只从本 Release 下载并核对 `sidecar-latest.json` 或 `checksums.txt`。**
 
-#### Codex Plugin
+Agent Sidecar 当前仅发布 Windows x64 安装包，不宣称完成 macOS Sidecar 验证。
 
-- 源码迁移到 `plugins/codex`，发布包继续保留原文件名与内部安装布局，兼容已有安装器和升级路径。
-- Plugin 与 Agent Sidecar 现在从同一公开仓库、同一版本标签发布，同时仍可独立构建和运行，不相互依赖。
-
-[查看 v0.2.4-alpha.1...v0.3.0-alpha.1 完整变更](../../compare/v0.2.4-alpha.1...v0.3.0-alpha.1)
+[查看 v0.3.0-alpha.1...v0.3.0-alpha.2 完整变更](../../compare/v0.3.0-alpha.1...v0.3.0-alpha.2)
 
 ## English
 
-### Esse 0.3.0-alpha.1
+### Esse 0.3.0-alpha.2
 
 #### Agent Sidecar (Windows x64 preview)
 
-- Adds an Esse Windows installer for WorkBuddy and other local Agents, with batch, library, history, selection, editing, lightbox, and settings workflows aligned with the Codex Plugin.
-- Replaces the hosted commercial path with fully local Provider settings. Tuzi Provider and common image-model presets are included, but no API key, Esse backend, account, balance, or channel administration is bundled.
-- Returns control as soon as Provider work is durably accepted while Esse continues in the background. Routine tasks no longer narrate prices, poll progress, or copy generated output back into the Agent workspace.
-- Fixes reference-image handoff: pasted and attached images must be transferred as real local files, their source is recorded in task details, and failed attachment transfer never degrades into a misleading text-only edit.
-- Fixes outside-click dismissal for the batch picker and menus, closes the lightbox through its mask, and keeps a single-image thumbnail consistent with multi-image grids.
+- Replaces the black default Electron menu frame with a light integrated title bar aligned with the workspace while retaining native minimize, maximize, and close controls.
+- Applies the Esse brand icon to the window, `esse.exe`, and Windows installer instead of the default Electron icon.
+- Ends the current Agent task immediately after Provider work is durably handed to Esse, without unsolicited polling, status narration, or result copying. A later explicit user request can still query status.
+- Clarifies that Esse is a local image-task workspace that invokes the user's configured Provider and model, so a sufficiently specified request is not interrupted by guesses about whether a model may struggle with text, numbers, or charts.
+- Adds a public code-signing policy and signature gates for the application and installer in preparation for trusted releases after SignPath Foundation approval.
 
-The Agent Sidecar is an unsigned Windows x64 alpha preview. No macOS package is included, and this release does not claim macOS manual validation.
+⚠️ **This build is still an unsigned test release. Windows may show an “Unknown publisher” or SmartScreen warning. Do not disable Windows security features; download only from this Release and verify `sidecar-latest.json` or `checksums.txt`.**
 
-#### Codex Plugin
+The Agent Sidecar remains Windows x64 only and does not claim macOS Sidecar validation.
 
-- Moves source to `plugins/codex` while preserving historical archive names and the internal installation layout for existing installers and upgrades.
-- Publishes the Plugin and Agent Sidecar from one public repository and one version tag while keeping both distributions independently buildable and runnable.
-
-[View the full v0.2.4-alpha.1...v0.3.0-alpha.1 changelog](../../compare/v0.2.4-alpha.1...v0.3.0-alpha.1)
+[View the full v0.3.0-alpha.1...v0.3.0-alpha.2 changelog](../../compare/v0.3.0-alpha.1...v0.3.0-alpha.2)

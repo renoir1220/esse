@@ -2,7 +2,7 @@
 
 Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
-This policy applies to the Windows x64 Esse Agent Sidecar distributed from this repository's [GitHub Releases](https://github.com/renoir1220/esse/releases). The SignPath Foundation application is pending; until it is approved and the release workflow verifies a trusted Authenticode signature, Windows Sidecar builds are development artifacts and are not published as signed releases.
+This policy applies to the Windows x64 Esse Agent Sidecar distributed from this repository's [GitHub Releases](https://github.com/renoir1220/esse/releases). The SignPath Foundation application is pending. `v0.3.0-alpha.2` is a one-time, explicitly unsigned prerelease requested for testing and may trigger Windows publisher or reputation warnings. Every later release remains behind the trusted Authenticode signature and timestamp gate unless another exact exception is publicly reviewed and documented.
 
 ## Team roles
 

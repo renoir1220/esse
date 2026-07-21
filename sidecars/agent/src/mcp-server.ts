@@ -92,7 +92,7 @@ export async function startDesktopMcpServer(options: DesktopMcpServerOptions): P
 
 function createServer(options: DesktopMcpServerOptions): McpServer {
   const server = new McpServer(
-    { name: 'esse', version: '0.3.0-alpha.1' },
+    { name: 'esse', version: '0.3.0-alpha.2' },
     {
       instructions: DESKTOP_BATCH_SKILL,
     },

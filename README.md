@@ -42,7 +42,7 @@ Codex 应先阅读 [`INSTALL.md`](INSTALL.md)，再识别平台、下载 Release
 
 ## 代码签名
 
-Windows Agent Sidecar 的正式发行产物遵循仓库公开的 [Code signing policy](CODE_SIGNING.md)。发布工作流会同时验证应用程序和安装程序的 Authenticode 签名，未通过验证的构建不会发布。
+Windows Agent Sidecar 的签名发行产物遵循仓库公开的 [Code signing policy](CODE_SIGNING.md)。发布工作流会同时验证应用程序和安装程序的 Authenticode 签名；`v0.3.0-alpha.2` 是等待 SignPath Foundation 审批期间唯一明确允许的未签名预发布版本，并在 Release 中保留醒目警告。
 
 ## 仓库结构
 

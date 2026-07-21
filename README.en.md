@@ -42,7 +42,7 @@ The directories are intentionally isolated. Repository migration does not move, 
 
 ## Code signing
 
-Official Windows Agent Sidecar artifacts follow the public [Code signing policy](CODE_SIGNING.md). The release workflow verifies the Authenticode signature of both the application and installer, and refuses to publish builds that do not pass verification.
+Signed Windows Agent Sidecar artifacts follow the public [Code signing policy](CODE_SIGNING.md). The release workflow verifies the Authenticode signature of both the application and installer. `v0.3.0-alpha.2` is the sole explicitly unsigned prerelease while the SignPath Foundation application is pending, and its Release keeps a prominent warning.
 
 ## Repository layout
 

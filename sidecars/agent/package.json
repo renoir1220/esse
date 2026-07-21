@@ -1,7 +1,7 @@
 {
   "name": "@esse/agent-sidecar",
   "productName": "Esse",
-  "version": "0.3.0-alpha.1",
+  "version": "0.3.0-alpha.2",
   "description": "Esse local image workspace and Agent harness integration",
   "main": ".vite/build/main.js",
   "private": false,

@@ -13,6 +13,6 @@ npm test
 npm run make
 ```
 
-Local builds without signing environment variables emit an unsigned installer under `out/make/squirrel.windows/x64/Esse-Setup.exe`. Release builds must configure a trusted Authenticode certificate or cloud/HSM signer through the `@electron/windows-sign` environment variables and pass `npm run verify:signatures`; the release workflow refuses to publish an unsigned Agent Sidecar.
+Local builds without signing environment variables emit an unsigned installer under `out/make/squirrel.windows/x64/Esse-Setup.exe`. Release builds normally must configure a trusted Authenticode certificate or cloud/HSM signer through the `@electron/windows-sign` environment variables and pass `npm run verify:signatures`. `v0.3.0-alpha.2` is a one-time, explicitly unsigned prerelease while the SignPath Foundation application is pending; its Release notes warn users, and later releases retain the signature gate.
 
 Use `npm start` only for development debugging. Do not commit `out/`, `.vite/`, `node_modules/`, local Provider settings, credentials, inputs, outputs, or QA captures.
