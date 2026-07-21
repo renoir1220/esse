@@ -116,6 +116,22 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run make
+      - name: Verify Agent Sidecar Authenticode signatures
+        if: github.ref_name != 'v0.3.0-alpha.2'
+        run: npm run verify:signatures
+      - name: Confirm one-time unsigned alpha exception
+        if: github.ref_name == 'v0.3.0-alpha.2'
+        shell: pwsh
+        run: |
+          $targets = @(
+            '.\out\Esse-win32-x64\esse.exe',
+            '.\out\make\squirrel.windows\x64\Esse-Setup.exe'
+          )
+          foreach ($target in $targets) {
+            $signature = Get-AuthenticodeSignature -LiteralPath $target
+            if ($signature.Status -ne 'NotSigned') { throw "Expected the explicitly unsigned alpha artifact ${target}, got $($signature.Status)." }
+          }
+          Write-Warning 'v0.3.0-alpha.2 is an explicitly unsigned prerelease and may trigger Windows publisher or reputation warnings.'
       - name: Stage Esse Agent Sidecar installer
         shell: pwsh
         run: |

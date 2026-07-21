@@ -40,6 +40,10 @@ Then simply tell the Agent to “use Esse to generate images.” Once durable ba
 
 The directories are intentionally isolated. Repository migration does not move, overwrite, or delete legacy `esse-desktop` data. Windows API keys are protected with current-user DPAPI; the macOS Plugin uses Keychain.
 
+## Code signing
+
+Signed Windows Agent Sidecar artifacts follow the public [Code signing policy](CODE_SIGNING.md). The release workflow verifies the Authenticode signature of both the application and installer. `v0.3.0-alpha.2` is the sole explicitly unsigned prerelease while the SignPath Foundation application is pending, and its Release keeps a prominent warning.
+
 ## Repository layout
 
 ```text

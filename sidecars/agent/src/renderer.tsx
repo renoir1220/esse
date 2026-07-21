@@ -10,7 +10,6 @@ import {
   DotsThree,
   DownloadSimple,
   FolderSimple,
-  HouseSimple,
   ImageSquare,
   Info,
   Lightning,
@@ -27,6 +26,8 @@ import { initialImageZoom, zoomImageAtPoint } from './image-zoom';
 import { shouldDismissOverlay } from './overlay-dismiss';
 import { blankOffering, createCustomProviderDraft, createTuziProviderDraft, offeringFromTuziModel, TUZI_PROVIDER_PRESETS, tuziProviderPresetForDraft } from './provider-catalog';
 import type { BatchSnapshot, DesktopState, ImageMetadata, OfferingConfig, OfferingSummary, ProviderDraft, ProviderProfile, SavedImage, SaveProviderInput } from './types';
+
+const esseIconUrl = new URL('../assets/esse.png', import.meta.url).href;
 
 type Tab = 'batches' | 'browse' | 'settings';
 
@@ -189,7 +190,7 @@ function App() {
           </div> : null}
         </div>
         <nav className="header-actions" aria-label="Esse 页面">
-          <button className={tab === 'batches' ? 'is-active' : ''} onClick={() => setTab('batches')}><HouseSimple size={16} weight={tab === 'batches' ? 'fill' : 'regular'} /><span>首页</span></button>
+          <button className={tab === 'batches' ? 'is-active' : ''} onClick={() => setTab('batches')}><img className="esse-nav-icon" src={esseIconUrl} alt="" /><span>首页</span></button>
           <button className={tab === 'browse' ? 'is-active' : ''} onClick={() => setTab('browse')}><SquaresFour size={16} /><span>浏览</span></button>
           <button className={tab === 'settings' ? 'is-active' : ''} onClick={() => setTab('settings')}><SlidersHorizontal size={16} /><span>设置</span></button>
         </nav>
@@ -580,6 +581,10 @@ function EmptyState({ title, copy }: { title: string; copy: string }) {
   return <div className="empty-state"><div className="empty-art"><ImageSquare size={26} /></div><h1>{title}</h1><p>{copy}</p></div>;
 }
 
+function WindowTitlebar() {
+  return <div className="window-titlebar" aria-hidden="true"><span>Esse</span></div>;
+}
+
 function isTerminal(batch: BatchSnapshot) { return batch.queued === 0 && batch.running === 0; }
 function statusLabel(batch: BatchSnapshot) { if (batch.running) return `${batch.running}个生成中`; if (batch.queued) return `${batch.queued}个等待中`; if (batch.failed) return batch.succeeded ? `${batch.succeeded}成功 · ${batch.failed}失败` : `${batch.failed}个失败`; return `${batch.succeeded}张图片`; }
 function statusText(status: BatchSnapshot['jobs'][number]['status']) { return ({ queued: '等待中', running: '生成中', succeeded: '已完成', failed: '失败', canceled: '已取消' })[status]; }
@@ -592,4 +597,4 @@ function cleanError(value: unknown): string { return (value instanceof Error ? v
 
 const root = document.getElementById('root');
 if (!root) throw new Error('Renderer root is missing.');
-createRoot(root).render(<React.StrictMode><App /></React.StrictMode>);
+createRoot(root).render(<React.StrictMode><WindowTitlebar /><App /></React.StrictMode>);

@@ -30,8 +30,10 @@ body { margin: 0; background: var(--bg); color: var(--text); font: var(--font-si
 button, input, select, textarea { font: inherit; color: inherit; }
 button { -webkit-tap-highlight-color: transparent; }
 
-.app-shell { width: 100%; max-width: 1180px; min-height: 100vh; margin: 0 auto; padding: 0 18px 18px; }
-.app-header { position: sticky; z-index: 30; top: 0; min-height: 58px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: 18px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.96); backdrop-filter: blur(16px); }
+.window-titlebar { position: fixed; z-index: 200; top: env(titlebar-area-y, 0); left: env(titlebar-area-x, 0); width: env(titlebar-area-width, 100%); height: env(titlebar-area-height, 0); display: flex; align-items: center; overflow: hidden; padding: 0 12px; background: #fff; color: var(--muted); font-size: var(--font-size-control); font-weight: 600; user-select: none; -webkit-app-region: drag; }
+.window-titlebar span { white-space: nowrap; }
+.app-shell { width: 100%; max-width: 1180px; min-height: 100vh; margin: 0 auto; padding: env(titlebar-area-height, 0) 18px 18px; }
+.app-header { position: sticky; z-index: 30; top: env(titlebar-area-height, 0); min-height: 58px; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 12px; margin-bottom: 18px; border-bottom: 1px solid var(--border); background: rgba(255,255,255,.96); backdrop-filter: blur(16px); }
 .header-context { min-width: 0; display: flex; align-items: center; gap: 4px; }
 .header-context-icon { width: 26px; height: 32px; display: grid; place-items: center; color: var(--text); }
 .header-context > strong { font-size: var(--font-size-header); font-weight: 600; }
@@ -53,6 +55,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .header-actions > button, .header-icon-action { height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; transition: background-color 120ms ease, color 120ms ease; }
 .header-actions > button:hover, .header-icon-action:hover, .header-actions > button.is-active { background: var(--surface-2); color: var(--text); }
 .header-actions > button.is-active { font-weight: 600; }
+.esse-nav-icon { width: 17px; height: 17px; flex: none; border-radius: 4px; object-fit: cover; }
 .header-icon-action { width: 32px; padding: 0; }
 .header-menu { position: absolute; z-index: 48; top: calc(100% + 6px); left: 0; min-width: 172px; padding: 5px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 12px 32px rgba(0,0,0,.14); }
 .header-menu button { width: 100%; min-height: 34px; display: flex; align-items: center; gap: 8px; padding: 0 9px; border: 0; border-radius: 6px; background: transparent; text-align: left; font-size: var(--font-size-control); cursor: pointer; }
@@ -66,7 +69,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .menu-separator { height: 1px; margin: 3px 4px; background: var(--border); }
 @keyframes menu-in { from { opacity: 0; transform: translateY(-3px) scale(.99); } to { opacity: 1; transform: none; } }
 
-.notice { position: fixed; z-index: 60; top: 68px; right: 22px; max-width: min(380px, calc(100vw - 44px)); display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 10px 9px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 10px 30px rgba(0,0,0,.13); font-size: var(--font-size-control); }
+.notice { position: fixed; z-index: 60; top: calc(env(titlebar-area-height, 0) + 68px); right: 22px; max-width: min(380px, calc(100vw - 44px)); display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 9px 10px 9px 12px; border: 1px solid var(--border); border-radius: 9px; background: var(--surface); box-shadow: 0 10px 30px rgba(0,0,0,.13); font-size: var(--font-size-control); }
 .notice button, .error-banner button { width: 22px; height: 22px; display: grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
 .error-banner { min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -6px 0 14px; padding: 8px 10px 8px 12px; border: 1px solid #f0cfcd; border-radius: 9px; background: var(--danger-soft); color: var(--danger); font-size: var(--font-size-control); }
 

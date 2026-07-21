@@ -14,6 +14,7 @@ import { McpPairingStore } from './mcp-pairing-store';
 import { DEFAULT_MCP_PORT, startDesktopMcpServer, type RunningDesktopMcpServer } from './mcp-server';
 import { ProviderSettingsStore } from './provider-settings';
 import { WORKBUDDY_AGENT_OFFERING, type DesktopState, type ModifyBatchInput, type SaveProviderInput } from './types';
+import { desktopWindowChrome, shouldRemoveWindowMenu } from './window-chrome';
 
 const smokeMode = process.env.ESSE_SMOKE_TEST === '1';
 const qaCapturePath = process.env.ESSE_QA_CAPTURE_PATH;
@@ -87,11 +88,12 @@ function createWindow(): void {
   mainWindow = new BrowserWindow({
     width: qaViewport?.width ?? 1320,
     height: qaViewport?.height ?? 860,
-    minWidth: qaViewport ? 720 : 980,
     minHeight: qaViewport ? 640 : 640,
     show: !smokeMode && !qaCapturePath,
     title: 'Esse',
+    icon: path.join(app.getAppPath(), 'assets', 'esse.png'),
     backgroundColor: '#ffffff',
+    ...desktopWindowChrome(process.platform),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -100,6 +102,8 @@ function createWindow(): void {
       webSecurity: true,
     },
   });
+
+  if (shouldRemoveWindowMenu(process.platform)) mainWindow.removeMenu();
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
@@ -281,8 +285,13 @@ function registerIpc(): void {
     return result.filePath;
   });
   ipcMain.handle('batches:open-folder', async (_event, batchId: unknown) => {
-    batchManager.get(requiredId(batchId, 'batch'));
-    const error = await shell.openPath(imageStore.outputDir);
+    const batch = batchManager.get(requiredId(batchId, 'batch'));
+    const images = batch.jobs.flatMap((job) => [
+      ...(job.outputImageId ? [{ id: job.outputImageId, name: job.name }] : []),
+      ...job.backups.map((backup) => ({ id: backup.imageId, name: backup.name })),
+    ]);
+    const batchFolder = await imageStore.prepareBatchFolder(batch.id, batch.title, images);
+    const error = await shell.openPath(batchFolder);
     if (error) throw new Error(error);
   });
   ipcMain.handle('mcp:copy-workbuddy-config', async () => {
