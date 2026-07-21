@@ -117,10 +117,10 @@ jobs:
       - run: npm test
       - run: npm run make
       - name: Verify Agent Sidecar Authenticode signatures
-        if: github.ref_name != 'v0.3.0-alpha.2'
+        if: github.ref_name != 'v0.3.0-alpha.2' && github.ref_name != 'v0.3.0'
         run: npm run verify:signatures
-      - name: Confirm one-time unsigned alpha exception
-        if: github.ref_name == 'v0.3.0-alpha.2'
+      - name: Confirm explicitly unsigned release exception
+        if: github.ref_name == 'v0.3.0-alpha.2' || github.ref_name == 'v0.3.0'
         shell: pwsh
         run: |
           $targets = @(
@@ -129,9 +129,9 @@ jobs:
           )
           foreach ($target in $targets) {
             $signature = Get-AuthenticodeSignature -LiteralPath $target
-            if ($signature.Status -ne 'NotSigned') { throw "Expected the explicitly unsigned alpha artifact ${target}, got $($signature.Status)." }
+            if ($signature.Status -ne 'NotSigned') { throw "Expected the explicitly unsigned artifact ${target}, got $($signature.Status)." }
           }
-          Write-Warning 'v0.3.0-alpha.2 is an explicitly unsigned prerelease and may trigger Windows publisher or reputation warnings.'
+          Write-Warning "$env:GITHUB_REF_NAME is an explicitly unsigned release and may trigger Windows publisher or reputation warnings."
       - name: Stage Esse Agent Sidecar installer
         shell: pwsh
         run: |

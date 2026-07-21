@@ -71,7 +71,7 @@ The Agent Sidecar is currently released only for Windows x64. Download these two
 - `sidecar-latest.json`
 - the `esse-agent-sidecar-windows-x64-v*.exe` named by that metadata file
 
-Verify the installer SHA256 against `windowsX64Sha256` before running it. It is an unsigned alpha installer, so report the publisher limitation honestly; never disable Windows security controls. The installed application and window are named Esse.
+Verify the installer SHA256 against `windowsX64Sha256` before running it. `v0.3.0` is an explicitly unsigned release while SignPath Foundation approval is pending, so report the publisher limitation honestly; never disable Windows security controls. The installed application and window are named Esse.
 
 After installation, the user opens Esse and completes setup inside its settings page:
 
