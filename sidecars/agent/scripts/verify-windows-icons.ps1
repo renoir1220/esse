@@ -33,6 +33,16 @@ function Get-IcoPngFrame {
   throw "Esse ICO does not contain a ${Size}px frame."
 }
 
+function Get-Sha256Hex {
+  param([string]$Path)
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    return [BitConverter]::ToString($algorithm.ComputeHash([IO.File]::ReadAllBytes($Path))).Replace('-', '')
+  } finally {
+    $algorithm.Dispose()
+  }
+}
+
 $expected = Get-IcoPngFrame -Path $sourceIconPath -Size 32
 $sha = [Security.Cryptography.SHA256]::Create()
 foreach ($target in @($packagedExe, $installerExe)) {
@@ -56,8 +66,8 @@ foreach ($target in @($packagedExe, $installerExe)) {
 }
 $sha.Dispose()
 
-$sourceHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $sourcePngPath).Hash
-$packagedHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $packagedPng).Hash
+$sourceHash = Get-Sha256Hex -Path $sourcePngPath
+$packagedHash = Get-Sha256Hex -Path $packagedPng
 if ($sourceHash -ne $packagedHash) { throw 'Packaged runtime Esse PNG does not match the source icon.' }
 
 Write-Output '{"status":"ok","platform":"windows","appIcon":"Esse","installerIcon":"Esse","runtimeIcon":"Esse"}'

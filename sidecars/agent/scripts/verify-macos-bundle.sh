@@ -19,9 +19,11 @@ bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")"
 executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
 icon_file="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$plist")"
 test "$bundle_id" = "com.renoir.esse.agent-sidecar"
-test "$icon_file" = "esse.icns"
+test -n "$icon_file"
 test -f "$app/Contents/Resources/$icon_file"
 test -f "$app/Contents/Resources/esse.png"
+cmp "$sidecar_root/assets/esse.icns" "$app/Contents/Resources/$icon_file"
+cmp "$sidecar_root/assets/esse.png" "$app/Contents/Resources/esse.png"
 /usr/bin/file "$app/Contents/MacOS/$executable" | /usr/bin/grep -q "$expected_arch"
 
 iconset="$(mktemp -d)/esse.iconset"
@@ -54,4 +56,4 @@ fi
 wait "$smoke_pid"
 /usr/bin/grep -q 'ESSE_SMOKE_RESULT={"ok":true' "$smoke_log"
 
-printf '{"status":"ok","platform":"macos","arch":"%s","bundleId":"%s","icon":"%s","smoke":"ok"}\n' "$arch" "$bundle_id" "$icon_file"
+printf '{"status":"ok","platform":"macos","arch":"%s","bundleId":"%s","icon":"Esse","smoke":"ok"}\n' "$arch" "$bundle_id"
