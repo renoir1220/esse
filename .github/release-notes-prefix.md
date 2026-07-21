@@ -1,35 +1,37 @@
 ## 简体中文
 
-### Esse 0.3.0-alpha.2
+### Esse 0.3.0
 
-#### Agent Sidecar（Windows x64 预览）
+#### Agent Sidecar（Windows x64）
 
-- Windows 窗口改为与工作台一致的白色一体化标题栏，移除黑色的 Electron 默认菜单框，同时保留原生最小化、最大化和关闭按钮。
-- Esse 品牌图标现在用于程序窗口、`esse.exe` 和 Windows 安装程序，不再显示 Electron 默认图标。
-- Agent 把 Provider 任务持久交给 Esse 后会立即结束当前任务，不再主动轮询、播报状态或把结果复制回 Agent 工作区；用户之后明确询问时仍可查询。
-- 明确 Esse 是调用用户已配置 Provider 与模型的本地图片任务工作台，不会因推测某类模型可能不擅长文字、数字或图表而中断信息充分的请求。
-- 增加公开代码签名政策以及应用程序和安装程序的签名验证门禁，为 SignPath Foundation 审批后的可信发布做好准备。
+- 正式加入面向 WorkBuddy 与其他本地 HTTP MCP Agent 的 Esse 工作台，通过仅监听 `127.0.0.1` 的配对令牌接口接收图片生成和修改任务。
+- Agent 将 Provider 任务持久交给 Esse 后立即结束当前任务，不再主动轮询、播报状态或把结果复制回 Agent 工作区；用户之后明确询问时仍可查询。
+- “打开输出文件夹”现在直接进入当前批次目录，其中集中显示该批次的当前图片和保留版本，不再需要逐个进入 Provider 请求目录查找。
+- Windows 窗口使用白色一体化标题栏和 Esse 程序图标，首页使用相同品牌图标，并取消窗口最小宽度限制。
+- Windows 正式版发布继续强制验证主程序与安装程序的 Authenticode 签名及可信时间戳；未通过签名门禁的构建不会发布。
 
-⚠️ **本版本仍是未签名的测试版。Windows 可能显示“未知发布者”或 SmartScreen 警告。不要关闭 Windows 安全功能；请只从本 Release 下载并核对 `sidecar-latest.json` 或 `checksums.txt`。**
+#### 统一发布
 
-Agent Sidecar 当前仅发布 Windows x64 安装包，不宣称完成 macOS Sidecar 验证。
+- Codex Plugin 与 Agent Sidecar 现在使用同一版本号、Git 标签和 GitHub Release，安装元数据分别校验各平台插件包与 Windows Sidecar 安装程序。
+- Agent Sidecar 当前仅发布 Windows x64 安装包，不宣称完成 macOS Sidecar 验证。
 
-[查看 v0.3.0-alpha.1...v0.3.0-alpha.2 完整变更](../../compare/v0.3.0-alpha.1...v0.3.0-alpha.2)
+[查看 v0.2.3...v0.3.0 完整变更](../../compare/v0.2.3...v0.3.0)
 
 ## English
 
-### Esse 0.3.0-alpha.2
+### Esse 0.3.0
 
-#### Agent Sidecar (Windows x64 preview)
+#### Agent Sidecar (Windows x64)
 
-- Replaces the black default Electron menu frame with a light integrated title bar aligned with the workspace while retaining native minimize, maximize, and close controls.
-- Applies the Esse brand icon to the window, `esse.exe`, and Windows installer instead of the default Electron icon.
+- Introduces the Esse workspace for WorkBuddy and other local HTTP MCP Agents, accepting image generation and modification tasks through a pairing-token endpoint bound only to `127.0.0.1`.
 - Ends the current Agent task immediately after Provider work is durably handed to Esse, without unsolicited polling, status narration, or result copying. A later explicit user request can still query status.
-- Clarifies that Esse is a local image-task workspace that invokes the user's configured Provider and model, so a sufficiently specified request is not interrupted by guesses about whether a model may struggle with text, numbers, or charts.
-- Adds a public code-signing policy and signature gates for the application and installer in preparation for trusted releases after SignPath Foundation approval.
+- Opens a batch-scoped output folder containing the batch's current images and preserved versions instead of forcing users to inspect separate Provider request directories.
+- Uses the integrated light Windows title bar and Esse application icon, applies the same brand icon to Home, and removes the window minimum-width restriction.
+- Keeps stable Windows releases behind mandatory Authenticode signature and trusted-timestamp verification for both the application and installer; unsigned builds are not published.
 
-⚠️ **This build is still an unsigned test release. Windows may show an “Unknown publisher” or SmartScreen warning. Do not disable Windows security features; download only from this Release and verify `sidecar-latest.json` or `checksums.txt`.**
+#### Unified release
 
-The Agent Sidecar remains Windows x64 only and does not claim macOS Sidecar validation.
+- The Codex Plugin and Agent Sidecar now share one version, Git tag, and GitHub Release, with installation metadata verifying every platform Plugin archive and the Windows Sidecar installer independently.
+- The Agent Sidecar currently ships for Windows x64 only and does not claim macOS Sidecar validation.
 
-[View the full v0.3.0-alpha.1...v0.3.0-alpha.2 changelog](../../compare/v0.3.0-alpha.1...v0.3.0-alpha.2)
+[View the full v0.2.3...v0.3.0 changelog](../../compare/v0.2.3...v0.3.0)
