@@ -25,6 +25,11 @@ The initial import deliberately excludes the private commercial server, user acc
 - Provider-backed acceptance now returns only the background execution flag, the short user reply, and an explicit stop directive. It omits batch IDs, job IDs, status, and other details that could invite unsolicited monitoring. Agent-owned generation still returns the exact IDs required for callbacks.
 - Status and render tools explicitly treat a completed handoff as insufficient authorization to poll; only a later explicit user request permits status lookup or output retrieval.
 
+## 2026-07-21 — Windows Sidecar window chrome
+
+- The Windows Agent Sidecar uses a light integrated draggable title bar with native window controls and removes Electron's default `File / Edit / View / Window` menu. The image workspace no longer opens inside a visually separate black frame.
+- Non-Windows builds retain their native window chrome and menu behavior.
+
 ## Deferred
 
 - shared domain/provider/UI packages;

@@ -11,6 +11,7 @@
     "make": "electron-forge make",
     "publish": "electron-forge publish",
     "smoke": "tsx scripts/smoke.ts",
+    "verify:signatures": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-signatures.ps1",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -27,6 +28,7 @@
     "@electron-forge/plugin-fuses": "^7.11.2",
     "@electron-forge/plugin-vite": "^7.11.2",
     "@electron/fuses": "^1.8.0",
+    "@electron/windows-sign": "^1.2.2",
     "@eslint/js": "^10.0.1",
     "@types/electron-squirrel-startup": "^1.0.2",
     "@types/express": "^5.0.5",

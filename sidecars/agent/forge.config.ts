@@ -5,6 +5,9 @@ import { MakerDMG } from '@electron-forge/maker-dmg';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import { resolveWindowsSignOptions } from './src/windows-signing';
+
+const windowsSign = resolveWindowsSignOptions();
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -13,6 +16,7 @@ const config: ForgeConfig = {
     executableName: 'esse',
     appBundleId: 'com.renoir.esse',
     appCategoryType: 'public.app-category.graphics-design',
+    ...(windowsSign ? { windowsSign } : {}),
   },
   rebuildConfig: {},
   makers: [
@@ -20,6 +24,7 @@ const config: ForgeConfig = {
       name: 'esse',
       setupExe: 'Esse-Setup.exe',
       noMsi: true,
+      ...(windowsSign ? { windowsSign } : {}),
     }, ['win32']),
     new MakerZIP({}, ['darwin']),
     new MakerDMG({ name: 'Esse' }, ['darwin']),

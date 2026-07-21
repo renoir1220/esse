@@ -116,6 +116,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run make
+      - name: Verify Agent Sidecar Authenticode signatures
+        run: npm run verify:signatures
       - name: Stage Esse Agent Sidecar installer
         shell: pwsh
         run: |

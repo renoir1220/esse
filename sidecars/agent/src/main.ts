@@ -14,6 +14,7 @@ import { McpPairingStore } from './mcp-pairing-store';
 import { DEFAULT_MCP_PORT, startDesktopMcpServer, type RunningDesktopMcpServer } from './mcp-server';
 import { ProviderSettingsStore } from './provider-settings';
 import { WORKBUDDY_AGENT_OFFERING, type DesktopState, type ModifyBatchInput, type SaveProviderInput } from './types';
+import { desktopWindowChrome, shouldRemoveWindowMenu } from './window-chrome';
 
 const smokeMode = process.env.ESSE_SMOKE_TEST === '1';
 const qaCapturePath = process.env.ESSE_QA_CAPTURE_PATH;
@@ -92,6 +93,7 @@ function createWindow(): void {
     show: !smokeMode && !qaCapturePath,
     title: 'Esse',
     backgroundColor: '#ffffff',
+    ...desktopWindowChrome(process.platform),
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -100,6 +102,8 @@ function createWindow(): void {
       webSecurity: true,
     },
   });
+
+  if (shouldRemoveWindowMenu(process.platform)) mainWindow.removeMenu();
 
   mainWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
   mainWindow.webContents.on('will-navigate', (event, url) => {
