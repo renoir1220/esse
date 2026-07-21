@@ -92,6 +92,7 @@ function createWindow(): void {
     minHeight: qaViewport ? 640 : 640,
     show: !smokeMode && !qaCapturePath,
     title: 'Esse',
+    icon: path.join(app.getAppPath(), 'assets', 'esse.png'),
     backgroundColor: '#ffffff',
     ...desktopWindowChrome(process.platform),
     webPreferences: {

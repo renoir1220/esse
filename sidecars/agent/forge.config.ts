@@ -5,9 +5,11 @@ import { MakerDMG } from '@electron-forge/maker-dmg';
 import { VitePlugin } from '@electron-forge/plugin-vite';
 import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
+import { resolve } from 'node:path';
 import { resolveWindowsSignOptions } from './src/windows-signing';
 
 const windowsSign = resolveWindowsSignOptions();
+const appIcon = resolve(__dirname, 'assets', 'esse');
 
 const config: ForgeConfig = {
   packagerConfig: {
@@ -16,6 +18,7 @@ const config: ForgeConfig = {
     executableName: 'esse',
     appBundleId: 'com.renoir.esse',
     appCategoryType: 'public.app-category.graphics-design',
+    icon: appIcon,
     ...(windowsSign ? { windowsSign } : {}),
   },
   rebuildConfig: {},
@@ -23,6 +26,7 @@ const config: ForgeConfig = {
     new MakerSquirrel({
       name: 'esse',
       setupExe: 'Esse-Setup.exe',
+      setupIcon: `${appIcon}.ico`,
       noMsi: true,
       ...(windowsSign ? { windowsSign } : {}),
     }, ['win32']),

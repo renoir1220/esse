@@ -40,6 +40,10 @@ Codex 应先阅读 [`INSTALL.md`](INSTALL.md)，再识别平台、下载 Release
 
 两个目录刻意隔离。迁移仓库不会移动、覆盖或删除旧 `esse-desktop` 数据。Windows API Key 由当前用户 DPAPI 保护；macOS Plugin 使用系统 Keychain。
 
+## 代码签名
+
+Windows Agent Sidecar 的正式发行产物遵循仓库公开的 [Code signing policy](CODE_SIGNING.md)。发布工作流会同时验证应用程序和安装程序的 Authenticode 签名，未通过验证的构建不会发布。
+
 ## 仓库结构
 
 ```text
