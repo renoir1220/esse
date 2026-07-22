@@ -9,6 +9,7 @@ const repositoryRoot = path.resolve(pluginRoot, "..", "..");
 const releaseRoot = path.join(repositoryRoot, "release");
 const manifest = JSON.parse(await readFile(path.join(pluginRoot, ".codex-plugin", "plugin.json"), "utf8"));
 const version = manifest.version;
+const sidecarProduct = JSON.parse(await readFile(path.join(repositoryRoot, "sidecars", "agent", "product.json"), "utf8"));
 const targets = [
   { name: "windows-x64", metadata: "windowsX64" },
   { name: "macos-arm64", metadata: "macosArm64" },
@@ -28,7 +29,7 @@ const sidecarTargets = [
 ];
 const sidecarAssets = [];
 for (const target of sidecarTargets) {
-  const assetName = `esse-agent-sidecar-${target.name}-v${version}.${target.extension}`;
+  const assetName = `${sidecarProduct.releasePrefix}-${target.name}-v${version}.${target.extension}`;
   const content = await readFile(path.join(releaseRoot, assetName));
   sidecarAssets.push({ ...target, assetName, sha256: createHash("sha256").update(content).digest("hex") });
 }
@@ -49,7 +50,7 @@ const sidecarMetadata = {
   repository: metadata.repository,
   version,
   tag: metadata.tag,
-  distribution: "agent-sidecar"
+  distribution: sidecarProduct.edition
 };
 for (const asset of sidecarAssets) {
   sidecarMetadata[`${asset.metadata}Asset`] = asset.assetName;

@@ -66,7 +66,8 @@ jobs:
       - name: Verify Esse installer
         shell: pwsh
         run: |
-          $installer = Resolve-Path .\out\make\squirrel.windows\x64\Esse-Setup.exe
+          $product = Get-Content -Raw -Encoding UTF8 .\product.json | ConvertFrom-Json
+          $installer = Resolve-Path (Join-Path .\out\make\squirrel.windows\x64 $product.windowsSetupExe)
           if ((Get-Item -LiteralPath $installer).Length -lt 1MB) { throw "Esse installer is unexpectedly small." }
 
   verify-agent-sidecar-macos:

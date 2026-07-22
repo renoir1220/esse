@@ -26,7 +26,9 @@ describe('Provider settings', () => {
     expect(await store.getApiKey(saved.id)).toBe('private-provider-key');
     expect(await readFile(filePath, 'utf8')).not.toContain('private-provider-key');
     expect(await store.listOfferings()).toEqual(expect.arrayContaining([
-      expect.objectContaining({ providerName: '兔子', tierName: 'default', configured: true, priceMicros: 35_000 }),
+      expect.objectContaining({ providerName: '兔子', tierName: 'default', configured: true, priceMicros: 0, price: { mode: 'unknown', currency: 'CNY' } }),
+      expect.objectContaining({ canonicalModelId: 'image2-v', providerModelId: 'gpt-image-2', displayName: 'image2-v' }),
+      expect.objectContaining({ canonicalModelId: 'gemini-3-pro-image-preview-4k', providerModelId: 'gemini-3-pro-image-preview-4k' }),
     ]));
 
     await store.deleteProvider(saved.id);

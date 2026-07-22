@@ -5,7 +5,8 @@ $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
 
 $sidecarRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$packagedExe = Join-Path $sidecarRoot 'out\Esse-win32-x64\esse.exe'
+$product = Get-Content -Raw -Encoding UTF8 (Join-Path $sidecarRoot 'product.json') | ConvertFrom-Json
+$packagedExe = Join-Path $sidecarRoot ("out\{0}-win32-x64\{1}.exe" -f $product.displayName, $product.executableName)
 $nupkg = Get-ChildItem -LiteralPath (Join-Path $sidecarRoot 'out\make\squirrel.windows\x64') -Filter '*.nupkg' |
   Where-Object { $_.Name -notlike '*-delta.nupkg' } |
   Select-Object -First 1
@@ -14,8 +15,8 @@ if ($null -eq $nupkg) { throw 'Missing full Squirrel NUPKG.' }
 
 $nuspecName = tar -tf $nupkg.FullName | Where-Object { $_ -like '*.nuspec' } | Select-Object -First 1
 $nuspec = tar -xOf $nupkg.FullName $nuspecName | Out-String
-if ($nuspec -notmatch '<id>esse-agent-sidecar-app</id>') { throw 'Squirrel application ID is not isolated from Esse data.' }
-if ($nuspec -notmatch '<title>Esse</title>') { throw 'Squirrel product title is not Esse.' }
+if ($nuspec -notmatch ("<id>{0}</id>" -f [regex]::Escape($product.windowsSquirrelAppId))) { throw 'Squirrel application ID does not match product.json.' }
+if ($nuspec -notmatch ("<title>{0}</title>" -f [regex]::Escape($product.displayName))) { throw 'Squirrel product title does not match product.json.' }
 
 $smokeRoot = Join-Path ([IO.Path]::GetTempPath()) ("esse-agent-sidecar-package-smoke-" + [guid]::NewGuid().ToString('N'))
 $stdout = Join-Path $smokeRoot 'stdout.log'
@@ -38,4 +39,4 @@ try {
   Remove-Item -LiteralPath $smokeRoot -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-Write-Output '{"status":"ok","platform":"windows","arch":"x64","squirrelId":"esse-agent-sidecar-app","smoke":"ok"}'
+Write-Output (ConvertTo-Json @{ status = 'ok'; platform = 'windows'; arch = 'x64'; squirrelId = $product.windowsSquirrelAppId; smoke = 'ok' } -Compress)

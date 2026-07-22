@@ -125,9 +125,10 @@ jobs:
         if: github.ref_name == 'v0.3.0-alpha.2' || github.ref_name == 'v0.3.0'
         shell: pwsh
         run: |
+          $product = Get-Content -Raw -Encoding UTF8 .\product.json | ConvertFrom-Json
           $targets = @(
-            '.\out\Esse-win32-x64\esse.exe',
-            '.\out\make\squirrel.windows\x64\Esse-Setup.exe'
+            (Join-Path .\out ("{0}-win32-x64\{1}.exe" -f $product.displayName, $product.executableName)),
+            (Join-Path .\out\make\squirrel.windows\x64 $product.windowsSetupExe)
           )
           foreach ($target in $targets) {
             $signature = Get-AuthenticodeSignature -LiteralPath $target
@@ -138,8 +139,8 @@ jobs:
         run: npm run stage:release -- windows x64
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: esse-agent-sidecar-windows-x64
-          path: release/esse-agent-sidecar-windows-x64-v*.exe
+          name: esse-community-windows-x64
+          path: release/esse-community-windows-x64-v*.exe
           if-no-files-found: error
           retention-days: 7
 
@@ -208,8 +209,8 @@ jobs:
       - run: npm run stage:release -- macos ${{ matrix.arch }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
-          name: esse-agent-sidecar-macos-${{ matrix.arch }}
-          path: release/esse-agent-sidecar-macos-${{ matrix.arch }}-v*.dmg
+          name: esse-community-macos-${{ matrix.arch }}
+          path: release/esse-community-macos-${{ matrix.arch }}-v*.dmg
           if-no-files-found: error
           retention-days: 7
 

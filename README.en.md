@@ -25,7 +25,7 @@ You can also download the matching Plugin ZIP from [GitHub Releases](https://git
 
 ## Install for WorkBuddy and other Agents
 
-Download the matching `esse-agent-sidecar-windows-x64-*.exe` or `esse-agent-sidecar-macos-*-*.dmg` from [GitHub Releases](https://github.com/renoir1220/esse/releases), verify it against `sidecar-latest.json` or `checksums.txt`, and open Esse after installation. In Esse settings:
+Download the matching `esse-community-windows-x64-*.exe` or `esse-community-macos-*-*.dmg` from [GitHub Releases](https://github.com/renoir1220/esse/releases), verify it against `sidecar-latest.json` or `checksums.txt`, and open Esse Community after installation. In settings:
 
 1. Select a built-in Tuzi Provider preset or add an OpenAI-compatible Provider.
 2. Enter the API key inside Esse, test the connection, and save a default model.
@@ -36,7 +36,7 @@ Then simply tell the Agent to “use Esse to generate images.” Once durable ba
 ## Local data
 
 - Codex Plugin: `%LOCALAPPDATA%\esse` on Windows; `~/Library/Application Support/esse` on macOS
-- Agent Sidecar: `%LOCALAPPDATA%\esse-agent-sidecar` on Windows; `~/Library/Application Support/esse-agent-sidecar` on macOS
+- Esse Community: `%LOCALAPPDATA%\esse-community` on Windows; `~/Library/Application Support/esse-community` on macOS
 
 The directories are intentionally isolated, and the Sidecar installer never owns a directory used for data. Repository migration does not move, overwrite, or delete legacy `esse-desktop` data. Windows API keys are protected with current-user DPAPI; macOS uses Keychain.
 

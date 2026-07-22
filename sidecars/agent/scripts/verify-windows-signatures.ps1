@@ -1,9 +1,10 @@
 $ErrorActionPreference = 'Stop'
 
 $sidecarRoot = Split-Path -Parent $PSScriptRoot
+$product = Get-Content -Raw -Encoding UTF8 (Join-Path $sidecarRoot 'product.json') | ConvertFrom-Json
 $targets = @(
-  (Join-Path $sidecarRoot 'out\Esse-win32-x64\esse.exe'),
-  (Join-Path $sidecarRoot 'out\make\squirrel.windows\x64\Esse-Setup.exe')
+  (Join-Path $sidecarRoot ("out\{0}-win32-x64\{1}.exe" -f $product.displayName, $product.executableName)),
+  (Join-Path $sidecarRoot ("out\make\squirrel.windows\x64\{0}" -f $product.windowsSetupExe))
 )
 
 foreach ($target in $targets) {

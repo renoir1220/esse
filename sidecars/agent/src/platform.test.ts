@@ -7,6 +7,7 @@ import {
   SIDECAR_USER_DATA_DIRECTORY,
   WINDOWS_SQUIRREL_APP_ID,
 } from './platform';
+import product from '../product.json';
 
 describe('Agent Sidecar platform adapter', () => {
   it('isolates Windows runtime data from the Plugin and the Squirrel application root', () => {
@@ -19,7 +20,7 @@ describe('Agent Sidecar platform adapter', () => {
   it('uses an isolated Application Support directory on macOS', () => {
     expect(resolveSidecarUserDataPath('darwin', {}, '/Users/test'))
       .toBe(path.posix.join('/Users/test', 'Library', 'Application Support', SIDECAR_USER_DATA_DIRECTORY));
-    expect(MACOS_APP_BUNDLE_ID).toBe('com.renoir.esse.agent-sidecar');
+    expect(MACOS_APP_BUNDLE_ID).toBe(product.macosAppBundleId);
   });
 
   it('keeps the macOS process alive after the last window closes', () => {

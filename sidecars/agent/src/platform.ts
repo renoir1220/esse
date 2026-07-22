@@ -1,9 +1,10 @@
 import os from 'node:os';
 import path from 'node:path';
+import product from '../product.json';
 
-export const SIDECAR_USER_DATA_DIRECTORY = 'esse-agent-sidecar';
-export const WINDOWS_SQUIRREL_APP_ID = 'esse-agent-sidecar-app';
-export const MACOS_APP_BUNDLE_ID = 'com.renoir.esse.agent-sidecar';
+export const SIDECAR_USER_DATA_DIRECTORY = product.userDataDirectory;
+export const WINDOWS_SQUIRREL_APP_ID = product.windowsSquirrelAppId;
+export const MACOS_APP_BUNDLE_ID = product.macosAppBundleId;
 
 export function resolveSidecarUserDataPath(
   platform: NodeJS.Platform = process.platform,

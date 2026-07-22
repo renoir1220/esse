@@ -82,7 +82,7 @@ Run the verified `.exe` installer. `v0.3.0` was an explicitly unsigned exception
 
 ### macOS arm64 and x64
 
-Open the verified `.dmg`, drag `Esse.app` into Applications, and open Esse normally. The release workflow requires a Developer ID signature, Apple notarization, and a stapled notarization ticket. If Gatekeeper rejects the app, stop and report the exact error. Never remove quarantine attributes, disable Gatekeeper, or instruct the user to choose an override.
+Open the verified `.dmg`, drag `Esse Community.app` into Applications, and open it normally. The release workflow requires a Developer ID signature, Apple notarization, and a stapled notarization ticket. If Gatekeeper rejects the app, stop and report the exact error. Never remove quarantine attributes, disable Gatekeeper, or instruct the user to choose an override.
 
 After installation, the user opens Esse and completes setup inside its settings page:
 

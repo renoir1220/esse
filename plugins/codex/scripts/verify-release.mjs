@@ -15,6 +15,7 @@ const macLauncher = await readFile(path.join(pluginRoot, "scripts", "esse-macos-
 const packageScript = await readFile(path.join(pluginRoot, "scripts", "package-releases.mjs"), "utf8");
 const releaseWorkflow = await readFile(path.join(repositoryRoot, ".github", "workflows", "release.yml"), "utf8");
 const sidecarPackage = JSON.parse(await readFile(path.join(repositoryRoot, "sidecars", "agent", "package.json"), "utf8"));
+const sidecarProduct = JSON.parse(await readFile(path.join(repositoryRoot, "sidecars", "agent", "product.json"), "utf8"));
 const sidecarForgeConfig = await readFile(path.join(repositoryRoot, "sidecars", "agent", "forge.config.ts"), "utf8");
 const sidecarPlatform = await readFile(path.join(repositoryRoot, "sidecars", "agent", "src", "platform.ts"), "utf8");
 const releaseMetadataScript = await readFile(path.join(pluginRoot, "scripts", "create-release-metadata.mjs"), "utf8");
@@ -39,8 +40,10 @@ assert(releaseWorkflow.includes("package-agent-sidecar-macos"), "release workflo
 assert(releaseWorkflow.includes("verify-macos-bundle.sh"), "release workflow must verify the packaged macOS app");
 assert(sidecarForgeConfig.includes("WINDOWS_SQUIRREL_APP_ID"), "Windows installer identity must be isolated from Plugin data");
 assert(sidecarForgeConfig.includes("MakerDMG"), "Agent Sidecar must configure a macOS DMG");
-assert(sidecarPlatform.includes("Application Support") && sidecarPlatform.includes("esse-agent-sidecar"));
-assert(releaseMetadataScript.includes("esse-agent-sidecar-macos-arm64") || releaseMetadataScript.includes('name: "macos-arm64"'));
+assert.equal(sidecarProduct.edition, "community", "public releases must use the Community product profile");
+assert.equal(sidecarPackage.productName, sidecarProduct.displayName, "package and product names must match");
+assert(sidecarPlatform.includes("Application Support") && sidecarPlatform.includes("userDataDirectory"));
+assert(releaseMetadataScript.includes("sidecarProduct.releasePrefix") && releaseMetadataScript.includes('name: "macos-arm64"'));
 assert(releaseWorkflow.includes("--prerelease"), "prerelease tags must not replace the latest stable GitHub Release");
 await Promise.all([
   access(path.join(repositoryRoot, "AGENTS.md")),

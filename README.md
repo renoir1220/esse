@@ -25,7 +25,7 @@ Codex 应先阅读 [`INSTALL.md`](INSTALL.md)，再识别平台、下载 Release
 
 ## 安装到 WorkBuddy 等 Agent
 
-从 [GitHub Releases](https://github.com/renoir1220/esse/releases) 下载与当前平台匹配的 `esse-agent-sidecar-windows-x64-*.exe` 或 `esse-agent-sidecar-macos-*-*.dmg`，核对 `sidecar-latest.json` 或 `checksums.txt` 后安装并打开 Esse。在 Esse 的设置页：
+从 [GitHub Releases](https://github.com/renoir1220/esse/releases) 下载与当前平台匹配的 `esse-community-windows-x64-*.exe` 或 `esse-community-macos-*-*.dmg`，核对 `sidecar-latest.json` 或 `checksums.txt` 后安装并打开 Esse Community。在设置页：
 
 1. 选择内置的兔子 Provider 预设或添加 OpenAI 兼容 Provider。
 2. 在 Esse 内填写 API Key、测试连接并保存默认模型。
@@ -36,7 +36,7 @@ Codex 应先阅读 [`INSTALL.md`](INSTALL.md)，再识别平台、下载 Release
 ## 本地数据
 
 - Codex Plugin：Windows `%LOCALAPPDATA%\esse`；macOS `~/Library/Application Support/esse`
-- Agent Sidecar：Windows `%LOCALAPPDATA%\esse-agent-sidecar`；macOS `~/Library/Application Support/esse-agent-sidecar`
+- Esse Community：Windows `%LOCALAPPDATA%\esse-community`；macOS `~/Library/Application Support/esse-community`
 
 两个目录刻意隔离，Sidecar 安装程序目录也不与任何数据目录重名。迁移仓库不会移动、覆盖或删除旧 `esse-desktop` 数据。Windows API Key 由当前用户 DPAPI 保护；macOS 使用系统 Keychain。
 

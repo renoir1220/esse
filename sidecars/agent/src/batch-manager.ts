@@ -286,7 +286,7 @@ export class BatchManager {
     const now = new Date().toISOString();
     for (const job of matches) {
       if (job.status !== 'failed') throw new Error(`${job.name} is not a failed job.`);
-      if (!job.retryable) throw new Error(`${job.name} is not retryable.`);
+      if (job.operation === 'agent') throw new Error(`${job.name} must be started again by the current Agent.`);
       if (job.chargeState === 'unknown' && !allowUnknownCharge) throw new Error(`${job.name} cannot be retried without an explicit unknown-charge confirmation.`);
       job.status = 'queued';
       job.progress = 0;

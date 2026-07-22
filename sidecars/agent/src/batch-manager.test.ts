@@ -103,6 +103,28 @@ describe('Esse batch manager', () => {
     expect(manager.get(accepted.id).jobs[0].callHistory).toHaveLength(2);
   });
 
+  it('allows manual retry for a Provider failure that is not eligible for automatic retry', async () => {
+    const fixture = await fixtureDirectory();
+    const generate = vi.fn()
+      .mockRejectedValueOnce(new EsseApiError('Request rejected.', { code: 'bad_request', status: 400, chargeState: 'not_charged' }))
+      .mockResolvedValueOnce(generatedResult('manual-retry-success'));
+    const manager = managerFor(fixture, { ...fakeApi(), generate });
+    await manager.initialize();
+    const accepted = await manager.create({
+      prompt: 'retry after fixing the surrounding configuration',
+      requestKey: 'manual-non-auto-retry-request',
+      approvedEstimatedCostMicros: 100_000,
+    });
+    await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('failed'));
+    const job = manager.get(accepted.id).jobs[0];
+    expect(job).toMatchObject({ retryable: false, chargeState: 'not_charged' });
+
+    await manager.retry(accepted.id, [job.id]);
+
+    await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('completed'));
+    expect(generate).toHaveBeenCalledTimes(2);
+  });
+
   it('automatically retries definitely-not-charged transient failures three times', async () => {
     const fixture = await fixtureDirectory();
     const generate = vi.fn(async () => {
@@ -262,7 +284,9 @@ describe('Esse batch manager', () => {
     expect(created.jobs[0]).toMatchObject({ operation: 'agent', status: 'queued' });
     expect(generate).not.toHaveBeenCalled();
     await expect(manager.completeAgentJob(created.id, created.jobs[0].id, path.join(fixture.directory, 'missing.png'))).rejects.toThrow();
-    expect(manager.get(created.id).jobs[0]).toMatchObject({ status: 'failed', chargeState: 'unknown', retryable: false });
+    const failedJob = manager.get(created.id).jobs[0];
+    expect(failedJob).toMatchObject({ status: 'failed', chargeState: 'unknown', retryable: false });
+    await expect(manager.retry(created.id, [failedJob.id], true)).rejects.toThrow(/current Agent/i);
   });
 });
 

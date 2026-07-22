@@ -44,6 +44,13 @@ The initial import deliberately excludes the private commercial server, user acc
 - The Windows Squirrel application ID no longer owns `%LOCALAPPDATA%\esse`, preventing the installer from deleting Codex Plugin history. The installer root, Plugin data, and Sidecar data now have three distinct identities.
 - Windows executable, installer, runtime title bar, macOS app bundle, and DMG all use the Esse application icon rather than Electron defaults.
 
+## 2026-07-22 — edition boundary
+
+- The public desktop product is now identified as Esse Community and keeps the original Provider-first settings with no first-run onboarding.
+- Commercial onboarding and managed-service behavior live in a separate private downstream repository whose release line starts at `1.0.0`.
+- `sidecars/agent/product.json` is the small edition overlay for names, bundle IDs, data directories, installer names, and release asset prefixes; build verification reads this profile on Windows and macOS.
+- Shared gallery, retry, prompt-language, Agent handoff, MCP, and image-history fixes remain in the public upstream and are merged downstream.
+
 ## Deferred
 
 - shared domain/provider/UI packages;

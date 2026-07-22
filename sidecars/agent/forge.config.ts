@@ -9,6 +9,7 @@ import { resolve } from 'node:path';
 import { resolveWindowsSignOptions } from './src/windows-signing';
 import { resolveMacosSigning } from './src/macos-signing';
 import { MACOS_APP_BUNDLE_ID, WINDOWS_SQUIRREL_APP_ID } from './src/platform';
+import product from './product.json';
 
 const windowsSign = resolveWindowsSignOptions();
 const macosSigning = resolveMacosSigning();
@@ -17,8 +18,8 @@ const appIcon = resolve(__dirname, 'assets', 'esse');
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    name: 'Esse',
-    executableName: 'esse',
+    name: product.displayName,
+    executableName: product.executableName,
     appBundleId: MACOS_APP_BUNDLE_ID,
     helperBundleId: `${MACOS_APP_BUNDLE_ID}.helper`,
     appCategoryType: 'public.app-category.graphics-design',
@@ -26,10 +27,10 @@ const config: ForgeConfig = {
     extraResource: [`${appIcon}.png`],
     win32metadata: {
       CompanyName: 'Renoir',
-      FileDescription: 'Esse local image workspace',
-      InternalName: 'Esse',
-      OriginalFilename: 'esse.exe',
-      ProductName: 'Esse',
+      FileDescription: `${product.displayName} local image workspace`,
+      InternalName: product.displayName,
+      OriginalFilename: `${product.executableName}.exe`,
+      ProductName: product.displayName,
     },
     ...(windowsSign ? { windowsSign } : {}),
     ...macosSigning.packager,
@@ -38,15 +39,15 @@ const config: ForgeConfig = {
   makers: [
     new MakerSquirrel({
       name: WINDOWS_SQUIRREL_APP_ID,
-      setupExe: 'Esse-Setup.exe',
+      setupExe: product.windowsSetupExe,
       setupIcon: `${appIcon}.ico`,
       noMsi: true,
       ...(windowsSign ? { windowsSign } : {}),
     }, ['win32']),
     new MakerZIP({}, ['darwin']),
     new MakerDMG({
-      name: 'Esse',
-      title: 'Esse',
+      name: product.displayName,
+      title: product.displayName,
       icon: `${appIcon}.icns`,
       format: 'ULFO',
       overwrite: true,

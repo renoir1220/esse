@@ -6,11 +6,13 @@ Set-StrictMode -Version Latest
 Add-Type -AssemblyName System.Drawing
 
 $sidecarRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$product = Get-Content -Raw -Encoding UTF8 (Join-Path $sidecarRoot 'product.json') | ConvertFrom-Json
+$packageRoot = Join-Path $sidecarRoot ("out\{0}-win32-x64" -f $product.displayName)
 $sourceIconPath = Join-Path $sidecarRoot 'assets\esse.ico'
 $sourcePngPath = Join-Path $sidecarRoot 'assets\esse.png'
-$packagedExe = Join-Path $sidecarRoot 'out\Esse-win32-x64\esse.exe'
-$installerExe = Join-Path $sidecarRoot 'out\make\squirrel.windows\x64\Esse-Setup.exe'
-$packagedPng = Join-Path $sidecarRoot 'out\Esse-win32-x64\resources\esse.png'
+$packagedExe = Join-Path $packageRoot ("{0}.exe" -f $product.executableName)
+$installerExe = Join-Path $sidecarRoot ("out\make\squirrel.windows\x64\{0}" -f $product.windowsSetupExe)
+$packagedPng = Join-Path $packageRoot 'resources\esse.png'
 
 foreach ($path in @($sourceIconPath, $sourcePngPath, $packagedExe, $installerExe, $packagedPng)) {
   if (-not (Test-Path -LiteralPath $path)) { throw "Missing icon verification target: $path" }

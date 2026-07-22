@@ -8,6 +8,7 @@ const sidecarRoot = path.resolve(scriptsRoot, '..');
 const repositoryRoot = path.resolve(sidecarRoot, '..', '..');
 const releaseRoot = path.join(repositoryRoot, 'release');
 const packageJson = JSON.parse(await readFile(path.join(sidecarRoot, 'package.json'), 'utf8'));
+const product = JSON.parse(await readFile(path.join(sidecarRoot, 'product.json'), 'utf8'));
 const options = { platform: process.argv[2], arch: process.argv[3] };
 
 assert.equal(options.arch === 'arm64' || options.arch === 'x64', true, `Unsupported architecture: ${options.arch}`);
@@ -17,14 +18,14 @@ let source;
 let assetName;
 if (options.platform === 'windows') {
   assert.equal(process.platform, 'win32', 'Windows release staging must run on Windows.');
-  source = path.join(sidecarRoot, 'out', 'make', 'squirrel.windows', options.arch, 'Esse-Setup.exe');
-  assetName = `esse-agent-sidecar-windows-${options.arch}-v${packageJson.version}.exe`;
+  source = path.join(sidecarRoot, 'out', 'make', 'squirrel.windows', options.arch, product.windowsSetupExe);
+  assetName = `${product.releasePrefix}-windows-${options.arch}-v${packageJson.version}.exe`;
 } else if (options.platform === 'macos') {
   assert.equal(process.platform, 'darwin', 'macOS release staging must run on macOS.');
   const dmgs = await findFiles(path.join(sidecarRoot, 'out', 'make'), (name) => name.endsWith('.dmg'));
   assert.equal(dmgs.length, 1, `Expected one macOS DMG, found ${dmgs.length}: ${dmgs.join(', ')}`);
   [source] = dmgs;
-  assetName = `esse-agent-sidecar-macos-${options.arch}-v${packageJson.version}.dmg`;
+  assetName = `${product.releasePrefix}-macos-${options.arch}-v${packageJson.version}.dmg`;
 } else {
   throw new Error(`Unsupported platform: ${options.platform}`);
 }

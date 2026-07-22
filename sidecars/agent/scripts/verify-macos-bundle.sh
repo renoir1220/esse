@@ -23,7 +23,10 @@ require_square_icon_size() {
 }
 
 sidecar_root="$(cd "$(dirname "$0")/.." && pwd)"
-app="$sidecar_root/out/Esse-darwin-$arch/Esse.app"
+product_value() { node -p "require(process.argv[1])[process.argv[2]]" "$sidecar_root/product.json" "$1"; }
+display_name="$(product_value displayName)"
+expected_bundle_id="$(product_value macosAppBundleId)"
+app="$sidecar_root/out/$display_name-darwin-$arch/$display_name.app"
 plist="$app/Contents/Info.plist"
 test -d "$app"
 test -f "$plist"
@@ -31,7 +34,7 @@ test -f "$plist"
 bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$plist")"
 executable="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$plist")"
 icon_file="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIconFile' "$plist")"
-test "$bundle_id" = "com.renoir.esse.agent-sidecar"
+test "$bundle_id" = "$expected_bundle_id"
 test -n "$icon_file"
 test -f "$app/Contents/Resources/$icon_file"
 test -f "$app/Contents/Resources/esse.png"

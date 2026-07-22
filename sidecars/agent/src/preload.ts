@@ -21,7 +21,7 @@ const bridge: EsseDesktopBridge = {
   copyImage: (id: string) => ipcRenderer.invoke('images:copy', id),
   saveImage: (id: string) => ipcRenderer.invoke('images:save', id),
   openBatchFolder: (batchId: string) => ipcRenderer.invoke('batches:open-folder', batchId),
-  copyWorkBuddyConfig: () => ipcRenderer.invoke('mcp:copy-workbuddy-config'),
+  copyAgentSetupPrompt: () => ipcRenderer.invoke('mcp:copy-agent-setup'),
   onStateChanged: (callback) => {
     const listener = (_event: Electron.IpcRendererEvent, state: Awaited<ReturnType<EsseDesktopBridge['getState']>>) => callback(state);
     ipcRenderer.on('state:changed', listener);
