@@ -258,6 +258,7 @@ export interface McpStatus {
 }
 
 export interface EsseDesktopBridge {
+  readonly platform: string;
   getState(): Promise<DesktopState>;
   refresh(): Promise<DesktopState>;
   saveProvider(input: SaveProviderInput): Promise<DesktopState>;
@@ -276,7 +277,7 @@ export interface EsseDesktopBridge {
   copyImage(id: string): Promise<void>;
   saveImage(id: string): Promise<string | undefined>;
   openBatchFolder(batchId: string): Promise<void>;
-  copyWorkBuddyConfig(): Promise<void>;
+  copyAgentSetupPrompt(): Promise<void>;
   onStateChanged(callback: (state: DesktopState) => void): () => void;
   onNavigate(callback: (input: { tab: 'batches' | 'settings'; batchId?: string }) => void): () => void;
   reportReady(details: { title: string; bridgeAvailable: boolean }): void;

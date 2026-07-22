@@ -127,7 +127,7 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
       offerings: offerings.map((offering) => ({
         ...offering,
         adapterId: offering.providerType,
-        estimatedPricePerImage: formatCny(offering.priceMicros),
+        ...(configuredPriceMicros(offering) === undefined ? {} : { estimatedPricePerImage: formatCny(configuredPriceMicros(offering)!) }),
       })),
       conversationPolicy: 'Only discuss model, Provider, and price details when the user explicitly asks. Ordinary generation proceeds silently through the configured Esse Provider.',
     };
@@ -585,14 +585,21 @@ function promptForImage(prompt: string, perImagePrompts: Record<string, string> 
 }
 
 function offeringQuote(offering: OfferingSummary) {
+  const priceMicros = configuredPriceMicros(offering);
   return {
     id: offering.id,
     provider: offering.providerName,
     providerType: offering.providerType,
-    costPerImageMicros: offering.priceMicros,
-    estimatedPricePerImageCny: formatCny(offering.priceMicros),
-    currency: offering.currency,
+    ...(priceMicros === undefined ? {} : {
+      costPerImageMicros: priceMicros,
+      estimatedPricePerImageCny: formatCny(priceMicros),
+      currency: offering.currency,
+    }),
   };
+}
+
+function configuredPriceMicros(offering: OfferingSummary): number | undefined {
+  return offering.price.mode === 'per_request' && Number.isFinite(offering.price.amount) ? offering.priceMicros : undefined;
 }
 
 function requestKeySchema() {

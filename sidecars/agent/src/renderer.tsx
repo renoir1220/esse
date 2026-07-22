@@ -1,6 +1,8 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import {
+  ArrowClockwise,
   ArrowsOutSimple,
   CaretDown,
   CaretLeft,
@@ -21,11 +23,14 @@ import {
   X,
 } from '@phosphor-icons/react';
 import './index.css';
+import { retryAllFailedSelection } from './batch-actions';
 import { galleryAssets, selectableAssets, type GalleryAsset } from './gallery-assets';
 import { initialImageZoom, zoomImageAtPoint } from './image-zoom';
 import { shouldDismissOverlay } from './overlay-dismiss';
+import { PENDING_TASK_HOVER_DELAY_MS, pendingTaskPeekPosition, type PeekPosition } from './pending-task-peek';
 import { blankOffering, createCustomProviderDraft, createTuziProviderDraft, offeringFromTuziModel, TUZI_PROVIDER_PRESETS, tuziProviderPresetForDraft } from './provider-catalog';
 import type { BatchSnapshot, DesktopState, ImageMetadata, OfferingConfig, OfferingSummary, ProviderDraft, ProviderProfile, SavedImage, SaveProviderInput } from './types';
+import product from '../product.json';
 
 const esseIconUrl = new URL('../assets/esse.png', import.meta.url).href;
 
@@ -224,6 +229,10 @@ function App() {
               unknown ? '任务已重新排队；上一次调用的扣费状态未知' : '任务已重新排队',
             );
           }}
+          onRetryAll={(jobIds, includesUnknownCharge) => apply(
+            () => window.esse.retryJobs(activeBatch.id, jobIds, includesUnknownCharge),
+            includesUnknownCharge ? '失败任务已重新排队；部分上次调用的扣费状态未知' : '失败任务已重新排队',
+          )}
         /> : <EmptyState title="还没有图片批次" copy="请从 Agent 向 Esse 提交第一个图片任务。" />
       ) : null}
 
@@ -257,6 +266,7 @@ function BatchWorkspace(props: {
   onModify: (input: Parameters<typeof window.esse.modifyBatch>[0]) => Promise<boolean>;
   onCancel: () => Promise<boolean>;
   onRetry: (asset: GalleryAsset) => Promise<boolean>;
+  onRetryAll: (jobIds: string[], includesUnknownCharge: boolean) => Promise<boolean>;
 }) {
   const { batch } = props;
   const [prompt, setPrompt] = useState('');
@@ -268,12 +278,13 @@ function BatchWorkspace(props: {
   const targetIds = props.selectedImageIds.size ? [...props.selectedImageIds] : selectable.length === 1 && selectable[0].imageId ? [selectable[0].imageId] : [];
   const detailAsset = detailAssetId ? assets.find((asset) => asset.id === detailAssetId) : undefined;
   const active = batch.queued + batch.running > 0;
+  const retrySelection = retryAllFailedSelection(batch);
 
   useEffect(() => { setOfferingId(batch.offering.id); setDetailAssetId(undefined); }, [batch.id, batch.offering.id]);
 
   return <div className="batch-page">
     <div className="section-heading">
-      <div><strong>{statusLabel(batch)}</strong></div>
+      <div><strong>{statusLabel(batch)}</strong>{batch.failed ? <button type="button" className="retry-all-button" title={retrySelection.jobIds.length ? '重新排队失败任务' : 'Agent 任务需由当前 Agent 重新发起'} disabled={props.busy || !retrySelection.jobIds.length} onClick={() => void props.onRetryAll(retrySelection.jobIds, retrySelection.includesUnknownCharge)}><ArrowClockwise size={13} weight="bold" />重试失败任务</button> : null}</div>
     </div>
     <section className={`batch-workspace ${assets.length === 1 ? 'is-single' : ''}`}>
       <div className="image-grid">
@@ -313,7 +324,7 @@ function BatchWorkspace(props: {
         }
       }} placeholder={selectable.length > 1 && !targetIds.length ? '双击选择想要编辑的图片' : '描述你想如何修改图片'} maxLength={20_000} />
       <div className="modify-toolbar">
-        <label className="model-select"><Lightning size={14} weight="fill" /><select value={offeringId} onChange={(event) => setOfferingId(event.target.value)}>{props.offerings.map((item) => <option key={item.id} value={item.id}>{item.displayName} · ¥{formatCny(item.priceMicros)}/次</option>)}</select><CaretDown size={12} /></label>
+        <label className="model-select"><Lightning size={14} weight="fill" /><select value={offeringId} onChange={(event) => setOfferingId(event.target.value)}>{props.offerings.map((item) => <option key={item.id} value={item.id}>{item.displayName} · {item.providerName}</option>)}</select><CaretDown size={12} /></label>
         <div className="composer-actions">
           {active ? <button type="button" className="subtle-button" disabled={props.busy || !batch.queued} onClick={() => void props.onCancel()}>取消排队</button> : null}
           <button className="primary-button" disabled={props.busy || !prompt.trim() || !targetIds.length}>提交修改</button>
@@ -328,7 +339,64 @@ function JobCard(props: { asset: GalleryAsset; referenceImages: SavedImage[]; se
   const { asset } = props;
   const { job, image } = asset;
   const pending = asset.kind === 'job' && (job.status === 'running' || job.status === 'queued');
-  return <article className={`image-card ${props.selected ? 'is-selected' : ''} is-${asset.kind === 'backup' ? 'backup' : job.status}`}>
+  const peekId = useId();
+  const [peekPosition, setPeekPosition] = useState<PeekPosition>();
+  const peekOpenTimer = useRef<number | undefined>(undefined);
+  const peekCloseTimer = useRef<number | undefined>(undefined);
+  const cancelPeekOpen = () => {
+    if (peekOpenTimer.current !== undefined) window.clearTimeout(peekOpenTimer.current);
+    peekOpenTimer.current = undefined;
+  };
+  const keepPeekOpen = () => {
+    if (peekCloseTimer.current !== undefined) window.clearTimeout(peekCloseTimer.current);
+    peekCloseTimer.current = undefined;
+  };
+  const closePeekSoon = () => {
+    cancelPeekOpen();
+    keepPeekOpen();
+    peekCloseTimer.current = window.setTimeout(() => setPeekPosition(undefined), 140);
+  };
+  const showPeek = (element: HTMLElement) => {
+    if (!pending) return;
+    cancelPeekOpen();
+    keepPeekOpen();
+    const rect = element.getBoundingClientRect();
+    setPeekPosition(pendingTaskPeekPosition(rect, { width: window.innerWidth, height: window.innerHeight }));
+  };
+  const schedulePeek = (element: HTMLElement) => {
+    if (!pending) return;
+    cancelPeekOpen();
+    keepPeekOpen();
+    peekOpenTimer.current = window.setTimeout(() => showPeek(element), PENDING_TASK_HOVER_DELAY_MS);
+  };
+  useEffect(() => {
+    if (!peekPosition) return;
+    const close = () => setPeekPosition(undefined);
+    window.addEventListener('resize', close);
+    return () => window.removeEventListener('resize', close);
+  }, [peekPosition]);
+  useEffect(() => () => {
+    cancelPeekOpen();
+    keepPeekOpen();
+  }, []);
+  useEffect(() => {
+    if (!pending) {
+      cancelPeekOpen();
+      keepPeekOpen();
+      setPeekPosition(undefined);
+    }
+  }, [pending]);
+  return <article
+    className={`image-card ${props.selected ? 'is-selected' : ''} is-${asset.kind === 'backup' ? 'backup' : job.status}`}
+    data-pending-task={pending ? 'true' : undefined}
+    tabIndex={pending ? 0 : undefined}
+    aria-label={pending ? `${asset.name}${job.status === 'queued' ? '等待中' : '生成中'}。提示词：${asset.prompt}。参考图 ${props.referenceImages.length} 张。` : undefined}
+    aria-describedby={peekPosition ? peekId : undefined}
+    onPointerEnter={(event) => schedulePeek(event.currentTarget)}
+    onPointerLeave={closePeekSoon}
+    onFocus={(event) => showPeek(event.currentTarget)}
+    onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) { cancelPeekOpen(); setPeekPosition(undefined); } }}
+  >
     <button className="image-card-stage" disabled={!image} onClick={() => image && props.onOpen(image.id)} onDoubleClick={(event) => { event.preventDefault(); if (image) props.onToggle(image.id); }} onContextMenu={(event) => image && props.onContextMenu(event, image.id)}>
       {pending ? <ProcessingPreview images={props.referenceImages} prompt={asset.prompt} /> : image ? <img src={image.mediaUrl} alt={asset.prompt} /> : <JobPlaceholder prompt={asset.prompt} failed={job.status === 'failed'} />}
       <span className="image-name">{asset.name}</span>
@@ -336,8 +404,17 @@ function JobCard(props: { asset: GalleryAsset; referenceImages: SavedImage[]; se
       {pending ? <span className="status-overlay"><span className="spinner" />{job.status === 'queued' ? '等待中' : `生成中 ${Math.max(1, job.progress)}%`}</span> : null}
     </button>
     <div className="card-meta"><span>{asset.kind === 'backup' ? '历史版本' : job.status === 'succeeded' ? asset.offering.displayName : statusText(job.status)}</span><div className="card-tools"><button title="任务详情" onClick={props.onDetails}><Info size={14} /></button>{image ? <button title="另存为" onClick={() => void window.esse.saveImage(image.id)}><DownloadSimple size={14} /></button> : null}</div></div>
-    {asset.kind === 'job' && job.status === 'failed' ? <div className="job-error"><p>{job.error || '生成失败'}</p>{job.retryable ? <button onClick={() => void props.onRetry()}>{job.chargeState === 'unknown' ? '确认重试' : '重试'}</button> : <span>{job.chargeState === 'unknown' ? '扣费状态待复核' : '不可重试'}</span>}</div> : null}
+    {asset.kind === 'job' && job.status === 'failed' ? <div className="job-error"><p>{job.error || '生成失败'}</p>{job.operation !== 'agent' ? <button onClick={() => void props.onRetry()}>重试</button> : <span>需由 Agent 重新发起</span>}</div> : null}
+    {pending && peekPosition ? createPortal(<PendingTaskPeek id={peekId} prompt={asset.prompt} images={props.referenceImages} position={peekPosition} onPointerEnter={keepPeekOpen} onPointerLeave={closePeekSoon} />, document.body) : null}
   </article>;
+}
+
+function PendingTaskPeek({ id, prompt, images, position, onPointerEnter, onPointerLeave }: { id: string; prompt: string; images: SavedImage[]; position: PeekPosition; onPointerEnter: () => void; onPointerLeave: () => void }) {
+  return <aside id={id} className="pending-task-peek" role="tooltip" data-placement={position.placement} style={{ left: position.left, top: position.top }} onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}>
+    <div className="pending-task-peek-heading"><strong>提示词</strong>{images.length ? <span>{images.length} 张参考图</span> : <span>无参考图</span>}</div>
+    <p>{prompt}</p>
+    {images.length ? <div className="pending-task-references">{images.slice(0, 4).map((image) => <img key={image.id} src={image.mediaUrl} alt={image.sourceFileName || image.fileName} />)}{images.length > 4 ? <span>另有 {images.length - 4} 张</span> : null}</div> : null}
+  </aside>;
 }
 
 function ProcessingPreview({ images, prompt }: { images: SavedImage[]; prompt: string }) {
@@ -370,7 +447,7 @@ function TaskDetailDialog({ asset, imagesById, onClose }: { asset: GalleryAsset;
       <div className="detail-summary">
         <div><span>状态</span><strong>{asset.kind === 'backup' ? '已保留' : statusText(job.status)}</strong></div>
         <div><span>模型</span><strong>{asset.offering.displayName}</strong></div>
-        <div><span>单价</span><strong>¥{formatCny(asset.offering.priceMicros)}</strong></div>
+        <div><span>单价</span><strong>{offeringPriceLabel(asset.offering)}</strong></div>
         <div><span>调用</span><strong>{job.callHistory.length} 次</strong></div>
         {metadata.available ? <><div><span>尺寸</span><strong>{metadata.width} × {metadata.height}</strong></div><div><span>文件</span><strong>{formatBytes(metadata.sizeBytes || 0)}</strong></div></> : null}
       </div>
@@ -477,7 +554,7 @@ function Settings(props: { state: DesktopState; busy: boolean; apply: (action: (
       {!props.state.providers.length ? <div className="empty-mini">尚未配置 Provider</div> : null}
       {props.state.providers.map((profile) => <button key={profile.id} className={`provider-item ${draft.id === profile.id ? 'is-active' : ''}`} onClick={() => { setDraft(providerDraftFromProfile(profile)); setModels([]); setConfirmDelete(false); }}><span className="provider-avatar">{profile.displayName.slice(0, 1)}</span><span><strong>{profile.displayName}</strong><small>{profile.tierName} · {adapterDisplayName(profile.adapterId)}</small></span><i className={profile.hasApiKey ? 'status-ok' : 'status-missing'} /></button>)}
       <div className="secure-note"><LockSimple size={14} /><span>{props.state.secureStorage}</span></div>
-      <div className="mcp-settings"><strong>Agent MCP</strong><code>{props.state.mcp.endpoint}</code><button className="subtle-button" disabled={!props.state.mcp.available} onClick={() => void window.esse.copyWorkBuddyConfig().then(() => { setCopied(true); window.setTimeout(() => setCopied(false), 2400); })}><Copy size={14} />{copied ? '已复制' : '复制配置'}</button></div>
+      <div className="mcp-settings"><strong>Agent MCP</strong><code>{props.state.mcp.endpoint}</code><button className="subtle-button" disabled={!props.state.mcp.available} onClick={() => void window.esse.copyAgentSetupPrompt().then(() => { setCopied(true); props.onNotice('已复制 Agent 配置提示词，粘贴后直接发送即可'); window.setTimeout(() => setCopied(false), 2400); })}><Copy size={14} />{copied ? '已复制' : '复制给 Agent'}</button></div>
     </aside>
 
     <div className="provider-editor">
@@ -563,7 +640,7 @@ function ImageViewer({ image, images, onNavigate, onClose, onNotice, onDelete }:
   return <div className="lightbox" role="dialog" aria-modal="true" onPointerDown={(event) => {
     if (shouldDismissOverlay(event.target, 'button, img, .lightbox-caption')) onClose();
   }}>
-    <button className="lightbox-close" onClick={onClose}><X size={18} /></button>
+    <button className="lightbox-close" onClick={onClose} aria-label="关闭预览" title="关闭预览"><X size={18} /></button>
     {images.length > 1 ? <><button className="lightbox-nav is-previous" onClick={() => navigate(-1)} aria-label="上一张"><CaretLeft size={22} /></button><button className="lightbox-nav is-next" onClick={() => navigate(1)} aria-label="下一张"><CaretRight size={22} /></button></> : null}
     <div ref={stageRef} className={`lightbox-stage ${zoom.scale > 1 ? 'is-zoomed' : ''}`} onWheel={(event) => {
       event.preventDefault();
@@ -573,7 +650,7 @@ function ImageViewer({ image, images, onNavigate, onClose, onNotice, onDelete }:
     }} onDoubleClick={() => setZoom(initialImageZoom)}>
       <img src={image.mediaUrl} alt={image.prompt} style={{ transform: `translate(${zoom.x}px, ${zoom.y}px) scale(${zoom.scale})` }} />
     </div>
-    <div className="lightbox-caption"><strong>{image.fileName}</strong><span>{image.model} · {index + 1}/{Math.max(1, images.length)} · {Math.round(zoom.scale * 100)}%</span><button onClick={() => void window.esse.openImage(image.id)} title="打开原图"><ArrowsOutSimple size={16} /></button><button onClick={() => void window.esse.copyImage(image.id).then(() => onNotice('图片已复制到剪贴板'))} title="复制图片"><Copy size={16} /></button><button onClick={() => void window.esse.saveImage(image.id)} title="另存为"><DownloadSimple size={16} /></button><button onClick={() => void window.esse.revealImage(image.id)} title="在文件夹中显示"><FolderSimple size={16} /></button><button className="is-danger" onClick={() => void onDelete()} title="删除图片"><Trash size={16} /></button></div>
+    <div className="lightbox-caption"><strong>{image.fileName}</strong><span>{image.model} · {index + 1}/{Math.max(1, images.length)} · {Math.round(zoom.scale * 100)}%</span><button onClick={() => void window.esse.openImage(image.id)} title="打开原图"><ArrowsOutSimple size={16} /></button><button onClick={() => void window.esse.copyImage(image.id).then(() => onNotice('图片已复制到剪贴板'))} title="复制图片"><Copy size={16} /></button><button onClick={() => void window.esse.saveImage(image.id)} title="另存为"><DownloadSimple size={16} /></button><button onClick={() => void window.esse.revealImage(image.id)} title="在文件夹中显示"><FolderSimple size={16} /></button><button className="is-danger" onClick={() => void onDelete()} title="删除图片"><Trash size={16} /></button><button className="lightbox-caption-close" onClick={onClose} aria-label="关闭预览" title="关闭预览"><X size={16} /></button></div>
   </div>;
 }
 
@@ -582,7 +659,8 @@ function EmptyState({ title, copy }: { title: string; copy: string }) {
 }
 
 function WindowTitlebar() {
-  return <div className="window-titlebar" aria-hidden="true"><span>Esse</span></div>;
+  if (window.esse.platform !== 'win32') return null;
+  return <div className="window-titlebar" aria-hidden="true"><img src={esseIconUrl} alt="" /><span>{product.displayName}</span></div>;
 }
 
 function isTerminal(batch: BatchSnapshot) { return batch.queued === 0 && batch.running === 0; }
@@ -592,6 +670,7 @@ function chargeText(state: BatchSnapshot['jobs'][number]['chargeState']) { retur
 function formatDuration(value?: number) { if (value === undefined) return '—'; return value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`; }
 function formatBytes(value: number) { if (value < 1024) return `${value} B`; if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`; return `${(value / 1024 ** 2).toFixed(1)} MB`; }
 function uniqueImages(images: SavedImage[]) { return [...new Map(images.map((image) => [image.id, image])).values()]; }
+function offeringPriceLabel(offering: OfferingSummary): string { return offering.price.mode === 'per_request' && Number.isFinite(offering.price.amount) ? `${offering.currency === 'CNY' ? '¥' : `${offering.currency} `}${formatCny(offering.priceMicros)}` : '—'; }
 function formatCny(micros: number): string { return (micros / 1_000_000).toFixed(2); }
 function cleanError(value: unknown): string { return (value instanceof Error ? value.message : String(value)).replace(/^Error invoking remote method '[^']+': Error: /, ''); }
 

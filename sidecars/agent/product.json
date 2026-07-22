@@ -1,0 +1,10 @@
+{
+  "edition": "community",
+  "displayName": "Esse Community",
+  "executableName": "esse-community",
+  "userDataDirectory": "esse-community",
+  "windowsSquirrelAppId": "esse-community-app",
+  "windowsSetupExe": "Esse-Community-Setup.exe",
+  "macosAppBundleId": "com.renoir.esse.community",
+  "releasePrefix": "esse-community"
+}

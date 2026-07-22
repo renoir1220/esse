@@ -16,7 +16,7 @@ Do not ask the user to download an archive manually. Do not ask for a Provider A
 4. Treat an `ESSE_INSTALL_RESULT` line with `status: "installed"` as the structured success marker. The installer performs plugin registration and verification with its selected Codex executable; do not repeat those commands through a bare `codex` from `PATH`.
 5. Do not try to open Esse in the same task. Newly installed skills and MCP tools load after the desktop app restarts and a new task begins.
 
-This procedure installs the Codex Plugin. For WorkBuddy or another Agent that consumes a local HTTP MCP, use the Windows Agent Sidecar procedure below instead; do not install both merely to offer a choice.
+This procedure installs the Codex Plugin. For WorkBuddy or another Agent that consumes a local HTTP MCP, use the Agent Sidecar procedure below instead; do not install both merely to offer a choice.
 
 ### Windows
 
@@ -64,14 +64,25 @@ After verification, report the installed version and say:
 
 Explicitly remind the user that the API Key belongs only in the Esse settings UI and should never be pasted into chat.
 
-## Windows Agent Sidecar procedure
+## Agent Sidecar procedure
 
-The Agent Sidecar is currently released only for Windows x64. Download these two assets from the same requested GitHub Release:
+Download these two assets from the same requested GitHub Release:
 
 - `sidecar-latest.json`
-- the `esse-agent-sidecar-windows-x64-v*.exe` named by that metadata file
+- the platform and architecture asset named by that metadata file:
+  - Windows x64: `windowsX64Asset`
+  - macOS arm64: `macosArm64Asset`
+  - macOS x64: `macosX64Asset`
 
-Verify the installer SHA256 against `windowsX64Sha256` before running it. `v0.3.0` is an explicitly unsigned release while SignPath Foundation approval is pending, so report the publisher limitation honestly; never disable Windows security controls. The installed application and window are named Esse.
+Verify the asset SHA256 against the matching `*Sha256` field before opening it. The installed application and window are named Esse.
+
+### Windows x64
+
+Run the verified `.exe` installer. `v0.3.0` was an explicitly unsigned exception while SignPath Foundation approval was pending, so report that historical publisher limitation honestly; never disable Windows security controls. Releases after `v0.3.0` must pass the repository Authenticode gate.
+
+### macOS arm64 and x64
+
+Open the verified `.dmg`, drag `Esse Community.app` into Applications, and open it normally. The release workflow requires a Developer ID signature, Apple notarization, and a stapled notarization ticket. If Gatekeeper rejects the app, stop and report the exact error. Never remove quarantine attributes, disable Gatekeeper, or instruct the user to choose an override.
 
 After installation, the user opens Esse and completes setup inside its settings page:
 

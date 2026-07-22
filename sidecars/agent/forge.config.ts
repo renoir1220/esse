@@ -7,31 +7,59 @@ import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { resolve } from 'node:path';
 import { resolveWindowsSignOptions } from './src/windows-signing';
+import { resolveMacosSigning } from './src/macos-signing';
+import { MACOS_APP_BUNDLE_ID, WINDOWS_SQUIRREL_APP_ID } from './src/platform';
+import product from './product.json';
 
 const windowsSign = resolveWindowsSignOptions();
+const macosSigning = resolveMacosSigning();
 const appIcon = resolve(__dirname, 'assets', 'esse');
 
 const config: ForgeConfig = {
   packagerConfig: {
     asar: true,
-    name: 'Esse',
-    executableName: 'esse',
-    appBundleId: 'com.renoir.esse',
+    name: product.displayName,
+    executableName: product.executableName,
+    appBundleId: MACOS_APP_BUNDLE_ID,
+    helperBundleId: `${MACOS_APP_BUNDLE_ID}.helper`,
     appCategoryType: 'public.app-category.graphics-design',
     icon: appIcon,
+    extraResource: [`${appIcon}.png`],
+    win32metadata: {
+      CompanyName: 'Renoir',
+      FileDescription: `${product.displayName} local image workspace`,
+      InternalName: product.displayName,
+      OriginalFilename: `${product.executableName}.exe`,
+      ProductName: product.displayName,
+    },
     ...(windowsSign ? { windowsSign } : {}),
+    ...macosSigning.packager,
   },
   rebuildConfig: {},
   makers: [
     new MakerSquirrel({
-      name: 'esse',
-      setupExe: 'Esse-Setup.exe',
+      name: WINDOWS_SQUIRREL_APP_ID,
+      setupExe: product.windowsSetupExe,
       setupIcon: `${appIcon}.ico`,
       noMsi: true,
       ...(windowsSign ? { windowsSign } : {}),
     }, ['win32']),
     new MakerZIP({}, ['darwin']),
-    new MakerDMG({ name: 'Esse' }, ['darwin']),
+    new MakerDMG({
+      name: product.displayName,
+      title: product.displayName,
+      icon: `${appIcon}.icns`,
+      format: 'ULFO',
+      overwrite: true,
+      ...(macosSigning.identity ? {
+        additionalDMGOptions: {
+          'code-sign': {
+            'signing-identity': macosSigning.identity,
+            identifier: `${MACOS_APP_BUNDLE_ID}.dmg`,
+          },
+        },
+      } : {}),
+    }, ['darwin']),
   ],
   plugins: [
     new VitePlugin({

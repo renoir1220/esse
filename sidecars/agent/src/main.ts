@@ -3,6 +3,7 @@ import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import started from 'electron-squirrel-startup';
+import { buildAgentSetupPrompt } from './agent-setup-prompt';
 import { EsseApiClient } from './api-client';
 import { BatchManager } from './batch-manager';
 import { BatchStore } from './batch-store';
@@ -15,6 +16,8 @@ import { DEFAULT_MCP_PORT, startDesktopMcpServer, type RunningDesktopMcpServer }
 import { ProviderSettingsStore } from './provider-settings';
 import { WORKBUDDY_AGENT_OFFERING, type DesktopState, type ModifyBatchInput, type SaveProviderInput } from './types';
 import { desktopWindowChrome, shouldRemoveWindowMenu } from './window-chrome';
+import { resolveSidecarUserDataPath, shouldQuitWhenAllWindowsClose } from './platform';
+import product from '../product.json';
 
 const smokeMode = process.env.ESSE_SMOKE_TEST === '1';
 const qaCapturePath = process.env.ESSE_QA_CAPTURE_PATH;
@@ -22,11 +25,11 @@ const qaFixture = process.env.ESSE_QA_FIXTURE;
 const qaViewport = parseQaViewport(process.env.ESSE_QA_VIEWPORT);
 const qaUserDataPath = process.env.ESSE_QA_USER_DATA_PATH;
 
-app.setName('Esse');
+app.setName(product.displayName);
 if (qaUserDataPath) {
   app.setPath('userData', path.resolve(qaUserDataPath));
-} else if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
-  app.setPath('userData', path.join(process.env.LOCALAPPDATA, 'esse-agent-sidecar'));
+} else {
+  app.setPath('userData', resolveSidecarUserDataPath());
 }
 
 protocol.registerSchemesAsPrivileged([{
@@ -61,6 +64,7 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
+  if (process.platform === 'darwin') app.dock?.setIcon(resolveRuntimeIconPath());
   const userData = app.getPath('userData');
   credentialStore = new CredentialStore(userData);
   providerSettings = new ProviderSettingsStore(path.join(userData, 'providers.json'), credentialStore);
@@ -90,8 +94,8 @@ function createWindow(): void {
     height: qaViewport?.height ?? 860,
     minHeight: qaViewport ? 640 : 640,
     show: !smokeMode && !qaCapturePath,
-    title: 'Esse',
-    icon: path.join(app.getAppPath(), 'assets', 'esse.png'),
+    title: product.displayName,
+    icon: resolveRuntimeIconPath(),
     backgroundColor: '#ffffff',
     ...desktopWindowChrome(process.platform),
     webPreferences: {
@@ -294,15 +298,15 @@ function registerIpc(): void {
     const error = await shell.openPath(batchFolder);
     if (error) throw new Error(error);
   });
-  ipcMain.handle('mcp:copy-workbuddy-config', async () => {
+  ipcMain.handle('mcp:copy-agent-setup', async () => {
     if (!mcpServer) throw new Error(mcpError || 'Esse MCP is unavailable.');
     const pairingToken = await mcpPairingStore.getOrCreate();
-    clipboard.writeText(JSON.stringify({
+    clipboard.writeText(buildAgentSetupPrompt({
       type: 'http',
       url: mcpServer.endpoint,
       headers: { Authorization: `Bearer ${pairingToken}` },
       description: 'Esse local image generation',
-    }, null, 2));
+    }));
   });
   ipcMain.on('smoke:ready', (_event, details: unknown) => {
     if (!smokeMode || smokeReported) return;
@@ -465,8 +469,14 @@ function parseQaViewport(value: string | undefined): { width: number; height: nu
   return { width: Number(match[1]), height: Number(match[2]) };
 }
 
+function resolveRuntimeIconPath(): string {
+  return app.isPackaged
+    ? path.join(process.resourcesPath, 'esse.png')
+    : path.join(app.getAppPath(), 'assets', 'esse.png');
+}
+
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
+  if (shouldQuitWhenAllWindowsClose()) app.quit();
 });
 
 app.on('activate', () => {

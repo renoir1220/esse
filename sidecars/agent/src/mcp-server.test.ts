@@ -57,6 +57,8 @@ describe('Esse MCP server', () => {
     const serverInstructions = client.getInstructions();
     expect(serverInstructions).toContain('not an image-generation model or model architecture');
     expect(serverInstructions).toContain('do not ask for another confirmation');
+    expect(serverInstructions).toContain('language the user is currently using');
+    expect(serverInstructions).toContain('default to Simplified Chinese');
     expect(serverInstructions).toContain('end the current task immediately');
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
@@ -108,6 +110,8 @@ describe('Esse MCP server', () => {
     expect(desktopSkillText).toContain('not an image-generation model or model architecture');
     expect(desktopSkillText).toContain('generic warning about text, numbers, charts, infographics');
     expect(desktopSkillText).toContain('end the current task immediately');
+    expect(desktopSkillText).toContain('For a Chinese request, submit Chinese image prompts');
+    expect(desktopSkillText).toContain('default to Simplified Chinese');
     expect(desktopSkillText).toContain('Do not mention Provider, model, balance, unit price, total price, micros');
     expect(desktopSkillText).toContain('do not call list_image_batches, get_image_batch, render_image_batch, open_esse');
     expect(desktopSkillText).toContain('do not copy generated images into the Agent workspace');
@@ -121,10 +125,11 @@ describe('Esse MCP server', () => {
     expect(quotePayload).toMatchObject({
       offerings: expect.arrayContaining([
         expect.objectContaining({ providerName: 'Tuzi default', estimatedPricePerImage: '0.10' }),
-        expect.objectContaining({ id: 'workbuddy-agent-generation', providerType: 'agent-generation', estimatedPricePerImage: '0.00' }),
+        expect.objectContaining({ id: 'workbuddy-agent-generation', providerType: 'agent-generation' }),
       ]),
       conversationPolicy: expect.stringContaining('Only discuss'),
     });
+    expect((quotePayload as { offerings: Array<Record<string, unknown>> }).offerings.find((offering) => offering.id === 'workbuddy-agent-generation')).not.toHaveProperty('estimatedPricePerImage');
     expect(quotePayload).not.toHaveProperty('approvalRequired');
 
     const result = await client.callTool({

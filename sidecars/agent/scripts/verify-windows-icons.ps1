@@ -1,0 +1,75 @@
+[CmdletBinding()]
+param()
+
+$ErrorActionPreference = 'Stop'
+Set-StrictMode -Version Latest
+Add-Type -AssemblyName System.Drawing
+
+$sidecarRoot = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+$product = Get-Content -Raw -Encoding UTF8 (Join-Path $sidecarRoot 'product.json') | ConvertFrom-Json
+$packageRoot = Join-Path $sidecarRoot ("out\{0}-win32-x64" -f $product.displayName)
+$sourceIconPath = Join-Path $sidecarRoot 'assets\esse.ico'
+$sourcePngPath = Join-Path $sidecarRoot 'assets\esse.png'
+$packagedExe = Join-Path $packageRoot ("{0}.exe" -f $product.executableName)
+$installerExe = Join-Path $sidecarRoot ("out\make\squirrel.windows\x64\{0}" -f $product.windowsSetupExe)
+$packagedPng = Join-Path $packageRoot 'resources\esse.png'
+
+foreach ($path in @($sourceIconPath, $sourcePngPath, $packagedExe, $installerExe, $packagedPng)) {
+  if (-not (Test-Path -LiteralPath $path)) { throw "Missing icon verification target: $path" }
+}
+
+function Get-IcoPngFrame {
+  param([string]$Path, [int]$Size)
+  $bytes = [IO.File]::ReadAllBytes($Path)
+  $count = [BitConverter]::ToUInt16($bytes, 4)
+  for ($index = 0; $index -lt $count; $index++) {
+    $entry = 6 + (16 * $index)
+    $width = if ($bytes[$entry] -eq 0) { 256 } else { [int]$bytes[$entry] }
+    if ($width -ne $Size) { continue }
+    $length = [BitConverter]::ToUInt32($bytes, $entry + 8)
+    $offset = [BitConverter]::ToUInt32($bytes, $entry + 12)
+    $frame = [byte[]]::new($length)
+    [Array]::Copy($bytes, $offset, $frame, 0, $length)
+    return ,$frame
+  }
+  throw "Esse ICO does not contain a ${Size}px frame."
+}
+
+function Get-Sha256Hex {
+  param([string]$Path)
+  $algorithm = [Security.Cryptography.SHA256]::Create()
+  try {
+    return [BitConverter]::ToString($algorithm.ComputeHash([IO.File]::ReadAllBytes($Path))).Replace('-', '')
+  } finally {
+    $algorithm.Dispose()
+  }
+}
+
+$expected = Get-IcoPngFrame -Path $sourceIconPath -Size 32
+$sha = [Security.Cryptography.SHA256]::Create()
+foreach ($target in @($packagedExe, $installerExe)) {
+  $targetIcon = [Drawing.Icon]::ExtractAssociatedIcon($target)
+  if ($null -eq $targetIcon) { throw "No application icon was embedded in $target" }
+  $targetBitmap = $targetIcon.ToBitmap()
+  $stream = [IO.MemoryStream]::new()
+  try {
+    $targetBitmap.Save($stream, [Drawing.Imaging.ImageFormat]::Png)
+    $actual = $stream.ToArray()
+    $actualHash = [BitConverter]::ToString($sha.ComputeHash($actual)).Replace('-', '')
+    $expectedHash = [BitConverter]::ToString($sha.ComputeHash($expected)).Replace('-', '')
+    if ($actualHash -ne $expectedHash) {
+      throw "Embedded icon does not match the Esse 32px icon frame in $target"
+    }
+  } finally {
+    $stream.Dispose()
+    $targetBitmap.Dispose()
+    $targetIcon.Dispose()
+  }
+}
+$sha.Dispose()
+
+$sourceHash = Get-Sha256Hex -Path $sourcePngPath
+$packagedHash = Get-Sha256Hex -Path $packagedPng
+if ($sourceHash -ne $packagedHash) { throw 'Packaged runtime Esse PNG does not match the source icon.' }
+
+Write-Output '{"status":"ok","platform":"windows","appIcon":"Esse","installerIcon":"Esse","runtimeIcon":"Esse"}'

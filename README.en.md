@@ -9,7 +9,7 @@ Provider settings, API keys, batch records, and original images stay on the loca
 ## Two distributions
 
 - **Codex Plugin** for the Codex/ChatGPT desktop app on Windows x64, macOS arm64, and macOS x64.
-- **Agent Sidecar** for WorkBuddy and other Agents that support a local HTTP MCP. The current release is a Windows x64 installer with the complete Esse workspace and background task execution.
+- **Agent Sidecar** for WorkBuddy and other Agents that support a local HTTP MCP. It supports Windows x64, macOS arm64, and macOS x64 with the complete Esse workspace and background task execution.
 
 These are technical distributions of one product, not separate user-facing brands. Most users install only the one that matches their Agent.
 
@@ -25,7 +25,7 @@ You can also download the matching Plugin ZIP from [GitHub Releases](https://git
 
 ## Install for WorkBuddy and other Agents
 
-Download `esse-agent-sidecar-windows-x64-*.exe` from [GitHub Releases](https://github.com/renoir1220/esse/releases), verify it against `sidecar-latest.json` or `checksums.txt`, and open Esse after installation. In Esse settings:
+Download the matching `esse-community-windows-x64-*.exe` or `esse-community-macos-*-*.dmg` from [GitHub Releases](https://github.com/renoir1220/esse/releases), verify it against `sidecar-latest.json` or `checksums.txt`, and open Esse Community after installation. In settings:
 
 1. Select a built-in Tuzi Provider preset or add an OpenAI-compatible Provider.
 2. Enter the API key inside Esse, test the connection, and save a default model.
@@ -36,13 +36,13 @@ Then simply tell the Agent to “use Esse to generate images.” Once durable ba
 ## Local data
 
 - Codex Plugin: `%LOCALAPPDATA%\esse` on Windows; `~/Library/Application Support/esse` on macOS
-- Agent Sidecar: `%LOCALAPPDATA%\esse-agent-sidecar` on Windows
+- Esse Community: `%LOCALAPPDATA%\esse-community` on Windows; `~/Library/Application Support/esse-community` on macOS
 
-The directories are intentionally isolated. Repository migration does not move, overwrite, or delete legacy `esse-desktop` data. Windows API keys are protected with current-user DPAPI; the macOS Plugin uses Keychain.
+The directories are intentionally isolated, and the Sidecar installer never owns a directory used for data. Repository migration does not move, overwrite, or delete legacy `esse-desktop` data. Windows API keys are protected with current-user DPAPI; macOS uses Keychain.
 
 ## Code signing
 
-Signed Windows Agent Sidecar artifacts follow the public [Code signing policy](CODE_SIGNING.md). The release workflow normally verifies the Authenticode signature of both the application and installer. While the SignPath Foundation application is pending, the maintainer explicitly allows `v0.3.0-alpha.2` and `v0.3.0` to ship unsigned with prominent Release warnings. Later releases remain protected by the signature gate.
+Signed Agent Sidecar artifacts follow the public [Code signing policy](CODE_SIGNING.md). Windows releases verify Authenticode on the application and installer; macOS releases verify Developer ID signing, Apple notarization, and the stapled ticket. The maintainer explicitly allowed `v0.3.0-alpha.2` and `v0.3.0` as unsigned Windows exceptions. Later releases remain protected by the signature gates.
 
 ## Repository layout
 
@@ -65,7 +65,7 @@ npm install
 npm run check
 ```
 
-Agent Sidecar (currently released for Windows x64 only):
+Agent Sidecar (one shared core for Windows x64 and macOS arm64/x64):
 
 ```bash
 cd sidecars/agent

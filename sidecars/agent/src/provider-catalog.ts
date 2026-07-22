@@ -17,7 +17,6 @@ export interface TuziProviderPreset {
   models: TuziModelPreset[];
 }
 
-const observedAt = '2026-07-19';
 const gptImageSizes = ['auto', '1024x1024', '1536x1024', '1024x1536', '2048x2048', '2048x1152', '3840x2160', '2160x3840'];
 
 export const TUZI_PROVIDER_PRESETS: TuziProviderPreset[] = [
@@ -30,11 +29,13 @@ export const TUZI_PROVIDER_PRESETS: TuziProviderPreset[] = [
     adapterId: 'tuzi-json-images',
     concurrency: 3,
     models: [
-      model('gpt-image-2', 'gpt-image-2', 'gpt-image-2', 'GPT-Image 2', 0.035, 'default', gptImageSizes),
-      model('nano-banana-2-1k', 'nano-banana-2', 'nano-banana-2', 'Nano Banana 2 · 1K', 0.1778, 'default'),
-      model('nano-banana-2-2k', 'nano-banana-2', 'nano-banana-2-2k', 'Nano Banana 2 · 2K', 0.286, 'default'),
-      model('nano-banana-2-4k', 'nano-banana-2', 'nano-banana-2-4k', 'Nano Banana 2 · 4K', 0.325, 'default'),
-      model('seedream-4-5', 'seedream-4.5', 'doubao-seedream-4-5-251128', 'Seedream 4.5', 0.1204, 'default'),
+      model('gpt-image-2', 'gpt-image-2', 'gpt-image-2', 'GPT-Image 2', gptImageSizes),
+      model('gpt-image-2-image', 'image2-v', 'gpt-image-2', 'image2-v', gptImageSizes),
+      model('gemini-3-pro-image-preview-4k', 'gemini-3-pro-image-preview-4k', 'gemini-3-pro-image-preview-4k', 'gemini-3-pro-image-preview-4k'),
+      model('nano-banana-2-1k', 'nano-banana-2', 'nano-banana-2', 'Nano Banana 2 · 1K'),
+      model('nano-banana-2-2k', 'nano-banana-2', 'nano-banana-2-2k', 'Nano Banana 2 · 2K'),
+      model('nano-banana-2-4k', 'nano-banana-2', 'nano-banana-2-4k', 'Nano Banana 2 · 4K'),
+      model('seedream-4-5', 'seedream-4.5', 'doubao-seedream-4-5-251128', 'Seedream 4.5'),
     ],
   },
   {
@@ -45,7 +46,7 @@ export const TUZI_PROVIDER_PRESETS: TuziProviderPreset[] = [
     baseUrl: 'https://api.tu-zi.com',
     adapterId: 'tuzi-json-images',
     concurrency: 3,
-    models: [model('gpt-image-2', 'gpt-image-2', 'gpt-image-2', 'GPT-Image 2', 0.07, '微软', gptImageSizes)],
+    models: [model('gpt-image-2', 'gpt-image-2', 'gpt-image-2', 'GPT-Image 2', gptImageSizes)],
   },
   {
     id: 'tuzi-codex',
@@ -55,7 +56,7 @@ export const TUZI_PROVIDER_PRESETS: TuziProviderPreset[] = [
     baseUrl: 'https://api.tu-zi.com',
     adapterId: 'openai-images',
     concurrency: 3,
-    models: [model('gpt-image-2', 'gpt-image-2', 'gpt-image-2', 'GPT-Image 2', 0.09996, 'Codex', gptImageSizes)],
+    models: [model('gpt-image-2', 'gpt-image-2', 'gpt-image-2', 'GPT-Image 2', gptImageSizes)],
   },
 ];
 
@@ -72,7 +73,7 @@ export function tuziProviderPresetForDraft(draft: ProviderDraft): TuziProviderPr
 export function createTuziProviderDraft(id: TuziProviderPresetId): ProviderDraft {
   const preset = TUZI_PROVIDER_PRESETS.find((entry) => entry.id === id);
   if (!preset) throw new Error(`Unknown Tuzi Provider preset: ${id}`);
-  const defaultModels = preset.id === 'tuzi-default' ? preset.models.slice(0, 3) : preset.models.slice(0, 1);
+  const defaultModels = preset.id === 'tuzi-default' ? preset.models : preset.models.slice(0, 1);
   return {
     displayName: preset.displayName,
     tierName: preset.tierName,
@@ -116,14 +117,14 @@ export function blankOffering(): OfferingConfig {
   return { id: '', canonicalModelId: '', providerModelId: '', displayName: '', price: { mode: 'unknown', currency: 'CNY' }, supportsTextToImage: true, supportsImageToImage: true, sizes: [], qualities: [] };
 }
 
-function model(catalogId: string, canonicalModelId: string, providerModelId: string, displayName: string, amount: number, tierName: string, sizes: string[] = []): TuziModelPreset {
+function model(catalogId: string, canonicalModelId: string, providerModelId: string, displayName: string, sizes: string[] = []): TuziModelPreset {
   return {
     catalogId,
     id: '',
     canonicalModelId,
     providerModelId,
     displayName,
-    price: { mode: 'per_request', currency: 'CNY', amount, observedAt, note: `兔子模型广场固定目录价，${tierName} 分组` },
+    price: { mode: 'unknown', currency: 'CNY' },
     supportsTextToImage: true,
     supportsImageToImage: true,
     sizes: [...sizes],
