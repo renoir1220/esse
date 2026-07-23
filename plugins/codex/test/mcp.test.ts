@@ -225,28 +225,41 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert.equal(openedFolder, path.dirname(completedOutputPath!));
 
     await client.callTool({ name: "ui_set_default_offering", arguments: { offeringId: CODEX_GENERATION_OFFERING_ID } });
+    const secondAgentReference = path.join(root, "second-agent-reference.png");
+    await writeFile(secondAgentReference, Buffer.from(onePixelPng, "base64"));
     const delegated = await client.callTool({
       name: "create_image_batch",
       arguments: {
         title: "Agent delegated",
-        jobs: [{ prompt: "Agent prompt", referenceImages: [{ batchId: createdBatch?.id, image: "图1" }] }],
+        jobs: [
+          { prompt: "Agent prompt one", referenceImages: [{ batchId: createdBatch?.id, image: "图1" }] },
+          { prompt: "Agent prompt two", referenceImagePaths: [secondAgentReference] }
+        ],
         requestKey: "mcp-create-agent"
       }
     });
-    const delegatedBatch = (delegated.structuredContent as { batch?: { id?: string; status?: string; offering?: { adapterId?: string }; jobs?: Array<{ id?: string; referenceImagePaths?: string[] }> } }).batch;
+    const delegatedBatch = (delegated.structuredContent as { batch?: { id?: string; status?: string; offering?: { adapterId?: string }; jobs?: Array<{ id?: string }> } }).batch;
     assert.equal(delegatedBatch?.status, "queued");
     assert.equal(delegatedBatch?.offering?.adapterId, "agent-generation");
-    assert.deepEqual(delegatedBatch?.jobs?.[0]?.referenceImagePaths, [completedOutputPath]);
-    const delegatedJobId = delegatedBatch?.jobs?.[0]?.id;
-    const started = await client.callTool({ name: "start_agent_image_job", arguments: { batchId: delegatedBatch?.id, jobId: delegatedJobId } });
-    assert.equal((started.structuredContent as { job?: { prompt?: string; status?: string } }).job?.prompt, "Agent prompt");
-    assert.equal((started.structuredContent as { job?: { status?: string } }).job?.status, "running");
+    assert(!JSON.stringify(delegated.structuredContent).includes(completedOutputPath!), "Agent batch acceptance must not expose references from every child");
+    assert(!JSON.stringify(delegated.structuredContent).includes(secondAgentReference), "Agent batch acceptance must defer references until one exact job starts");
+    const firstDelegatedJobId = delegatedBatch?.jobs?.[0]?.id;
+    const secondDelegatedJobId = delegatedBatch?.jobs?.[1]?.id;
+    const started = await client.callTool({ name: "start_agent_image_job", arguments: { batchId: delegatedBatch?.id, jobId: firstDelegatedJobId } });
+    const startedJob = (started.structuredContent as { job?: { prompt?: string; status?: string; referenceImagePaths?: string[] } }).job;
+    assert.equal(startedJob?.prompt, "Agent prompt one");
+    assert.equal(startedJob?.status, "running");
+    assert.deepEqual(startedJob?.referenceImagePaths, [completedOutputPath]);
+    assert(!JSON.stringify(started.structuredContent).includes(secondAgentReference), "Starting one job must not expose another job's references");
     const agentOutput = path.join(root, "agent-output.png");
     await writeFile(agentOutput, Buffer.from(onePixelPng, "base64"));
-    const imported = await client.callTool({ name: "complete_agent_image_job", arguments: { batchId: delegatedBatch?.id, jobId: delegatedJobId, imagePath: agentOutput } });
+    const imported = await client.callTool({ name: "complete_agent_image_job", arguments: { batchId: delegatedBatch?.id, jobId: firstDelegatedJobId, imagePath: agentOutput } });
     assert.equal((imported.structuredContent as { job?: { status?: string } }).job?.status, "succeeded");
-    const importedHistory = (imported.structuredContent as { batch?: { jobs?: Array<{ id?: string; callHistory?: Array<{ status?: string; source?: string }> }> } }).batch?.jobs?.find((job) => job.id === delegatedJobId)?.callHistory;
-    assert.deepEqual(importedHistory?.map((call) => [call.status, call.source]), [["succeeded", "agent"]]);
+    const secondStarted = await client.callTool({ name: "start_agent_image_job", arguments: { batchId: delegatedBatch?.id, jobId: secondDelegatedJobId } });
+    assert.deepEqual((secondStarted.structuredContent as { job?: { referenceImagePaths?: string[] } }).job?.referenceImagePaths, [secondAgentReference]);
+    assert(!JSON.stringify(secondStarted.structuredContent).includes(completedOutputPath!), "The second job must not inherit the first job's references");
+    const secondFailed = await client.callTool({ name: "fail_agent_image_job", arguments: { batchId: delegatedBatch?.id, jobId: secondDelegatedJobId, error: "Intentional isolation test" } });
+    assert.equal((secondFailed.structuredContent as { job?: { status?: string } }).job?.status, "failed");
 
     await client.callTool({ name: "modify_selected_images", arguments: { batchId: createdBatch?.id, jobIds: [completedJobId], instructions: "create one backup for metadata verification", offeringId: defaultOfferingId, requestKey: "mcp-modify-metadata" } });
     let backupId: string | undefined;

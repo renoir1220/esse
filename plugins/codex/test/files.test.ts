@@ -83,14 +83,19 @@ test("thumbnailer bounds concurrent native image processes", async () => {
   }
 });
 
-test("reference image encoding enforces per-job count and total-byte limits", async () => {
+test("reference image encoding applies count and byte limits independently to each job request", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-reference-limits-"));
   try {
     const first = path.join(root, "first.png");
     const second = path.join(root, "second.png");
     await Promise.all([writeFile(first, Buffer.alloc(8)), writeFile(second, Buffer.alloc(8))]);
     await assert.rejects(imageFilesToDataUrls([first, second], { maxImages: 1 }), /at most 1 reference images/);
-    await assert.rejects(imageFilesToDataUrls([first, second], { maxBytesPerImage: 10, maxTotalBytes: 15 }), /total input limit/);
+    await assert.rejects(imageFilesToDataUrls([first, second], { maxBytesPerImage: 10, maxTotalBytes: 15 }), /per-request input limit/);
+    const independentJobs = await Promise.all([
+      imageFilesToDataUrls([first], { maxBytesPerImage: 10, maxTotalBytes: 8 }),
+      imageFilesToDataUrls([second], { maxBytesPerImage: 10, maxTotalBytes: 8 })
+    ]);
+    assert.deepEqual(independentJobs.map((images) => images.length), [1, 1]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

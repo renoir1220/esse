@@ -391,13 +391,13 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
 
   server.registerTool('start_agent_image_job', {
     title: 'Start an Agent-owned Esse image job',
-    description: '仅用于 offering adapterId 为 agent-generation 的队列任务。Provider 模型任务由 Esse 自己执行。',
+    description: '仅启动一个 agent-generation 子任务，并且只返回该任务自己的 Prompt 和参考图路径。不得把其他批次子任务的参考图合并进本次图片服务请求；可以并发执行多个任务，但每个任务必须保持独立请求。',
     inputSchema: { batchId: z.string().uuid(), jobId: z.string().uuid() },
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
   }, async ({ batchId, jobId }) => toolResult(async () => {
     const job = await options.batchManager.startAgentJob(batchId, jobId);
     return {
-      batch: await enrichBatch(options, options.batchManager.get(batchId)),
+      batch: agentBatchSummary(options.batchManager.get(batchId)),
       job: await agentJobDescriptor(options, job),
     };
   }));
@@ -416,7 +416,7 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
     const selectedPath = imagePath || outputPath;
     if (!selectedPath) throw new Error('Provide imagePath.');
     const batch = await options.batchManager.completeAgentJob(batchId, jobId, selectedPath);
-    return { batch: await enrichBatch(options, batch), job: await agentJobDescriptor(options, batch.jobs.find((job) => job.id === jobId)!) };
+    return { batch: agentBatchSummary(batch), job: await agentJobDescriptor(options, batch.jobs.find((job) => job.id === jobId)!) };
   }));
 
   server.registerTool('fail_agent_image_job', {
@@ -433,7 +433,7 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
     const message = error || reason;
     if (!message) throw new Error('Provide error.');
     const batch = await options.batchManager.failAgentJob(batchId, jobId, message);
-    return { batch: await enrichBatch(options, batch), job: await agentJobDescriptor(options, batch.jobs.find((job) => job.id === jobId)!) };
+    return { batch: agentBatchSummary(batch), job: await agentJobDescriptor(options, batch.jobs.find((job) => job.id === jobId)!) };
   }));
 
   // Compatibility aliases for the first WorkBuddy prototype. They now share the durable batch path.
@@ -572,6 +572,31 @@ async function agentJobDescriptor(options: DesktopMcpServerOptions, job: BatchSn
   return {
     ...job,
     referenceImagePaths: await Promise.all(job.referenceImageIds.map((id) => options.imageStore.pathForId(id))),
+  };
+}
+
+function agentBatchSummary(batch: BatchSnapshot) {
+  return {
+    id: batch.id,
+    title: batch.title,
+    status: batch.status,
+    total: batch.total,
+    queued: batch.queued,
+    running: batch.running,
+    succeeded: batch.succeeded,
+    failed: batch.failed,
+    canceled: batch.canceled,
+    offering: {
+      id: batch.offering.id,
+      providerType: batch.offering.providerType,
+      displayName: batch.offering.displayName,
+    },
+    jobs: batch.jobs.map((job) => ({
+      id: job.id,
+      name: job.name,
+      status: job.status,
+      operation: job.operation,
+    })),
   };
 }
 
