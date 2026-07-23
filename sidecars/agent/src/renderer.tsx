@@ -64,6 +64,7 @@ function App() {
   const lastDesktopActivation = useRef<string | undefined>(undefined);
 
   useEffect(() => {
+    document.title = product.displayName;
     window.esse.reportReady({ title: document.title, bridgeAvailable: typeof window.esse?.getState === 'function' });
     void window.esse.getState().then((next) => {
       setState(next);
