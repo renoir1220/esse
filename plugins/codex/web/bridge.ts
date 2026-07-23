@@ -218,6 +218,12 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
   if (name === "ui_copy_image_to_clipboard") {
     return { structuredContent: { batchId: args.batchId, jobId: args.jobId, copied: true } };
   }
+  if (name === "ui_copy_batch_reference_to_clipboard") {
+    return { structuredContent: { batchId: args.batchId, copied: true } };
+  }
+  if (name === "ui_copy_image_id_to_clipboard") {
+    return { structuredContent: { batchId: args.batchId, jobId: args.jobId, copied: true } };
+  }
   if (name === "ui_open_batch_folder") {
     const batch = state.batches.find((entry) => entry.id === args.batchId);
     return { structuredContent: { opened: Boolean(batch), path: batch?.outputDirectory } };

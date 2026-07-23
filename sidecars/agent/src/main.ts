@@ -17,6 +17,7 @@ import { ProviderSettingsStore } from './provider-settings';
 import { WORKBUDDY_AGENT_OFFERING, type DesktopState, type ModifyBatchInput, type SaveProviderInput } from './types';
 import { desktopWindowChrome, shouldRemoveWindowMenu } from './window-chrome';
 import { resolveSidecarUserDataPath, shouldQuitWhenAllWindowsClose } from './platform';
+import { batchReferenceText, imageIdReferenceText } from './reference-text';
 import product from '../product.json';
 
 const smokeMode = process.env.ESSE_SMOKE_TEST === '1';
@@ -269,6 +270,17 @@ function registerIpc(): void {
     const image = nativeImage.createFromPath(await imageStore.pathForId(id));
     if (image.isEmpty()) throw new Error('The local image could not be copied.');
     clipboard.writeImage(image);
+  });
+  ipcMain.handle('references:copy-batch', async (_event, batchId: unknown) => {
+    const batch = batchManager.get(requiredId(batchId, 'batch'));
+    clipboard.writeText(batchReferenceText(batch.title, batch.id));
+  });
+  ipcMain.handle('references:copy-image-id', async (_event, batchId: unknown, imageId: unknown) => {
+    const batch = batchManager.get(requiredId(batchId, 'batch'));
+    const id = requiredId(imageId, 'image');
+    const exists = batch.jobs.some((job) => job.outputImageId === id || job.referenceImageIds.includes(id) || job.backups.some((backup) => backup.imageId === id));
+    if (!exists) throw new Error(`Image ${id} was not found in batch ${batch.id}.`);
+    clipboard.writeText(imageIdReferenceText(id));
   });
   ipcMain.handle('images:save', async (_event, id: unknown) => {
     if (typeof id !== 'string') throw new Error('Invalid image ID.');

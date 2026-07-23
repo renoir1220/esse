@@ -275,6 +275,8 @@ export interface EsseDesktopBridge {
   revealImage(id: string): Promise<void>;
   getImageMetadata(id: string): Promise<ImageMetadata>;
   copyImage(id: string): Promise<void>;
+  copyBatchReference(batchId: string): Promise<void>;
+  copyImageId(batchId: string, imageId: string): Promise<void>;
   saveImage(id: string): Promise<string | undefined>;
   openBatchFolder(batchId: string): Promise<void>;
   copyAgentSetupPrompt(): Promise<void>;

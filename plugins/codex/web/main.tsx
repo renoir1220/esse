@@ -292,6 +292,15 @@ function App() {
     } catch (error) { setNotice(errorMessage(error)); }
     finally { setHeaderBusy(undefined); }
   };
+  const copyActiveBatchReference = async () => {
+    if (!activeBatch) return;
+    setHeaderBusy("copy-reference");
+    try {
+      await bridge.callTool("ui_copy_batch_reference_to_clipboard", { batchId: activeBatch.id });
+      setNotice("已复制批次名称和 ID");
+    } catch (error) { setNotice(errorMessage(error)); }
+    finally { setHeaderBusy(undefined); }
+  };
 
   return (
     <main className="app-shell" data-display-mode={displayMode} data-sidebar-status={sidebarStatus}>
@@ -317,6 +326,7 @@ function App() {
               </button>)}
             </div>}
           </div> : <strong>{tab === "settings" ? "Esse 设置" : "Esse"}</strong>}
+          {tab === "batches" && activeBatch && <button type="button" className="batch-reference-copy" onClick={() => void copyActiveBatchReference()} disabled={Boolean(headerBusy)} aria-label="复制批次名称和 ID" title="复制批次名称和 ID"><Copy size={14} /></button>}
           {tab === "batches" && activeBatch && <div className="header-more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) { setBatchMenuOpen(false); setConfirmDeleteBatch(false); } }}>
             <button className="header-icon-action" onClick={() => { setBatchSwitcherOpen(false); setBatchMenuOpen((open) => !open); }} aria-label="当前批次操作" aria-expanded={batchMenuOpen}><DotsThree size={18} weight="bold" /></button>
             {batchMenuOpen && <div className="header-menu" role="menu">
@@ -987,7 +997,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
     if (!(asset.outputPath || asset.inputPath) || asset.job && isProcessing(asset.job)) return;
     event.preventDefault();
     event.stopPropagation();
-    const itemCount = scope === "thumbnail" ? 3 : 1;
+    const itemCount = scope === "thumbnail" ? 4 : 2;
     const point = contextMenuPoint(event.clientX, event.clientY, 184, itemCount * 34 + 12, window.innerWidth, window.innerHeight);
     setContextMenu({ asset, scope, ...point });
   };
@@ -999,6 +1009,13 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
       props.onNotice(`已复制 ${asset.name} 到剪贴板`);
     } catch (error) { props.onNotice(errorMessage(error)); }
     finally { setBusy(undefined); }
+  };
+  const copyImageId = async (asset: ImageAsset) => {
+    setContextMenu(undefined);
+    try {
+      await bridge.callTool("ui_copy_image_id_to_clipboard", { batchId: batch.id, jobId: asset.id });
+      props.onNotice(`已复制 ${asset.name} 的图片 ID`);
+    } catch (error) { props.onNotice(errorMessage(error)); }
   };
   const deleteImage = async (asset: ImageAsset) => {
     setContextMenu(undefined);
@@ -1190,7 +1207,7 @@ function BatchPanel(props: Omit<Parameters<typeof BatchesView>[0], "state" | "on
         <div className="lightbox-caption"><strong>{previewAsset.name}</strong><span>{previewIndex + 1}/{previewableAssets.length}</span><span>{Math.round(previewZoom.scale * 100)}%</span>{previewTransport === "resource" && <span title="通过 MCP Apps 资源读取本地原始图片">原图</span>}<button className="lightbox-save" onClick={() => void saveImage(previewAsset)} aria-label="保存原图" title="保存原图"><DownloadSimple size={17} /></button></div>
       </div>}
       {detailAsset && <TaskDetailDialog asset={detailAsset} metadata={detailMetadata} referencePaths={detailReferencePaths} previews={previews} onClose={() => setDetailAsset(undefined)} />}
-      {contextMenu && <ImageContextMenuView menu={contextMenu} selected={Boolean(contextMenu.asset.selectableImage && props.selected.has(contextMenu.asset.selectableImage.id))} onSelect={contextMenu.asset.selectableImage ? () => { toggle(contextMenu.asset.selectableImage!); setContextMenu(undefined); } : undefined} onCopy={() => void copyImage(contextMenu.asset)} onDelete={contextMenu.scope === "thumbnail" ? () => void deleteImage(contextMenu.asset) : undefined} />}
+      {contextMenu && <ImageContextMenuView menu={contextMenu} selected={Boolean(contextMenu.asset.selectableImage && props.selected.has(contextMenu.asset.selectableImage.id))} onSelect={contextMenu.asset.selectableImage ? () => { toggle(contextMenu.asset.selectableImage!); setContextMenu(undefined); } : undefined} onCopy={() => void copyImage(contextMenu.asset)} onCopyId={() => void copyImageId(contextMenu.asset)} onDelete={contextMenu.scope === "thumbnail" ? () => void deleteImage(contextMenu.asset) : undefined} />}
     </div>
   );
 }
@@ -1229,10 +1246,11 @@ function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: A
   </article>;
 }
 
-function ImageContextMenuView(props: { menu: ImageContextMenu; selected: boolean; onSelect?: () => void; onCopy: () => void; onDelete?: () => void }) {
+function ImageContextMenuView(props: { menu: ImageContextMenu; selected: boolean; onSelect?: () => void; onCopy: () => void; onCopyId: () => void; onDelete?: () => void }) {
   return <div className="image-context-menu" role="menu" aria-label={`${props.menu.asset.name} 操作`} style={{ left: props.menu.left, top: props.menu.top }} onPointerDown={(event) => event.stopPropagation()} onContextMenu={(event) => event.preventDefault()}>
     {props.menu.scope === "thumbnail" && props.onSelect && <button type="button" role="menuitem" onClick={props.onSelect}>{props.selected ? <X size={15} /> : <Check size={15} />}<span>{props.selected ? "取消选择" : "选择"}</span></button>}
     <button type="button" role="menuitem" onClick={props.onCopy}><Copy size={15} /><span>复制图片</span></button>
+    <button type="button" role="menuitem" onClick={props.onCopyId}><Copy size={15} /><span>复制图片 ID</span></button>
     {props.menu.scope === "thumbnail" && props.onDelete && <button type="button" role="menuitem" className="is-danger" onClick={props.onDelete}><Trash size={15} /><span>删除</span></button>}
   </div>;
 }
