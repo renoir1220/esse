@@ -1,7 +1,7 @@
 {
   "name": "@esse/community-sidecar",
   "productName": "Esse Community",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Esse local image workspace and Agent harness integration",
   "main": ".vite/build/main.js",
   "private": false,

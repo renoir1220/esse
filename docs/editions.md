@@ -1,6 +1,6 @@
 # Community and commercial editions
 
-The public repository builds **Esse Community**. Its desktop version follows the public release line (currently `0.3.1`), opens directly into the workspace, and keeps Provider configuration visible in the original settings page.
+The public repository builds **Esse Community**. Its desktop version follows the public release line (currently `0.3.2`), opens directly into the workspace, and keeps Provider configuration visible in the original settings page.
 
 The commercial product is maintained in a separate private downstream repository. It merges this repository as `upstream`, keeps its own `product.json`, package version, onboarding, and managed-service code, and starts its independent release line at `1.0.0`. Commercial tags never determine the Community version, and Community tags never determine the commercial version.
 
