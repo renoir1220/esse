@@ -251,6 +251,14 @@ describe('Esse MCP server', () => {
       model: 'local-reference',
       items: [{ b64_json: testPng('agent-source').toString('base64') }],
     });
+    const [secondSource] = await fixture.imageStore.saveBatch({
+      requestId: 'agent-source-two',
+      prompt: 'agent source two',
+      model: 'local-reference',
+      items: [{ b64_json: testPng('agent-source-two').toString('base64') }],
+    });
+    const firstSourcePath = await fixture.imageStore.pathForId(source.id);
+    const secondSourcePath = await fixture.imageStore.pathForId(secondSource.id);
     const server = await startDesktopMcpServer({
       pairingToken: 'correct-pairing-token',
       port: 0,
@@ -267,25 +275,36 @@ describe('Esse MCP server', () => {
       name: 'create_image_batch',
       arguments: {
         offeringId: 'workbuddy-agent-generation',
-        prompt: 'draw this with the current WorkBuddy image capability',
-        count: 2,
+        jobs: [
+          { prompt: 'draw the first reference', referenceImageIds: [source.id] },
+          { prompt: 'draw the second reference', referenceImageIds: [secondSource.id] },
+        ],
         requestKey: 'workbuddy-agent-batch-1',
       },
     })) as { execution: string; batch: { id: string; jobs: Array<{ id: string }> } };
     expect(accepted.execution).toBe('current-agent');
     expect(generate).not.toHaveBeenCalled();
+    expect(JSON.stringify(accepted)).not.toContain(firstSourcePath);
+    expect(JSON.stringify(accepted)).not.toContain(secondSourcePath);
 
     const [firstJob, secondJob] = accepted.batch.jobs;
     const started = firstJson(await client.callTool({
       name: 'start_agent_image_job',
       arguments: { batchId: accepted.batch.id, jobId: firstJob.id },
-    })) as { job: { prompt: string; referenceImagePaths: string[] } };
-    expect(started.job).toMatchObject({ prompt: 'draw this with the current WorkBuddy image capability', referenceImagePaths: [] });
+    })) as { batch: unknown; job: { prompt: string; referenceImagePaths: string[] } };
+    expect(started.job).toMatchObject({ prompt: 'draw the first reference', referenceImagePaths: [firstSourcePath] });
+    expect(JSON.stringify(started.batch)).not.toContain(secondSourcePath);
     const completed = firstJson(await client.callTool({
       name: 'complete_agent_image_job',
-      arguments: { batchId: accepted.batch.id, jobId: firstJob.id, imagePath: await fixture.imageStore.pathForId(source.id) },
+      arguments: { batchId: accepted.batch.id, jobId: firstJob.id, imagePath: firstSourcePath },
     })) as { job: { status: string } };
     expect(completed.job.status).toBe('succeeded');
+    const secondStarted = firstJson(await client.callTool({
+      name: 'start_agent_image_job',
+      arguments: { batchId: accepted.batch.id, jobId: secondJob.id },
+    })) as { batch: unknown; job: { referenceImagePaths: string[] } };
+    expect(secondStarted.job.referenceImagePaths).toEqual([secondSourcePath]);
+    expect(JSON.stringify(secondStarted.batch)).not.toContain(firstSourcePath);
     const failed = firstJson(await client.callTool({
       name: 'fail_agent_image_job',
       arguments: { batchId: accepted.batch.id, jobId: secondJob.id, error: 'No second image was produced.' },

@@ -65,7 +65,7 @@ export async function imageFilesToDataUrls(
     if (!info.isFile()) throw new Error(`${filePath} is not a file.`);
     if (info.size > maxBytesPerImage) throw new Error(`${path.basename(filePath)} exceeds the ${Math.round(maxBytesPerImage / 1024 / 1024)} MB input limit.`);
     totalBytes += info.size;
-    if (totalBytes > maxTotalBytes) throw new Error(`Reference images exceed the ${Math.round(maxTotalBytes / 1024 / 1024)} MB total input limit.`);
+    if (totalBytes > maxTotalBytes) throw new Error(`This job's reference images exceed the ${Math.round(maxTotalBytes / 1024 / 1024)} MB per-request input limit.`);
   }
   const dataUrls: string[] = [];
   for (const filePath of filePaths) dataUrls.push(await imageFileToDataUrl(filePath, maxBytesPerImage));
