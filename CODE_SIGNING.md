@@ -2,7 +2,7 @@
 
 Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
-This policy applies to the Windows x64 and macOS arm64/x64 Esse Agent Sidecar distributed from this repository's [GitHub Releases](https://github.com/renoir1220/esse/releases). The SignPath Foundation application is pending. `v0.3.0-alpha.2` and `v0.3.0` are explicitly unsigned Windows exceptions requested by the maintainer and may trigger Windows publisher or reputation warnings. Every later Windows release remains behind the trusted Authenticode signature and timestamp gate unless another exact exception is publicly reviewed and documented. macOS releases have no unsigned exception: they require Developer ID signing and Apple notarization.
+This policy applies to the Windows x64 and macOS arm64/x64 Esse Community Agent Sidecar distributed from this repository's [GitHub Releases](https://github.com/renoir1220/esse/releases). Signing credentials are not currently a release prerequisite. When a complete platform credential set is available, the workflow signs and verifies that platform. When no credentials are configured, the workflow verifies that the artifacts are unsigned and the release notes disclose that status. A partial credential set is always a release error.
 
 ## Team roles
 
@@ -13,11 +13,11 @@ Changes from other contributors require review by the maintainer. Every signing 
 
 ## Signed artifacts and provenance
 
-The policy covers the Windows Sidecar application executable and its installer, plus both architecture-specific macOS app bundles and DMGs. Release artifacts must be built by the repository's GitHub Actions workflow from the tagged public source revision. The workflow verifies Windows Authenticode signatures and trusted timestamps; for macOS it verifies the Developer ID signature, Gatekeeper assessment, notarization ticket, bundle architecture, and application icon before it publishes any release asset.
+The policy covers the Windows Sidecar application executable and its installer, plus both architecture-specific macOS app bundles and DMGs. Release artifacts must be built by the repository's GitHub Actions workflow from the tagged public source revision. Signed Windows builds are checked for Authenticode signatures and trusted timestamps. Signed macOS builds are checked for Developer ID signing, Gatekeeper assessment, notarization, and a stapled ticket. Unsigned builds are checked as unsigned and still pass architecture, package, icon, startup, and checksum validation.
 
 No binary built from unpublished or proprietary source is eligible for this signing policy.
 
-The Windows release job accepts an approved Authenticode certificate only through the repository secrets `WINDOWS_CERTIFICATE_PFX_BASE64` and `WINDOWS_CERTIFICATE_PASSWORD`. The workflow materializes the certificate in the runner's temporary directory, passes it to Electron Forge, and then verifies both the application executable and installer before upload. Signing material must never be committed to the repository, written to release assets, or pasted into an issue or pull request.
+The Windows release job accepts an approved Authenticode certificate only through the repository secrets `WINDOWS_CERTIFICATE_PFX_BASE64` and `WINDOWS_CERTIFICATE_PASSWORD`. macOS signing and notarization require the complete documented Developer ID and App Store Connect secret set. The workflow materializes credentials only in runner temporary storage, passes them to Electron Forge, and verifies signed artifacts before upload. Signing material must never be committed to the repository, written to release assets, or pasted into an issue or pull request.
 
 ## Privacy
 

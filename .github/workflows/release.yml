@@ -115,15 +115,33 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - name: Configure Windows Authenticode signing
-        if: github.ref_name != 'v0.3.0-alpha.2' && github.ref_name != 'v0.3.0'
+      - name: Resolve Windows signing mode
+        id: windows-signing
         shell: pwsh
         env:
           WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
           WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
         run: |
-          if (-not $env:WINDOWS_CERTIFICATE_PFX_BASE64) { throw 'WINDOWS_CERTIFICATE_PFX_BASE64 is required for a formal release.' }
-          if (-not $env:WINDOWS_CERTIFICATE_PASSWORD) { throw 'WINDOWS_CERTIFICATE_PASSWORD is required for a formal release.' }
+          $required = @(
+            $env:WINDOWS_CERTIFICATE_PFX_BASE64,
+            $env:WINDOWS_CERTIFICATE_PASSWORD
+          )
+          $configuredCount = @($required | Where-Object { -not [string]::IsNullOrWhiteSpace($_) }).Count
+          if ($configuredCount -eq 0) {
+            "enabled=false" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+            Write-Warning 'Windows signing credentials are not configured. This release will contain unsigned Windows artifacts.'
+          } elseif ($configuredCount -ne $required.Count) {
+            throw 'Windows signing secrets must be configured together or all omitted.'
+          } else {
+            "enabled=true" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
+          }
+      - name: Configure Windows Authenticode signing
+        if: steps.windows-signing.outputs.enabled == 'true'
+        shell: pwsh
+        env:
+          WINDOWS_CERTIFICATE_PFX_BASE64: ${{ secrets.WINDOWS_CERTIFICATE_PFX_BASE64 }}
+          WINDOWS_CERTIFICATE_PASSWORD: ${{ secrets.WINDOWS_CERTIFICATE_PASSWORD }}
+        run: |
           $certificate = Join-Path $env:RUNNER_TEMP 'esse-authenticode.pfx'
           [IO.File]::WriteAllBytes($certificate, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_PFX_BASE64))
           "WINDOWS_CERTIFICATE_FILE=$certificate" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
@@ -132,10 +150,10 @@ jobs:
       - run: npm run verify:icons:windows
       - run: npm run verify:package:windows
       - name: Verify Agent Sidecar Authenticode signatures
-        if: github.ref_name != 'v0.3.0-alpha.2' && github.ref_name != 'v0.3.0'
+        if: steps.windows-signing.outputs.enabled == 'true'
         run: npm run verify:signatures
-      - name: Confirm explicitly unsigned release exception
-        if: github.ref_name == 'v0.3.0-alpha.2' || github.ref_name == 'v0.3.0'
+      - name: Verify unsigned Windows artifacts
+        if: steps.windows-signing.outputs.enabled == 'false'
         shell: pwsh
         run: |
           $product = Get-Content -Raw -Encoding UTF8 .\product.json | ConvertFrom-Json
@@ -145,9 +163,9 @@ jobs:
           )
           foreach ($target in $targets) {
             $signature = Get-AuthenticodeSignature -LiteralPath $target
-            if ($signature.Status -ne 'NotSigned') { throw "Expected the explicitly unsigned artifact ${target}, got $($signature.Status)." }
+            if ($signature.Status -ne 'NotSigned') { throw "Expected an unsigned artifact at ${target}, got $($signature.Status)." }
+            Write-Output "$target is intentionally unsigned."
           }
-          Write-Warning "$env:GITHUB_REF_NAME is an explicitly unsigned release and may trigger Windows publisher or reputation warnings."
       - name: Stage Esse Agent Sidecar installer
         run: npm run stage:release -- windows x64
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
@@ -181,7 +199,8 @@ jobs:
           cache: npm
           cache-dependency-path: sidecars/agent/package-lock.json
       - run: npm ci
-      - name: Configure Developer ID signing and notarization
+      - name: Resolve macOS signing mode
+        id: macos-signing
         shell: bash
         env:
           MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
@@ -191,14 +210,40 @@ jobs:
           MACOS_NOTARY_API_ISSUER_ID: ${{ secrets.MACOS_NOTARY_API_ISSUER_ID }}
           MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
         run: |
-          test -n "$MACOS_CERTIFICATE_P12_BASE64"
-          test -n "$MACOS_CERTIFICATE_PASSWORD"
-          test -n "$MACOS_NOTARY_API_KEY_BASE64"
-          test -n "$MACOS_NOTARY_API_KEY_ID"
-          test -n "$MACOS_NOTARY_API_ISSUER_ID"
-          test -n "$MACOS_SIGN_IDENTITY"
+          required=(
+            "$MACOS_CERTIFICATE_P12_BASE64"
+            "$MACOS_CERTIFICATE_PASSWORD"
+            "$MACOS_NOTARY_API_KEY_BASE64"
+            "$MACOS_NOTARY_API_KEY_ID"
+            "$MACOS_NOTARY_API_ISSUER_ID"
+            "$MACOS_SIGN_IDENTITY"
+          )
+          configured_count=0
+          for value in "${required[@]}"; do
+            if [[ -n "$value" ]]; then configured_count=$((configured_count + 1)); fi
+          done
+          if [[ "$configured_count" -eq 0 ]]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::macOS signing credentials are not configured. This release will not be Developer ID signed or notarized."
+          elif [[ "$configured_count" -ne "${#required[@]}" ]]; then
+            echo "macOS signing and notarization secrets must be configured together or all omitted." >&2
+            exit 1
+          else
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Configure Developer ID signing and notarization
+        if: steps.macos-signing.outputs.enabled == 'true'
+        shell: bash
+        env:
+          MACOS_CERTIFICATE_P12_BASE64: ${{ secrets.MACOS_CERTIFICATE_P12_BASE64 }}
+          MACOS_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+          MACOS_NOTARY_API_KEY_BASE64: ${{ secrets.MACOS_NOTARY_API_KEY_BASE64 }}
+          MACOS_NOTARY_API_KEY_ID: ${{ secrets.MACOS_NOTARY_API_KEY_ID }}
+          MACOS_NOTARY_API_ISSUER_ID: ${{ secrets.MACOS_NOTARY_API_ISSUER_ID }}
+          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
           certificate="$RUNNER_TEMP/esse-developer-id.p12"
-          notary_key="$RUNNER_TEMP/AuthKey_${{ secrets.MACOS_NOTARY_API_KEY_ID }}.p8"
+          notary_key="$RUNNER_TEMP/AuthKey_${MACOS_NOTARY_API_KEY_ID}.p8"
           keychain="$RUNNER_TEMP/esse-signing.keychain-db"
           keychain_password="$(uuidgen)"
           printf '%s' "$MACOS_CERTIFICATE_P12_BASE64" | /usr/bin/base64 -D > "$certificate"
@@ -209,16 +254,20 @@ jobs:
           security import "$certificate" -k "$keychain" -P "$MACOS_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
           security list-keychains -d user -s "$keychain"
+          echo "MACOS_NOTARY_API_KEY_PATH=$notary_key" >> "$GITHUB_ENV"
+          echo "MACOS_NOTARY_API_KEY_ID=$MACOS_NOTARY_API_KEY_ID" >> "$GITHUB_ENV"
+          echo "MACOS_NOTARY_API_ISSUER_ID=$MACOS_NOTARY_API_ISSUER_ID" >> "$GITHUB_ENV"
+          echo "MACOS_SIGN_IDENTITY=$MACOS_SIGN_IDENTITY" >> "$GITHUB_ENV"
       - run: npm run typecheck
       - run: npm test
-      - name: Build signed and notarized macOS Agent Sidecar
-        env:
-          MACOS_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
-          MACOS_NOTARY_API_KEY_PATH: ${{ runner.temp }}/AuthKey_${{ secrets.MACOS_NOTARY_API_KEY_ID }}.p8
-          MACOS_NOTARY_API_KEY_ID: ${{ secrets.MACOS_NOTARY_API_KEY_ID }}
-          MACOS_NOTARY_API_ISSUER_ID: ${{ secrets.MACOS_NOTARY_API_ISSUER_ID }}
+      - name: Build macOS Agent Sidecar
         run: npm run make:macos:${{ matrix.arch }}
-      - run: bash scripts/verify-macos-bundle.sh ${{ matrix.arch }} --require-signed
+      - name: Verify signed and notarized macOS package
+        if: steps.macos-signing.outputs.enabled == 'true'
+        run: bash scripts/verify-macos-bundle.sh ${{ matrix.arch }} --require-signed
+      - name: Verify unsigned macOS package
+        if: steps.macos-signing.outputs.enabled == 'false'
+        run: bash scripts/verify-macos-bundle.sh ${{ matrix.arch }}
       - run: npm run stage:release -- macos ${{ matrix.arch }}
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
@@ -281,9 +330,9 @@ jobs:
               $publishExit = $LASTEXITCODE
             } elseif ($viewOutput -match 'HTTP 404|Not Found') {
               if ($tag -match "-") {
-                $publishOutput = (& gh release create $tag @assets --verify-tag --prerelease --title "Esse $tag" --notes $releaseNotes 2>&1 | Out-String)
+                $publishOutput = (& gh release create $tag @assets --verify-tag --prerelease --title "Esse Community $tag" --notes $releaseNotes 2>&1 | Out-String)
               } else {
-                $publishOutput = (& gh release create $tag @assets --verify-tag --title "Esse $tag" --notes $releaseNotes 2>&1 | Out-String)
+                $publishOutput = (& gh release create $tag @assets --verify-tag --title "Esse Community $tag" --notes $releaseNotes 2>&1 | Out-String)
               }
               $publishExit = $LASTEXITCODE
             } else {

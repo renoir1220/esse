@@ -1,4 +1,4 @@
 interface:
-  display_name: "esse"
+  display_name: "Esse Community"
   short_description: "使用默认模型批量生图，保留独立提示词、参考图并回传 Agent 结果"
-  default_prompt: "Use $batch-generate-images with Esse to create image jobs using my configured default model and return every Agent-generated result to the workbench."
+  default_prompt: "Use $batch-generate-images with Esse Community to create image jobs using my configured default model and return every Agent-generated result to the workbench."

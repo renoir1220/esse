@@ -1,6 +1,6 @@
 # Esse repository instructions
 
-When a user asks Codex to install Esse from this repository or provides this repository URL with an installation request:
+When a user asks Codex to install Esse Community from this repository or provides this repository URL with an installation request:
 
 1. Read `INSTALL.md` completely before running commands.
 2. For the Codex Plugin, use the repository installer and the requested GitHub Release. For the Agent Sidecar, use its published platform installer. Do not build from source unless the release path is unavailable and the user explicitly agrees to a developer installation.
@@ -9,7 +9,7 @@ When a user asks Codex to install Esse from this repository or provides this rep
 5. On macOS, let `install.sh` select the Gatekeeper-approved desktop app and its managed Node runtime. Never run a bare `codex` or `node` from `PATH`, remove quarantine attributes, or tell the user to bypass Gatekeeper.
 6. Treat the installer's `ESSE_INSTALL_RESULT` as the registration result. Do not repeat its plugin-list commands through another Codex CLI; inspect the receipt and marketplace catalog statically if an additional check is needed.
 7. Never ask the user to paste an API key into chat, a shell command, an environment variable, or a repository file.
-8. After a successful install, tell the user to restart the Codex/ChatGPT desktop app, start a new task, and say `打开 Esse 设置`. Provider credentials and the default image model must be configured inside the Esse settings UI.
+8. After a successful install, tell the user to restart the Codex/ChatGPT desktop app, start a new task, and say `打开 Esse Community 设置`. Provider credentials and the default image model must be configured inside the Esse Community settings UI.
 
 For development work, preserve user-generated `inputs/`, `outputs/`, internal QA screenshots, and local credentials. They are not release artifacts and must not be committed.
 
@@ -34,12 +34,13 @@ This public repository is the source of truth for shared, MIT-licensed Esse beha
 
 ## Product naming
 
-The product is always called **Esse** in every user-facing surface, regardless of how it is packaged or hosted.
+The public MIT edition is called **Esse Community**. A private downstream may set `sidecars/agent/product.json` to the display name **Esse**. Do not use `Esse.Community`; the dot reads like a code namespace or domain rather than a product edition.
 
-1. Users must only need to say phrases such as `用 Esse 生成图片`; never require or encourage phrases such as `用 Esse Sidecar 生成图片`, `用 Esse Desktop 生成图片`, or other packaging-specific names.
-2. Electron window titles, installed application names, MCP titles, skills, prompts, notices, documentation for end users, and Agent conversation guidance must call the product `Esse`.
-3. Terms such as `Codex Plugin`, `Agent Sidecar`, and `Standalone App` may be used only where developers or installers need to distinguish distribution forms. They are not separate user-facing product names.
-4. Assume a customer installs one distribution form. Do not add cross-edition selection language or make the user identify which Esse form is handling a task.
+1. Edition-identifying surfaces must use the configured full display name: Electron window titles, installed application names, installer metadata, MCP and plugin titles, first mentions in user documentation, and settings-opening prompts.
+2. After the edition is already clear, ordinary action phrases may use the shorter product name, such as `用 Esse 生成图片`. Never require packaging-specific phrases such as `用 Esse Sidecar 生成图片` or `用 Esse Desktop 生成图片`.
+3. Technical identifiers remain stable for compatibility, including the plugin name `esse`, MCP configuration key `esse`, bundle IDs, executable names, and existing application-data directories. Do not rename these merely to mirror the display name.
+4. Terms such as `Codex Plugin`, `Agent Sidecar`, and `Standalone App` may be used only where developers or installers need to distinguish distribution forms. They are not separate user-facing brands.
+5. Assume a customer installs one edition and one appropriate distribution form. Do not ask the user to choose between edition labels during normal operation.
 
 ## GitHub release validation
 
@@ -49,6 +50,7 @@ Every time a new Esse version is published on GitHub, update the maintainer's lo
 2. Inspect the installer from a fresh temporary checkout before running it.
 3. Require a successful `ESSE_INSTALL_RESULT` and verify that the installed receipt version matches the new release.
 4. Treat this installation as part of the release smoke test. A release is not fully handed off until the user-path installation succeeds or the exact blocker is reported.
+5. Signing is optional until the maintainer restores credentials. A platform must either receive its complete signing/notarization secret set or no signing secrets at all; partial configuration is a release error. Unsigned artifacts must be verified as unsigned and disclosed accurately.
 
 ## GitHub release notes
 

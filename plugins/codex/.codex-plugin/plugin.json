@@ -18,7 +18,7 @@
   "skills": "./skills/",
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "esse",
+    "displayName": "Esse Community",
     "shortDescription": "Parallel local-folder image generation and editing",
     "longDescription": "Inspect local image folders, let GPT prepare prompts, generate with the current Agent or local Providers, monitor progress, preview results, and select one or many images for another editing pass. Provider credentials stay on this computer.",
     "developerName": "Renoir",
@@ -29,7 +29,7 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Open Esse settings and choose my default image model",
+      "Open Esse Community settings and choose my default image model",
       "Inspect a local image folder and prepare a parallel generation batch",
       "Show my recent image batches"
     ],
