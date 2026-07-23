@@ -20,7 +20,7 @@ For development work, preserve user-generated `inputs/`, `outputs/`, internal QA
 - `apps/standalone` is only a placeholder for a future true standalone application.
 - Do not merge the old private `esse-desktop` Git history, server, billing, account, balance, channel-management, data, credentials, inputs, outputs, or QA artifacts into this repository.
 - Do not introduce a shared Core or a runtime dependency between the Plugin and Agent Sidecar yet. Port behavior semantically and record meaningful parity changes in `SYNC.md`.
-- Releases use one tag and one GitHub Release with grouped Plugin and Agent Sidecar assets. Do not create permanent product branches.
+- Community releases use one tag and one GitHub Release with grouped Plugin and Agent Sidecar assets. A private downstream may publish only its Agent Sidecar on an independent version line when `sidecars/agent/product.json` declares `releaseVersionPolicy: "independent-sidecar"`; it continues to inherit the separately released Community Plugin. Do not create permanent product branches.
 
 ## Community-first downstream workflow
 
