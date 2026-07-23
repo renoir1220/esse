@@ -8,8 +8,10 @@ import { BatchStore } from './batch-store';
 import { ImageStore } from './image-store';
 
 const temporaryDirectories: string[] = [];
+const managers: BatchManager[] = [];
 
 afterEach(async () => {
+  await Promise.all(managers.splice(0).map((manager) => manager.waitForIdle()));
   for (const directory of temporaryDirectories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
@@ -58,6 +60,30 @@ describe('Esse batch manager', () => {
     pending.get('blue beetle')!(generatedResult('blue'));
     pending.get('red beetle')!(generatedResult('red'));
     await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('completed'));
+  });
+
+  it('waits for background generation and persistence before reporting idle', async () => {
+    const fixture = await fixtureDirectory();
+    let finishGeneration!: (value: ReturnType<typeof generatedResult>) => void;
+    const generate = vi.fn(() => new Promise<ReturnType<typeof generatedResult>>((resolve) => {
+      finishGeneration = resolve;
+    }));
+    const manager = managerFor(fixture, { ...fakeApi(), generate });
+    await manager.initialize();
+    const accepted = await manager.create({
+      prompt: 'finish persistence before cleanup',
+      requestKey: 'wait-for-background-persistence',
+    });
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+
+    let idle = false;
+    const waiting = manager.waitForIdle().then(() => { idle = true; });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(idle).toBe(false);
+
+    finishGeneration(generatedResult('persisted-before-idle'));
+    await waiting;
+    expect(manager.get(accepted.id).status).toBe('completed');
   });
 
   it('resumes durable queued work after Esse restarts', async () => {
@@ -305,13 +331,15 @@ function managerFor(
   api: ReturnType<typeof fakeApi>,
   options: { concurrency?: number; canRun?: () => Promise<boolean> } = {},
 ) {
-  return new BatchManager({
+  const manager = new BatchManager({
     store: fixture.batchStore,
     imageStore: fixture.imageStore,
     createApiClient: async () => api,
     concurrency: options.concurrency,
     canRun: options.canRun,
   });
+  managers.push(manager);
+  return manager;
 }
 
 function fakeApi() {
