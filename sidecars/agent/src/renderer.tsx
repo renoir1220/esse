@@ -152,6 +152,15 @@ function App() {
     await apply(() => window.esse.activateBatch(id));
   }
 
+  async function copyBatchReference(batch: BatchSnapshot) {
+    try {
+      await window.esse.copyBatchReference(batch.id);
+      setNotice('已复制批次名称和 ID');
+    } catch (cause) {
+      setError(cleanError(cause));
+    }
+  }
+
   function openImageSoon(id: string) {
     window.clearTimeout(clickTimer.current);
     clickTimer.current = window.setTimeout(() => setViewerImageId(id), 180);
@@ -182,6 +191,7 @@ function App() {
               ))}</div> : null}
             </div>
           )}
+          {activeBatch && tab !== 'settings' ? <button type="button" className="batch-reference-copy" onClick={() => void copyBatchReference(activeBatch)} aria-label="复制批次名称和 ID" title="复制批次名称和 ID"><Copy size={14} /></button> : null}
           {tab === 'settings' ? <strong>设置</strong> : null}
           {activeBatch && tab !== 'settings' ? <div className="header-more">
             <button className="header-icon-action" onClick={() => { setBatchPickerOpen(false); setBatchMenuOpen((open) => !open); }} aria-label="批次菜单"><DotsThree size={18} weight="bold" /></button>
@@ -218,7 +228,7 @@ function App() {
             event.preventDefault();
             setBatchPickerOpen(false);
             setBatchMenuOpen(false);
-            setImageMenu({ imageId, x: Math.min(event.clientX, window.innerWidth - 184), y: Math.min(event.clientY, window.innerHeight - 176) });
+            setImageMenu({ imageId, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 184)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 232)) });
           }}
           onModify={(input) => apply(() => window.esse.modifyBatch(input), '修改任务已交给 Esse 后台')}
           onCancel={() => apply(() => window.esse.cancelQueued(activeBatch.id), '已取消排队任务')}
@@ -239,7 +249,7 @@ function App() {
       {tab === 'browse' ? <BatchLibrary batches={state.batches} imagesById={imagesById} onOpen={(id) => void switchBatch(id)} /> : null}
       {tab === 'settings' ? <Settings state={state} busy={busy} apply={apply} onNotice={setNotice} /> : null}
 
-      {imageMenu && activeBatch ? <ImageContextMenu imageId={imageMenu.imageId} x={imageMenu.x} y={imageMenu.y} selected={selectedImageIds.has(imageMenu.imageId)} onToggle={() => toggleSelected(imageMenu.imageId)} onClose={() => setImageMenu(undefined)} onNotice={setNotice} onDelete={() => deleteImage(activeBatch.id, imageMenu.imageId)} /> : null}
+      {imageMenu && activeBatch ? <ImageContextMenu batchId={activeBatch.id} imageId={imageMenu.imageId} x={imageMenu.x} y={imageMenu.y} selected={selectedImageIds.has(imageMenu.imageId)} onToggle={() => toggleSelected(imageMenu.imageId)} onClose={() => setImageMenu(undefined)} onNotice={setNotice} onDelete={() => deleteImage(activeBatch.id, imageMenu.imageId)} /> : null}
       {viewerImage && activeBatch ? <ImageViewer image={viewerImage} images={viewerImages} onNavigate={setViewerImageId} onClose={() => setViewerImageId(undefined)} onNotice={setNotice} onDelete={() => deleteImage(activeBatch.id, viewerImage.id)} /> : null}
     </main>
   );
@@ -602,16 +612,21 @@ function adapterDisplayName(adapterId: ProviderDraft['adapterId']): string {
   return adapterId === 'tuzi-json-images' ? '兔子 JSON Images' : 'OpenAI Images';
 }
 
-function ImageContextMenu(props: { imageId: string; x: number; y: number; selected: boolean; onToggle: () => void; onClose: () => void; onNotice: (message: string) => void; onDelete: () => Promise<void> }) {
+function ImageContextMenu(props: { batchId: string; imageId: string; x: number; y: number; selected: boolean; onToggle: () => void; onClose: () => void; onNotice: (message: string) => void; onDelete: () => Promise<void> }) {
   const run = async (action: () => Promise<unknown>, success?: string) => {
     props.onClose();
-    await action();
-    if (success) props.onNotice(success);
+    try {
+      await action();
+      if (success) props.onNotice(success);
+    } catch (cause) {
+      props.onNotice(cleanError(cause));
+    }
   };
   return <div className="image-context-menu" style={{ left: props.x, top: props.y }} role="menu">
     <button onClick={() => { props.onToggle(); props.onClose(); }}><Check size={15} />{props.selected ? '取消选择' : '选择图片'}</button>
     <span className="menu-separator" />
     <button onClick={() => void run(() => window.esse.copyImage(props.imageId), '图片已复制到剪贴板')}><Copy size={15} />复制图片</button>
+    <button onClick={() => void run(() => window.esse.copyImageId(props.batchId, props.imageId), '已复制图片 ID')}><Copy size={15} />复制图片 ID</button>
     <button onClick={() => void run(() => window.esse.saveImage(props.imageId))}><DownloadSimple size={15} />另存为</button>
     <button onClick={() => void run(() => window.esse.revealImage(props.imageId))}><FolderSimple size={15} />在文件夹中显示</button>
     <span className="menu-separator" />

@@ -31,6 +31,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await batches.initialize();
     let nativeSaveSource: string | undefined;
     let nativeClipboardSource: string | undefined;
+    let nativeClipboardText: string | undefined;
     let openedFolder: string | undefined;
     const server = createLocalEsseServer({
       version: "0.2.0",
@@ -41,6 +42,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
       thumbnailer: new Thumbnailer(paths),
       saveFileAs: async (sourcePath) => { nativeSaveSource = sourcePath; return path.join(root, "saved.png"); },
       copyImageToClipboard: async (sourcePath) => { nativeClipboardSource = sourcePath; },
+      copyTextToClipboard: async (text) => { nativeClipboardText = text; },
       openFolder: async (folderPath) => { openedFolder = folderPath; },
       updateChecker: { check: async (currentVersion) => ({ currentVersion, latestVersion: "0.2.1", updateAvailable: true, checked: true, checkedAt: "2026-07-19T10:00:00.000Z", releaseUrl: "https://github.com/renoir1220/esse/releases/tag/v0.2.1" }) }
     });
@@ -48,7 +50,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await client.connect(clientTransport);
     const tools = await client.listTools();
     const names = tools.tools.map((tool) => tool.name);
-    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "append_image_batch_jobs", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_check_for_updates", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_original_image_resource", "ui_get_image_metadata", "ui_save_image_as", "ui_copy_image_to_clipboard", "ui_delete_esse_images", "ui_delete_image_batch"]) {
+    for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "append_image_batch_jobs", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_check_for_updates", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_original_image_resource", "ui_get_image_metadata", "ui_save_image_as", "ui_copy_image_to_clipboard", "ui_copy_batch_reference_to_clipboard", "ui_copy_image_id_to_clipboard", "ui_delete_esse_images", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
     }
     for (const tool of tools.tools) assert(tool.outputSchema, `${tool.name} must publish an output schema`);
@@ -121,7 +123,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert.deepEqual(publicOffering?.qualities, []);
     const defaultOfferingId = (saved.structuredContent as { state?: { defaultOfferingId?: string } }).state?.defaultOfferingId;
     const created = await client.callTool({ name: "create_image_batch", arguments: { prompt: "use my default", count: 1, requestKey: "mcp-create-default" } });
-    const createdBatch = (created.structuredContent as { batch?: { id?: string; offering?: { id?: string } } }).batch;
+    const createdBatch = (created.structuredContent as { batch?: { id?: string; title?: string; offering?: { id?: string } } }).batch;
     assert.equal(createdBatch?.offering?.id, defaultOfferingId);
     assert.equal((created.structuredContent as { activateBatchId?: string }).activateBatchId, createdBatch?.id);
     const refreshedState = await client.callTool({ name: "ui_get_local_state", arguments: { batchId: createdBatch?.id } });
@@ -220,6 +222,12 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const nativeCopy = await client.callTool({ name: "ui_copy_image_to_clipboard", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
     assert.equal((nativeCopy.structuredContent as { copied?: boolean }).copied, true);
     assert.equal(nativeClipboardSource, completedOutputPath);
+    const batchReferenceCopy = await client.callTool({ name: "ui_copy_batch_reference_to_clipboard", arguments: { batchId: createdBatch?.id } });
+    assert.equal((batchReferenceCopy.structuredContent as { copied?: boolean }).copied, true);
+    assert.equal(nativeClipboardText, `批次名称：${createdBatch?.title}\nbatchId: ${createdBatch?.id}`);
+    const imageIdCopy = await client.callTool({ name: "ui_copy_image_id_to_clipboard", arguments: { batchId: createdBatch?.id, jobId: completedJobId } });
+    assert.equal((imageIdCopy.structuredContent as { copied?: boolean }).copied, true);
+    assert.equal(nativeClipboardText, `imageId: ${completedJobId}`);
     const opened = await client.callTool({ name: "ui_open_batch_folder", arguments: { batchId: createdBatch?.id } });
     assert.equal((opened.structuredContent as { opened?: boolean }).opened, true);
     assert.equal(openedFolder, path.dirname(completedOutputPath!));

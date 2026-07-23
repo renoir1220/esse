@@ -10,12 +10,14 @@ import { ORIGINAL_IMAGE_RESOURCE_TEMPLATE, OriginalImageRegistry } from "../file
 import { saveFileAs } from "../files/save-file-dialog.js";
 import { openLocalFolder } from "../files/open-folder.js";
 import { copyImageFileToClipboard } from "../files/system-image-clipboard.js";
+import { copyTextToClipboard } from "../files/system-text-clipboard.js";
 import type { Thumbnailer } from "../files/thumbnailer.js";
 import type { ProviderRegistry } from "../providers/registry.js";
 import type { SettingsStore } from "../storage/settings-store.js";
 import type { AdapterId, BatchSnapshot, JobRecord, OfferingConfig } from "../types.js";
 import { GitHubReleaseChecker } from "../update-checker.js";
 import type { UpdateCheckerLike } from "../update-checker.js";
+import { batchReferenceText, imageIdReferenceText } from "../reference-text.js";
 
 export const WIDGET_URI = "ui://esse/local-v4.html";
 const LEGACY_WIDGET_URI = "ui://esse/local-v1.html";
@@ -62,6 +64,7 @@ export function createLocalEsseServer(options: {
   thumbnailer: Thumbnailer;
   saveFileAs?: typeof saveFileAs;
   copyImageToClipboard?: typeof copyImageFileToClipboard;
+  copyTextToClipboard?: typeof copyTextToClipboard;
   openFolder?: typeof openLocalFolder;
   updateChecker?: UpdateCheckerLike;
 }): McpServer {
@@ -711,6 +714,40 @@ function registerUiTools(
     return {
       structuredContent: { batchId, jobId, copied: true },
       content: [{ type: "text", text: "Image copied to the system clipboard." }]
+    };
+  });
+
+  registerAppTool(server, "ui_copy_batch_reference_to_clipboard", {
+    title: "Copy batch reference to clipboard",
+    description: "Widget-only native clipboard copy for one exact batch title and ID.",
+    inputSchema: { batchId: z.string().min(1) },
+    outputSchema: { batchId: z.string(), copied: z.boolean() },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId }) => {
+    const batch = options.batches.get(batchId);
+    await (options.copyTextToClipboard || copyTextToClipboard)(batchReferenceText(batch.title, batch.id));
+    return {
+      structuredContent: { batchId, copied: true },
+      content: [{ type: "text", text: "Batch title and ID copied to the system clipboard." }]
+    };
+  });
+
+  registerAppTool(server, "ui_copy_image_id_to_clipboard", {
+    title: "Copy image ID to clipboard",
+    description: "Widget-only native clipboard copy for one exact generated image, failed-job source, or preserved version ID.",
+    inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
+    outputSchema: { batchId: z.string(), jobId: z.string(), copied: z.boolean() },
+    annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
+    _meta: appOnly
+  }, async ({ batchId, jobId }) => {
+    const batch = options.batches.get(batchId);
+    const exists = batch.jobs.some((job) => job.id === jobId || (job.backups || []).some((backup) => backup.id === jobId));
+    if (!exists) throw new Error(`Image ${jobId} was not found in batch ${batchId}.`);
+    await (options.copyTextToClipboard || copyTextToClipboard)(imageIdReferenceText(jobId));
+    return {
+      structuredContent: { batchId, jobId, copied: true },
+      content: [{ type: "text", text: "Image ID copied to the system clipboard." }]
     };
   });
 

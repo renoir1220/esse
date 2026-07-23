@@ -56,6 +56,12 @@ The initial import deliberately excludes the private commercial server, user acc
 - Agent-owned batches expose only callback-safe batch/job summaries until `start_agent_image_job` is called for one exact job.
 - Each start call returns only that job's Prompt and reference paths. Concurrent jobs remain separate outbound image-generation requests; reference paths and request-size checks must never be aggregated across the batch.
 
+## 2026-07-23 — copyable batch and image references
+
+- The active batch title exposes an adjacent copy control that writes the batch title and exact `batchId` to the native system clipboard.
+- Image context menus keep binary image copying separate from a new `复制图片 ID` action that writes the exact `imageId`.
+- The Plugin and Agent Sidecar use the same self-describing text format so a user can paste an unambiguous batch and image target into an Agent conversation.
+
 ## Deferred
 
 - shared domain/provider/UI packages;
