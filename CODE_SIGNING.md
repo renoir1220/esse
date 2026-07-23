@@ -17,6 +17,8 @@ The policy covers the Windows Sidecar application executable and its installer, 
 
 No binary built from unpublished or proprietary source is eligible for this signing policy.
 
+The Windows release job accepts an approved Authenticode certificate only through the repository secrets `WINDOWS_CERTIFICATE_PFX_BASE64` and `WINDOWS_CERTIFICATE_PASSWORD`. The workflow materializes the certificate in the runner's temporary directory, passes it to Electron Forge, and then verifies both the application executable and installer before upload. Signing material must never be committed to the repository, written to release assets, or pasted into an issue or pull request.
+
 ## Privacy
 
 Esse does not transfer information to another networked system unless specifically requested by the user or the person installing or operating it. Provider configuration, API keys, batch records, and source images stay on the local computer by default.
