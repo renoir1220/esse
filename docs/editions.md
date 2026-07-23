@@ -16,3 +16,8 @@ The two desktop identities must remain distinct so both editions can be installe
 | Version line | public Esse version | independent, starting at `1.0.0` |
 
 Both repositories run the same test suite and package on Windows x64, macOS arm64, and macOS x64. Product-specific paths and installer names must be read from `sidecars/agent/product.json`, not duplicated in build scripts.
+
+`releaseVersionPolicy` is part of that product boundary:
+
+- `shared-components` means one release tag covers the Plugin and Agent Sidecar, so their versions must match.
+- `independent-sidecar` lets a downstream product keep the inherited Plugin version while publishing the Sidecar on its own version line.
