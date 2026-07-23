@@ -41,7 +41,9 @@ export class BatchManager {
   private readonly batches = new Map<string, BatchRecord>();
   private readonly createKeys = new Map<string, string>();
   private readonly activeJobs = new Set<string>();
+  private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentCompletionChains = new Map<string, Promise<BatchSnapshot>>();
+  private backgroundError: unknown;
   private activeBatchId: string | undefined;
   private initialized = false;
   private scheduling = false;
@@ -96,6 +98,15 @@ export class BatchManager {
 
   resume(): void {
     this.schedule();
+  }
+
+  async waitForIdle(): Promise<void> {
+    while (this.backgroundTasks.size) await Promise.all([...this.backgroundTasks]);
+    if (this.backgroundError !== undefined) {
+      const error = this.backgroundError;
+      this.backgroundError = undefined;
+      throw error;
+    }
   }
 
   async activate(id: string): Promise<BatchSnapshot> {
@@ -543,7 +554,7 @@ export class BatchManager {
   private schedule(): void {
     if (!this.initialized || this.scheduling) return;
     this.scheduling = true;
-    queueMicrotask(async () => {
+    this.trackBackground(new Promise<void>((resolve) => queueMicrotask(resolve)).then(async () => {
       this.scheduling = false;
       if (this.options.canRun && !await this.options.canRun()) return;
       const globalLimit = Math.max(1, Math.min(12, this.options.concurrency ?? 12));
@@ -556,9 +567,20 @@ export class BatchManager {
           const offering = job.offering || batch.offering;
           if (this.activeProviderJobs(offering) >= Math.max(1, Math.min(12, offering.concurrency || DEFAULT_CONCURRENCY))) continue;
           this.activeJobs.add(key);
-          void this.run(key, batch.id, job.id);
+          this.trackBackground(this.run(key, batch.id, job.id));
         }
       }
+    }));
+  }
+
+  private trackBackground(task: Promise<void>): void {
+    const observed = task.catch((error) => {
+      this.backgroundError ??= error;
+      process.stderr.write(`[esse] background batch task failed: ${error instanceof Error ? error.stack || error.message : String(error)}\n`);
+    });
+    this.backgroundTasks.add(observed);
+    void observed.then(() => {
+      this.backgroundTasks.delete(observed);
     });
   }
 
