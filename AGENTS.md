@@ -22,6 +22,16 @@ For development work, preserve user-generated `inputs/`, `outputs/`, internal QA
 - Do not introduce a shared Core or a runtime dependency between the Plugin and Agent Sidecar yet. Port behavior semantically and record meaningful parity changes in `SYNC.md`.
 - Releases use one tag and one GitHub Release with grouped Plugin and Agent Sidecar assets. Do not create permanent product branches.
 
+## Community-first downstream workflow
+
+This public repository is the source of truth for shared, MIT-licensed Esse behavior. A checkout containing `PRIVATE-DOWNSTREAM.md` is a private downstream, not an independent implementation of shared features.
+
+1. Classify a requested change before editing. Task scheduling, MCP contracts, Provider adapters, reference handling, shared UI behavior, security fixes, and cross-edition tests are Community changes.
+2. Implement and validate Community changes in `renoir1220/esse` first, publish them through a Community pull request, and merge that PR before updating a private downstream. Do not patch the downstream first or maintain a duplicate downstream-only commit for shared behavior.
+3. After the Community PR merges, update the downstream by fetching and merging `upstream/main`. Resolve conflicts only in documented private overlays; do not manually copy or cherry-pick the shared implementation unless an exceptional merge blocker is documented in the PR.
+4. Direct downstream changes are limited to private onboarding, managed connections, product configuration, private release automation, and paid-service code described by `PRIVATE-DOWNSTREAM.md`.
+5. If the Community checkout, `upstream` remote, permission, or configuration is missing, repair or request that environment instead of bypassing the Community-first path.
+
 ## Product naming
 
 The product is always called **Esse** in every user-facing surface, regardless of how it is packaged or hosted.

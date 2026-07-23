@@ -249,7 +249,9 @@ export function createLocalEsseServer(options: {
     const message = batch.offering.adapterId === "agent-generation"
       ? `已创建 ${batch.total} 个“Codex 生成”任务。请由当前 Agent 使用自身可用的图像生成能力完成每个 job，并通过 Agent job 接口回传结果；结果目录：${batch.outputDirectory}`
       : `已创建 ${batch.total} 个本地任务，${batch.offering.concurrency} 路并发，结果目录：${batch.outputDirectory}`;
-    return batchResult(batch, message, true);
+    return batch.offering.adapterId === "agent-generation"
+      ? agentBatchResult(batch, message, { activate: true })
+      : batchResult(batch, message, true);
   });
 
   registerAppTool(server, "append_image_batch_jobs", {
@@ -303,19 +305,21 @@ export function createLocalEsseServer(options: {
     const message = agentGenerated
       ? `已向“${appended.batch.title}”直接追加 ${appendedJobs.length} 个 Codex 生成任务。当前 Agent 必须完成返回的 appendedJobIds 并逐项回传结果。`
       : `已向“${appended.batch.title}”直接追加 ${appendedJobs.length} 个任务；未创建新批次。`;
-    return {
-      structuredContent: {
-        batch: appended.batch,
-        appendedJobIds: appended.appendedJobIds,
-        activateBatchId: appended.batch.id
-      },
-      content: [{ type: "text" as const, text: message }]
-    };
+    return agentGenerated
+      ? agentBatchResult(appended.batch, message, { appendedJobIds: appended.appendedJobIds, activate: true })
+      : {
+          structuredContent: {
+            batch: appended.batch,
+            appendedJobIds: appended.appendedJobIds,
+            activateBatchId: appended.batch.id
+          },
+          content: [{ type: "text" as const, text: message }]
+        };
   });
 
   registerAppTool(server, "start_agent_image_job", {
     title: "Start Agent image job",
-    description: "Marks one Codex 生成 job as running and returns its exact prompt and local reference paths. Use only when the batch offering adapterId is agent-generation. The Agent may use subagents, native batching, or any other available generation method; no specific concurrency mechanism is required.",
+    description: "Marks exactly one Codex 生成 job as running and returns only that job's exact prompt and local reference paths. Never combine references from other jobs into this job's image-service request. Independent jobs may run concurrently, but each remains a separate request.",
     inputSchema: { batchId: z.string().min(1), jobId: z.string().min(1) },
     outputSchema: agentJobOutputSchema,
     annotations: { readOnlyHint: false, openWorldHint: false, destructiveHint: false },
@@ -837,10 +841,49 @@ function batchResult(batch: BatchSnapshot, message?: string, activate = false) {
   };
 }
 
+function agentBatchResult(
+  batch: BatchSnapshot,
+  message: string,
+  options: { activate?: boolean; appendedJobIds?: string[] } = {}
+) {
+  return {
+    structuredContent: {
+      batch: agentBatchSummary(batch),
+      ...(options.appendedJobIds ? { appendedJobIds: options.appendedJobIds } : {}),
+      ...(options.activate ? { activateBatchId: batch.id } : {})
+    },
+    content: [{ type: "text" as const, text: message }]
+  };
+}
+
+function agentBatchSummary(batch: BatchSnapshot) {
+  return {
+    id: batch.id,
+    title: batch.title,
+    status: batch.status,
+    total: batch.total,
+    queued: batch.queued,
+    running: batch.running,
+    succeeded: batch.succeeded,
+    failed: batch.failed,
+    canceled: batch.canceled,
+    offering: {
+      id: batch.offering.id,
+      adapterId: batch.offering.adapterId,
+      displayName: batch.offering.displayName
+    },
+    jobs: batch.jobs.map((job) => ({
+      id: job.id,
+      name: job.name,
+      status: job.status
+    }))
+  };
+}
+
 function agentJobResult(batch: BatchSnapshot, job: JobRecord, message: string) {
   return {
     structuredContent: {
-      batch,
+      batch: agentBatchSummary(batch),
       job: {
         id: job.id,
         name: job.name,

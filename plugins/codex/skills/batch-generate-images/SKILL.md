@@ -23,7 +23,7 @@ Use the local Esse MCP tools. Let Esse resolve the user's configured default off
    - Do not require OAuth, API keys, Codex CLI, or a particular image tool. Use whatever image capability the current Agent already has.
    - Choose any safe execution strategy the Agent supports. Subagents are an optional way to parallelize independent jobs, not a requirement. Native batching, other concurrency, or sequential execution are valid.
    - If the current Agent cannot generate images, call `fail_agent_image_job` for every pending job with the real reason and tell the user that the current Agent does not support image generation. Do not leave jobs pending.
-   - Before generating a job, call `start_agent_image_job`. Use its exact `prompt` and every returned `referenceImagePaths` entry. For a built-in image tool that requires visible local references, inspect each reference first.
+   - Before generating a job, call `start_agent_image_job`. Use its exact `prompt` and every returned `referenceImagePaths` entry. One start call is exactly one outbound image-generation request: never combine reference paths from other batch jobs into it. Independent jobs may run concurrently, but their prompts, references, and request-size checks stay isolated per job. For a built-in image tool that requires visible local references, inspect each reference first.
    - On success, call `complete_agent_image_job` with the real absolute local output path. On failure, call `fail_agent_image_job`. Never invent a path or submit an inline-only image that was not saved locally.
    - Do not poll Esse. Each start, completion, and failure call updates the workbench directly.
 12. When the user describes another change, resolve the target images before submitting work:
