@@ -325,7 +325,7 @@ function App() {
                 <span>{batch.title}</span>
               </button>)}
             </div>}
-          </div> : <strong>{tab === "settings" ? "Esse 设置" : "Esse"}</strong>}
+          </div> : <strong>{tab === "settings" ? "Esse Community 设置" : "Esse Community"}</strong>}
           {tab === "batches" && activeBatch && <button type="button" className="batch-reference-copy" onClick={() => void copyActiveBatchReference()} disabled={Boolean(headerBusy)} aria-label="复制批次名称和 ID" title="复制批次名称和 ID"><Copy size={14} /></button>}
           {tab === "batches" && activeBatch && <div className="header-more" onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node)) { setBatchMenuOpen(false); setConfirmDeleteBatch(false); } }}>
             <button className="header-icon-action" onClick={() => { setBatchSwitcherOpen(false); setBatchMenuOpen((open) => !open); }} aria-label="当前批次操作" aria-expanded={batchMenuOpen}><DotsThree size={18} weight="bold" /></button>
@@ -344,8 +344,8 @@ function App() {
             href={updateStatus.releaseUrl}
             target="_blank"
             rel="noopener noreferrer"
-            aria-label={updateStatus.latestVersion ? `Esse ${updateStatus.latestVersion} 已发布` : "Esse 有新版本"}
-            title={updateStatus.latestVersion ? `Esse ${updateStatus.latestVersion} 已发布` : "Esse 有新版本"}
+            aria-label={updateStatus.latestVersion ? `Esse Community ${updateStatus.latestVersion} 已发布` : "Esse Community 有新版本"}
+            title={updateStatus.latestVersion ? `Esse Community ${updateStatus.latestVersion} 已发布` : "Esse Community 有新版本"}
           >有新版本</a>}
           <button className="header-icon-action" onClick={() => void requestFullscreen()} aria-label={displayMode === "fullscreen" ? "收起预览" : "在侧边栏展开"} title="在侧边栏展开"><ArrowsOutSimple size={16} /></button>
         </div>

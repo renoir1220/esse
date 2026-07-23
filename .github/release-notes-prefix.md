@@ -1,8 +1,13 @@
 ## 简体中文
 
-### Esse 0.3.2
+### Esse Community 0.3.2
 
 - Agent 批次现在按任务隔离 Prompt、参考图和请求大小。多个任务仍可并发执行，但不会再把不同任务的参考图合并进同一次图片服务请求，从而避免单任务未超限却因批次总量触发 `request body too large`。
+- 批次标题旁新增复制按钮，图片右键菜单新增复制图片 ID，可直接把准确的批次名称、批次 ID 和图片 ID 交给 Codex 或其他 Agent。
+- Windows 工作台不再因原生标题栏预留高度而出现空白纵向滚动条；窗口标题同时显示产品版本，例如 `Esse Community 0.3.2`。
+- 开源版在安装程序、窗口、插件、MCP 与文档中统一显示为 `Esse Community`，并保留 `esse` 技术标识和“用 Esse 生成图片”等简短日常指令的兼容性。
+- 当前 Windows 与 macOS 发行包未做发布者签名或 Apple 公证；CI 会验证其确为未签名产物并继续提供 SHA256 校验。Windows 可能提示未知发布者，macOS Gatekeeper 可能拒绝打开；不得关闭系统安全机制。
+- 批次和任务更新在返回成功前会等待持久化清理完成，降低退出或紧接下一步操作时看到旧状态的概率。
 - 修复 `fast-uri` 的高危 URI authority 混淆漏洞，并更新 Sidecar 构建与测试工具链，消除多项已知的开发依赖安全问题。
 
 #### Agent Sidecar（Windows x64、macOS arm64/x64）
@@ -16,9 +21,14 @@
 
 ## English
 
-### Esse 0.3.2
+### Esse Community 0.3.2
 
 - Agent batches now isolate each job's prompt, references, and request-size budget. Independent jobs can still run concurrently, but references from different jobs are never combined into one image-service request, preventing `request body too large` when every individual job is below the limit.
+- Adds a copy button beside the batch title and a Copy Image ID action to the image context menu, making it easy to give Codex or another Agent the exact batch name, batch ID, and image ID.
+- Removes the empty vertical scrollbar caused by native-titlebar space on Windows, and includes the product version in the window title, for example `Esse Community 0.3.2`.
+- Consistently presents the open-source edition as `Esse Community` across installers, windows, plugins, MCP, and documentation while preserving the stable `esse` technical identifiers and short everyday commands such as “use Esse to generate images.”
+- Current Windows and macOS artifacts are not publisher-signed or Apple-notarized. CI verifies that they are unsigned and continues to publish SHA256 checksums. Windows may show an unknown-publisher warning, and macOS Gatekeeper may reject the app; platform security must not be disabled.
+- Waits for persistence cleanup before reporting batch and job updates as successful, reducing stale state after exit or an immediately following action.
 - Fixes the high-severity `fast-uri` URI authority confusion vulnerability and updates the Sidecar build and test toolchain to remove multiple known development-dependency security issues.
 
 #### Agent Sidecar (Windows x64, macOS arm64/x64)

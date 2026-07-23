@@ -78,7 +78,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .notice button, .error-banner button { width: 22px; height: 22px; display: grid; place-items: center; flex: none; padding: 0; border: 0; border-radius: 6px; background: transparent; color: inherit; cursor: pointer; }
 .error-banner { min-height: 40px; display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: -6px 0 14px; padding: 8px 10px 8px 12px; border: 1px solid #f0cfcd; border-radius: 9px; background: var(--danger-soft); color: var(--danger); font-size: var(--font-size-control); }
 
-.batch-page { min-height: calc(100vh - 94px); display: grid; grid-template-rows: auto minmax(260px, 1fr) auto; gap: 12px; }
+.batch-page { min-height: calc(100vh - 94px - env(titlebar-area-height, 0px)); display: grid; grid-template-rows: auto minmax(260px, 1fr) auto; gap: 12px; }
 .section-heading { min-height: 30px; display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .section-heading > div { display: flex; align-items: baseline; gap: 9px; }
 .section-heading strong { font-size: var(--font-size-base); font-weight: 600; }

@@ -18,6 +18,7 @@ import { WORKBUDDY_AGENT_OFFERING, type DesktopState, type ModifyBatchInput, typ
 import { desktopWindowChrome, shouldRemoveWindowMenu } from './window-chrome';
 import { resolveSidecarUserDataPath, shouldQuitWhenAllWindowsClose } from './platform';
 import { batchReferenceText, imageIdReferenceText } from './reference-text';
+import { formatWindowTitle } from './window-title';
 import product from '../product.json';
 
 const smokeMode = process.env.ESSE_SMOKE_TEST === '1';
@@ -90,12 +91,13 @@ app.whenReady().then(async () => {
 });
 
 function createWindow(): void {
+  const windowTitle = formatWindowTitle(product.displayName, app.getVersion());
   mainWindow = new BrowserWindow({
     width: qaViewport?.width ?? 1320,
     height: qaViewport?.height ?? 860,
     minHeight: qaViewport ? 640 : 640,
     show: !smokeMode && !qaCapturePath,
-    title: product.displayName,
+    title: windowTitle,
     icon: resolveRuntimeIconPath(),
     backgroundColor: '#ffffff',
     ...desktopWindowChrome(process.platform),
@@ -169,8 +171,12 @@ function createWindow(): void {
             if (!overlayResult.batchPicker || !overlayResult.headerMenu || !overlayResult.lightboxMask || !overlayResult.finalOverlaysClosed) throw new Error(`Overlay dismissal assertion failed: ${JSON.stringify(overlayResult)}`);
             console.log(`ESSE_QA_OVERLAYS=${JSON.stringify(overlayResult)}`);
           }
-          const renderedState = await mainWindow.webContents.executeJavaScript("JSON.stringify({ bridge: typeof window.esse, shell: Boolean(document.querySelector('.app-shell')), connect: Boolean(document.querySelector('.connect-screen')), splash: Boolean(document.querySelector('.splash')), images: Array.from(document.images).map((image) => ({ complete: image.complete, width: image.naturalWidth })) })");
+          const renderedState = await mainWindow.webContents.executeJavaScript("JSON.stringify({ bridge: typeof window.esse, shell: Boolean(document.querySelector('.app-shell')), connect: Boolean(document.querySelector('.connect-screen')), splash: Boolean(document.querySelector('.splash')), images: Array.from(document.images).map((image) => ({ complete: image.complete, width: image.naturalWidth })), layout: { batchPage: Boolean(document.querySelector('.batch-page')), viewportHeight: window.innerHeight, documentHeight: document.documentElement.scrollHeight, verticalOverflow: document.documentElement.scrollHeight > window.innerHeight } })");
           console.log(`ESSE_QA_STATE=${renderedState}`);
+          const layout = (JSON.parse(renderedState) as { layout?: { batchPage?: boolean; verticalOverflow?: boolean } }).layout;
+          if (layout?.batchPage && layout.verticalOverflow) {
+            throw new Error('Unexpected root-page vertical overflow in the batch workspace.');
+          }
           mainWindow.webContents.invalidate();
           await new Promise((resolve) => setTimeout(resolve, 250));
           const image = await mainWindow.webContents.capturePage();

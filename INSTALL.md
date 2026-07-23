@@ -1,6 +1,6 @@
-# Install Esse
+# Install Esse Community
 
-This file is the installation contract for an Agent given only this repository URL. `Codex Plugin` and `Agent Sidecar` below are technical distribution names; after installation the product is always called Esse.
+This file is the installation contract for an Agent given only this repository URL. The public MIT edition is called **Esse Community**. `Codex Plugin` and `Agent Sidecar` below are technical distribution names, not separate products.
 
 ## Required outcome
 
@@ -59,10 +59,10 @@ After verification, report the installed version and say:
 
 1. Completely restart the Codex/ChatGPT desktop app.
 2. Start a new task.
-3. Say `打开 Esse 设置` or type `@esse` and ask it to open settings.
-4. In the Esse UI, choose `Codex 生成` as the default model, or add a Provider, paste the API Key there, test the connection, choose one of its image models, and save.
+3. Say `打开 Esse Community 设置` or type `@esse` and ask it to open settings.
+4. In the Esse Community UI, choose `Codex 生成` as the default model, or add a Provider, paste the API Key there, test the connection, choose one of its image models, and save.
 
-Explicitly remind the user that the API Key belongs only in the Esse settings UI and should never be pasted into chat.
+Explicitly remind the user that the API Key belongs only in the Esse Community settings UI and should never be pasted into chat.
 
 ## Agent Sidecar procedure
 
@@ -74,24 +74,24 @@ Download these two assets from the same requested GitHub Release:
   - macOS arm64: `macosArm64Asset`
   - macOS x64: `macosX64Asset`
 
-Verify the asset SHA256 against the matching `*Sha256` field before opening it. The installed application and window are named Esse.
+Verify the asset SHA256 against the matching `*Sha256` field before opening it. The installed application and window are named Esse Community.
 
 ### Windows x64
 
-Run the verified `.exe` installer. `v0.3.0` was an explicitly unsigned exception while SignPath Foundation approval was pending, so report that historical publisher limitation honestly; never disable Windows security controls. Releases after `v0.3.0` must pass the repository Authenticode gate.
+Run the checksum-verified `.exe` installer. The release notes disclose whether the application and installer are Authenticode-signed. When a release is unsigned, report that Windows may show an unknown-publisher or SmartScreen warning and do not claim publisher verification. If Windows blocks the installer, stop and report the exact error; never disable Windows security controls.
 
 ### macOS arm64 and x64
 
-Open the verified `.dmg`, drag `Esse Community.app` into Applications, and open it normally. The release workflow requires a Developer ID signature, Apple notarization, and a stapled notarization ticket. If Gatekeeper rejects the app, stop and report the exact error. Never remove quarantine attributes, disable Gatekeeper, or instruct the user to choose an override.
+Open the checksum-verified `.dmg`, drag `Esse Community.app` into Applications, and open it normally. The release notes disclose whether the app is Developer ID-signed, notarized by Apple, and contains a stapled ticket. An unsigned release may be rejected by Gatekeeper; if that happens, stop and report the exact error. Never remove quarantine attributes, disable Gatekeeper, or instruct the user to choose an override.
 
-After installation, the user opens Esse and completes setup inside its settings page:
+After installation, the user opens Esse Community and completes setup inside its settings page:
 
 1. Choose a built-in Tuzi preset or add an OpenAI-compatible Provider.
-2. Paste the API Key inside Esse, test it, and save a default image model.
-3. Copy the MCP server configuration from Esse into the Agent's user-level HTTP MCP settings.
+2. Paste the API Key inside Esse Community, test it, and save a default image model.
+3. Copy the MCP server configuration from Esse Community into the Agent's user-level HTTP MCP settings.
 4. Start a new Agent task and say `用 Esse 生成图片`.
 
-Never request the API Key in chat or put it in an Agent configuration file. The MCP configuration contains only a local loopback endpoint and per-install pairing token. Once Esse accepts Provider work in the background, the Agent should return control immediately and should not poll or copy output back unless the user explicitly asks.
+Never request the API Key in chat or put it in an Agent configuration file. The MCP configuration contains only a local loopback endpoint and per-install pairing token. Once Esse Community accepts Provider work in the background, the Agent should return control immediately and should not poll or copy output back unless the user explicitly asks.
 
 ## Update behavior
 
