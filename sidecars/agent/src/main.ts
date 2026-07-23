@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, net, protocol, shell } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, net, protocol, session, shell } from 'electron';
 import { copyFile, mkdir, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -14,6 +14,7 @@ import { ImageStore } from './image-store';
 import { McpPairingStore } from './mcp-pairing-store';
 import { DEFAULT_MCP_PORT, startDesktopMcpServer, type RunningDesktopMcpServer } from './mcp-server';
 import { ProviderSettingsStore } from './provider-settings';
+import { ProviderNetworkTransport } from './provider-network';
 import { WORKBUDDY_AGENT_OFFERING, type DesktopState, type ModifyBatchInput, type SaveProviderInput } from './types';
 import { desktopWindowChrome, shouldRemoveWindowMenu } from './window-chrome';
 import { resolveSidecarUserDataPath, shouldQuitWhenAllWindowsClose } from './platform';
@@ -45,6 +46,7 @@ if (smokeMode || qaCapturePath) app.disableHardwareAcceleration();
 let mainWindow: BrowserWindow | undefined;
 let credentialStore: CredentialStore;
 let providerSettings: ProviderSettingsStore;
+let providerNetwork: ProviderNetworkTransport;
 let imageStore: ImageStore;
 let batchManager: BatchManager;
 let desktopSettings: DesktopSettingsStore;
@@ -70,6 +72,7 @@ app.whenReady().then(async () => {
   const userData = app.getPath('userData');
   credentialStore = new CredentialStore(userData);
   providerSettings = new ProviderSettingsStore(path.join(userData, 'providers.json'), credentialStore);
+  providerNetwork = new ProviderNetworkTransport(session.fromPartition('esse-provider-network', { cache: false }));
   imageStore = new ImageStore(userData);
   desktopSettings = new DesktopSettingsStore(path.join(userData, 'settings.json'));
   mcpPairingStore = new McpPairingStore(userData);
@@ -219,7 +222,7 @@ function registerIpc(): void {
     }
     return loadState();
   });
-  ipcMain.handle('providers:test', async (_event, input: { baseUrl: string; profileId?: string; apiKey?: string }) => providerSettings.testProvider(input));
+  ipcMain.handle('providers:test', async (_event, input: { baseUrl: string; profileId?: string; apiKey?: string }) => providerSettings.testProvider(input, providerNetwork.fetch));
   ipcMain.handle('batches:modify', async (_event, input: ModifyBatchInput) => {
     await batchManager.modify(input);
     return loadState();
@@ -430,7 +433,7 @@ async function broadcastState(): Promise<void> {
 }
 
 async function createApiClient(): Promise<EsseApiClient> {
-  return new EsseApiClient(providerSettings);
+  return new EsseApiClient(providerSettings, providerNetwork.fetch);
 }
 
 function requiredId(value: unknown, kind: string): string {

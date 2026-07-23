@@ -78,6 +78,18 @@ describe('Esse Provider client', () => {
     expect((error as EsseApiError).details).toMatchObject({ requestId: 'review-request-1', chargeState: 'unknown' });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
+
+  it('shows a safe nested network diagnostic without retrying the request', async () => {
+    const failure = new TypeError('fetch failed', {
+      cause: Object.assign(new Error('connection timed out for a private endpoint'), { code: 'ETIMEDOUT' }),
+    });
+    const fetchMock = vi.fn(async () => { throw failure; }) as unknown as typeof fetch;
+    const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
+
+    await expect(client.generate({ prompt: 'diagnose', model: 'provider-1:gpt-image-2' }))
+      .rejects.toThrow('诊断码：ETIMEDOUT');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
 });
 
 function fakeSettings(adapterId: 'tuzi-json-images' | 'openai-images'): ProviderSettingsStore {

@@ -68,6 +68,12 @@ The initial import deliberately excludes the private commercial server, user acc
 - Sidecar window titles append the installed package version so screenshots and support reports identify the exact build.
 - The Windows batch workspace subtracts the integrated title-bar overlay height from its minimum page height, preventing an empty root-page vertical scrollbar without hiding legitimate scrollable content.
 
+## 2026-07-23 — Sidecar Provider network recovery
+
+- Windows and macOS Sidecars route Provider requests and connection tests through an isolated Electron session backed by Chromium's network stack, so current system proxy and network changes are handled consistently.
+- A transport failure is never automatically retried because the charge state may be unknown. After all concurrent Provider requests settle, the isolated session closes pooled connections and refreshes DNS and proxy state so the next explicit request does not require an application restart.
+- Safe transport codes such as `ETIMEDOUT` or `ERR_NETWORK_CHANGED` are shown with the existing unknown-charge message; URLs, credentials, and raw network errors remain hidden.
+
 ## Deferred
 
 - shared domain/provider/UI packages;
