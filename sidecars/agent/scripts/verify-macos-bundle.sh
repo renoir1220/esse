@@ -83,7 +83,19 @@ if kill -0 "$smoke_pid" 2>/dev/null; then
   echo "Packaged macOS app smoke test timed out." >&2
   exit 1
 fi
+set +e
 wait "$smoke_pid"
-/usr/bin/grep -q 'ESSE_SMOKE_RESULT={"ok":true' "$smoke_log"
+smoke_status=$?
+set -e
+if test "$smoke_status" -ne 0; then
+  cat "$smoke_log" >&2
+  echo "Packaged macOS app smoke test exited with status $smoke_status." >&2
+  exit "$smoke_status"
+fi
+if ! /usr/bin/grep -q 'ESSE_SMOKE_RESULT={"ok":true' "$smoke_log"; then
+  cat "$smoke_log" >&2
+  echo "Packaged macOS app smoke test did not report success." >&2
+  exit 1
+fi
 
 printf '{"status":"ok","platform":"macos","arch":"%s","bundleId":"%s","icon":"Esse","smoke":"ok"}\n' "$arch" "$bundle_id"
