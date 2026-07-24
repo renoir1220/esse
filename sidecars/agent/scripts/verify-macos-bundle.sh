@@ -52,6 +52,7 @@ printf 'Verified Esse icon frames at 16px, 256px, and 1024px.\n'
 
 /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
 signature_details="$(/usr/bin/codesign -dvvv "$app" 2>&1)"
+framework_binary="$app/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
 if test "$require_signed" = "--require-signed"; then
   if printf '%s\n' "$signature_details" | /usr/bin/grep -q '^Signature=adhoc$'; then
     echo "Expected a Developer ID signature, got an ad-hoc signature." >&2
@@ -63,6 +64,11 @@ if test "$require_signed" = "--require-signed"; then
 else
   if ! printf '%s\n' "$signature_details" | /usr/bin/grep -q '^Signature=adhoc$'; then
     echo "Expected a structurally valid ad-hoc signature when Developer ID credentials are absent." >&2
+    exit 1
+  fi
+  framework_signature_details="$(/usr/bin/codesign -dvvv "$framework_binary" 2>&1)"
+  if ! printf '%s\n' "$framework_signature_details" | /usr/bin/grep -q '^Signature=adhoc$'; then
+    echo "Expected the embedded Electron Framework to share the app's ad-hoc signature mode." >&2
     exit 1
   fi
   printf 'Verified structurally valid ad-hoc signature.\n'
