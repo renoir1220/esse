@@ -13,6 +13,7 @@
     "make:macos:arm64": "electron-forge make --platform=darwin --arch=arm64",
     "make:macos:x64": "electron-forge make --platform=darwin --arch=x64",
     "stage:release": "node scripts/stage-release.mjs",
+    "e2e:live:banana-1k": "node scripts/live-provider-e2e.mjs",
     "publish": "electron-forge publish",
     "smoke": "tsx scripts/smoke.ts",
     "verify:signatures": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-signatures.ps1",
