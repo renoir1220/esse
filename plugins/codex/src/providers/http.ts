@@ -67,10 +67,12 @@ export function extractImageResult(body: unknown): GenerateResult {
   const record = asRecord(body);
   const data = Array.isArray(record.data) ? record.data[0] : undefined;
   const candidate = asRecord(data || record.result || record.output || record);
-  const outputUrl = firstString(candidate.url, candidate.image_url, candidate.output_url, record.url, record.image_url);
-  const b64Json = firstString(candidate.b64_json, candidate.base64, record.b64_json, record.base64);
+  const rawUrl = firstString(candidate.url, candidate.image_url, candidate.output_url, record.url, record.image_url);
+  const inlineImage = decodeDataImage(rawUrl);
+  const b64Json = inlineImage?.base64 || firstString(candidate.b64_json, candidate.base64, record.b64_json, record.base64);
+  const outputUrl = rawUrl && isHttpUrl(rawUrl) ? rawUrl : undefined;
   if (!outputUrl && !b64Json) throw new ProviderRequestError("Provider returned no image URL or base64 image.", { retryable: false, chargeState: "unknown", origin: "esse" });
-  return { outputUrl, b64Json, mimeType: "image/png" };
+  return { outputUrl, b64Json, mimeType: inlineImage?.mimeType || "image/png" };
 }
 
 export function requestId(response: Response, body: unknown): string | undefined {
@@ -92,6 +94,22 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function firstString(...values: unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === "string" && value.length > 0);
+}
+
+function isHttpUrl(value: string): boolean {
+  try {
+    const url = new URL(value);
+    return (url.protocol === "https:" || url.protocol === "http:") && !url.username && !url.password;
+  } catch {
+    return false;
+  }
+}
+
+function decodeDataImage(value: string | undefined): { base64: string; mimeType: string } | undefined {
+  if (!value) return undefined;
+  const match = /^data:(image\/[a-z0-9.+-]+);base64,([a-z0-9+/=\s]+)$/i.exec(value);
+  if (!match?.[1] || !match[2]) return undefined;
+  return { mimeType: match[1].toLowerCase(), base64: match[2].replace(/\s/g, "") };
 }
 
 function sanitize(value: string): string {

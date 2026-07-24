@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { normalizeTransportError, parseResponse, providerError } from "../src/providers/http.js";
+import { extractImageResult, normalizeTransportError, parseResponse, providerError } from "../src/providers/http.js";
 import { ProviderRequestError } from "../src/types.js";
 
 test("Provider response parsing stops oversized error bodies", async () => {
@@ -37,4 +37,14 @@ test("Provider errors preserve upstream text without an Esse-owned prefix", () =
 test("transport errors are attributed to the Esse-side request path", () => {
   const error = normalizeTransportError(new Error("connection dropped"));
   assert.equal(error.details.origin, "esse");
+});
+
+test("Provider image parsing accepts data-image URLs returned by compatible relays", () => {
+  const result = extractImageResult({ data: [{ url: "data:image/webp;base64,AAECAw==" }] });
+  assert.deepEqual(result, { b64Json: "AAECAw==", mimeType: "image/webp", outputUrl: undefined });
+});
+
+test("Provider image parsing prefers base64 over a non-HTTP relay URL", () => {
+  const result = extractImageResult({ data: [{ url: "/generated/image.png", b64_json: "AAECAw==" }] });
+  assert.deepEqual(result, { b64Json: "AAECAw==", mimeType: "image/png", outputUrl: undefined });
 });
