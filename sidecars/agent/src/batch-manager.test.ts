@@ -108,7 +108,7 @@ describe('Esse batch manager', () => {
   it('keeps an unknown-charge failure terminal unless the user explicitly confirms a manual retry', async () => {
     const fixture = await fixtureDirectory();
     const generate = vi.fn(async () => {
-      throw new EsseApiError('Provider result is unknown.', { code: 'provider_result_unknown', requestId: 'request-review', status: 503, chargeState: 'unknown' });
+      throw new EsseApiError('Provider result is unknown.', { code: 'provider_result_unknown', requestId: 'request-review', status: 503, chargeState: 'unknown', origin: 'upstream' });
     });
     const manager = managerFor(fixture, { ...fakeApi(), generate });
     await manager.initialize();
@@ -119,7 +119,8 @@ describe('Esse batch manager', () => {
     });
     await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('failed'));
     const job = manager.get(accepted.id).jobs[0];
-    expect(job).toMatchObject({ chargeState: 'unknown', retryable: true, requestId: 'request-review' });
+    expect(job).toMatchObject({ chargeState: 'unknown', retryable: true, requestId: 'request-review', errorOrigin: 'upstream' });
+    expect(job.callHistory[0]).toMatchObject({ errorOrigin: 'upstream' });
     expect(generate).toHaveBeenCalledTimes(1);
     await expect(manager.retry(accepted.id, [job.id])).rejects.toThrow(/explicit unknown-charge confirmation/i);
     expect(generate).toHaveBeenCalledTimes(1);
@@ -132,7 +133,7 @@ describe('Esse batch manager', () => {
   it('allows manual retry for a Provider failure that is not eligible for automatic retry', async () => {
     const fixture = await fixtureDirectory();
     const generate = vi.fn()
-      .mockRejectedValueOnce(new EsseApiError('Request rejected.', { code: 'bad_request', status: 400, chargeState: 'not_charged' }))
+      .mockRejectedValueOnce(new EsseApiError('Request rejected.', { code: 'bad_request', status: 400, chargeState: 'not_charged', origin: 'upstream' }))
       .mockResolvedValueOnce(generatedResult('manual-retry-success'));
     const manager = managerFor(fixture, { ...fakeApi(), generate });
     await manager.initialize();
@@ -154,7 +155,7 @@ describe('Esse batch manager', () => {
   it('automatically retries definitely-not-charged transient failures three times', async () => {
     const fixture = await fixtureDirectory();
     const generate = vi.fn(async () => {
-      throw new EsseApiError('Provider is temporarily unavailable.', { code: 'provider_unavailable', status: 503, chargeState: 'not_charged' });
+      throw new EsseApiError('Provider is temporarily unavailable.', { code: 'provider_unavailable', status: 503, chargeState: 'not_charged', origin: 'upstream' });
     });
     const manager = managerFor(fixture, { ...fakeApi(), generate });
     await manager.initialize();
@@ -169,6 +170,7 @@ describe('Esse batch manager', () => {
     expect(job).toMatchObject({ attempt: 4, chargeState: 'not_charged', retryable: true });
     expect(job.callHistory).toHaveLength(4);
     expect(job.callHistory.every((call) => call.chargeState === 'not_charged')).toBe(true);
+    expect(job.callHistory.every((call) => call.errorOrigin === 'upstream')).toBe(true);
   });
 
   it('modifies a selected result in place and preserves its previous version', async () => {
@@ -311,8 +313,25 @@ describe('Esse batch manager', () => {
     expect(generate).not.toHaveBeenCalled();
     await expect(manager.completeAgentJob(created.id, created.jobs[0].id, path.join(fixture.directory, 'missing.png'))).rejects.toThrow();
     const failedJob = manager.get(created.id).jobs[0];
-    expect(failedJob).toMatchObject({ status: 'failed', chargeState: 'unknown', retryable: false });
+    expect(failedJob).toMatchObject({ status: 'failed', chargeState: 'unknown', retryable: false, errorOrigin: 'esse' });
     await expect(manager.retry(created.id, [failedJob.id], true)).rejects.toThrow(/current Agent/i);
+  });
+
+  it('records an Agent-reported failure as upstream', async () => {
+    const fixture = await fixtureDirectory();
+    const manager = managerFor(fixture, fakeApi());
+    await manager.initialize();
+    const created = await manager.create({
+      prompt: 'Agent-owned image',
+      offeringId: 'workbuddy-agent-generation',
+      requestKey: 'agent-reported-failure',
+      approvedEstimatedCostMicros: 0,
+    });
+
+    const failed = await manager.failAgentJob(created.id, created.jobs[0].id, 'Agent generation failed.');
+
+    expect(failed.jobs[0]).toMatchObject({ errorOrigin: 'upstream' });
+    expect(failed.jobs[0].callHistory[0]).toMatchObject({ source: 'agent', errorOrigin: 'upstream' });
   });
 });
 

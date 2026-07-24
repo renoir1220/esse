@@ -219,7 +219,8 @@ test("Codex generation delegates to the current Agent and imports terminal resul
     assert.equal(failed.jobs[1]?.status, "failed");
     assert.equal(failed.jobs[1]?.retryable, false);
     assert.equal(failed.jobs[1]?.error, "当前 Agent 不支持第二项生成");
-    assert.deepEqual(failed.jobs[1]?.callHistory?.map((call) => [call.source, call.status, call.error]), [["agent", "failed", "当前 Agent 不支持第二项生成"]]);
+    assert.equal(failed.jobs[1]?.errorOrigin, "upstream");
+    assert.deepEqual(failed.jobs[1]?.callHistory?.map((call) => [call.source, call.status, call.error, call.errorOrigin]), [["agent", "failed", "当前 Agent 不支持第二项生成", "upstream"]]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -334,6 +335,7 @@ test("definitely uncharged failures auto retry three times, while unknown-charge
     assert.equal(retryCalls, 4);
     assert.deepEqual(completedJob.callHistory?.map((call) => call.status), ["failed", "failed", "failed", "succeeded"]);
     assert(completedJob.callHistory?.slice(0, 3).every((call) => Boolean(call.error)));
+    assert(completedJob.callHistory?.slice(0, 3).every((call) => call.errorOrigin === "upstream"));
     assert(completedJob.callHistory?.every((call) => typeof call.durationMs === "number"));
 
     let unknownCalls = 0;
@@ -347,8 +349,9 @@ test("definitely uncharged failures auto retry three times, while unknown-charge
     assert.equal(failedJob.status, "failed");
     assert.equal(failedJob.chargeState, "unknown");
     assert.equal(failedJob.retryable, true);
+    assert.equal(failedJob.errorOrigin, "esse");
     assert.equal(unknownCalls, 1);
-    assert.deepEqual(failedJob.callHistory?.map((call) => [call.status, call.chargeState]), [["failed", "unknown"]]);
+    assert.deepEqual(failedJob.callHistory?.map((call) => [call.status, call.chargeState, call.errorOrigin]), [["failed", "unknown", "esse"]]);
     assert.match(failedJob.callHistory?.[0]?.error || "", /connection dropped/);
     const manualRetry = await unknownManager.retry(unknown.id, [failedJob.id], true);
     assert.equal(onlyJob(manualRetry).attempt, 2);

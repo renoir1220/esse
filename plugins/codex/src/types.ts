@@ -7,6 +7,7 @@ export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancele
 export type JobCallStatus = "running" | "succeeded" | "failed" | "canceled";
 export type BatchStatus = "queued" | "running" | "completed" | "partial" | "failed" | "canceled";
 export type ChargeState = "not_charged" | "charged" | "unknown";
+export type ErrorOrigin = "upstream" | "esse";
 
 export interface PriceConfig {
   mode: PriceMode;
@@ -80,6 +81,7 @@ export interface JobRecord {
   retryable: boolean;
   chargeState: ChargeState;
   error?: string;
+  errorOrigin?: ErrorOrigin;
   providerRequestId?: string;
   createdAt: string;
   startedAt?: string;
@@ -100,6 +102,7 @@ export interface JobCallRecord {
   finishedAt?: string;
   durationMs?: number;
   error?: string;
+  errorOrigin?: ErrorOrigin;
   providerRequestId?: string;
 }
 
@@ -194,7 +197,7 @@ export interface ProviderAdapter {
 export class ProviderRequestError extends Error {
   constructor(
     message: string,
-    readonly details: { status?: number; retryable: boolean; chargeState: ChargeState; requestId?: string }
+    readonly details: { status?: number; retryable: boolean; chargeState: ChargeState; requestId?: string; origin: ErrorOrigin }
   ) {
     super(message);
     this.name = "ProviderRequestError";

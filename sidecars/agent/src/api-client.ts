@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { ProviderSettingsStore } from './provider-settings';
-import type { GenerateInput, OfferingSummary } from './types';
+import type { ErrorOrigin, GenerateInput, OfferingSummary, ProviderProfile } from './types';
+import product from '../product.json';
 
 interface ApiImageItem {
   url?: string;
@@ -20,7 +21,7 @@ export interface ApiGenerateResult {
 export class EsseApiError extends Error {
   constructor(
     message: string,
-    readonly details: { status?: number; code: string; requestId?: string; chargeState: 'not_charged' | 'unknown' },
+    readonly details: { status?: number; code: string; requestId?: string; chargeState: 'not_charged' | 'unknown'; origin: ErrorOrigin },
     options?: ErrorOptions,
   ) {
     super(message, options);
@@ -50,7 +51,7 @@ export class EsseApiClient {
 
   private async request(input: GenerateInput, images: string[]): Promise<ApiGenerateResult> {
     const { profile, offering } = await this.settings.resolveOffering(input.model);
-    if (!profile.hasApiKey) throw new EsseApiError('这个 Provider 还没有 API Key，请在 Esse 设置中填写。', { code: 'provider_not_configured', chargeState: 'not_charged' });
+    if (!profile.hasApiKey) throw new EsseApiError('这个 Provider 还没有 API Key，请在 Esse 设置中填写。', { code: 'provider_not_configured', chargeState: 'not_charged', origin: 'esse' });
     const apiKey = await this.settings.getApiKey(profile.id);
     let response: Response;
     try {
@@ -60,12 +61,12 @@ export class EsseApiClient {
     } catch (error) {
       if (error instanceof EsseApiError) throw error;
       const diagnostic = networkErrorDiagnostic(error);
-      throw new EsseApiError(`Provider 网络请求失败${diagnostic ? `（诊断码：${diagnostic}）` : ''}；此次调用不会自动重试。`, { code: 'network_error', chargeState: 'unknown' }, { cause: error });
+      throw new EsseApiError(`Provider 网络请求失败${diagnostic ? `（诊断码：${diagnostic}）` : ''}；此次调用不会自动重试。`, { code: 'network_error', chargeState: 'unknown', origin: 'esse' }, { cause: error });
     }
     const body = await parseResponse(response);
-    if (!response.ok) throw providerError(response, body);
+    if (!response.ok) throw providerError(response, body, profile);
     const items = extractItems(body);
-    if (!items.length) throw new EsseApiError('Provider 没有返回可用图片。', { code: 'empty_provider_result', requestId: requestId(response, body), chargeState: 'unknown' });
+    if (!items.length) throw new EsseApiError('Provider 没有返回可用图片。', { code: 'empty_provider_result', requestId: requestId(response, body), chargeState: 'unknown', origin: 'esse' });
     return { requestId: requestId(response, body) || randomUUID(), items, reused: false, trustedBaseUrl: profile.baseUrl };
   }
 
@@ -119,25 +120,26 @@ export class EsseApiClient {
 async function parseResponse(response: Response): Promise<unknown> {
   const maxBytes = response.ok ? 82 * 1024 * 1024 : 1024 * 1024;
   const declared = Number(response.headers.get('content-length') || 0);
-  if (Number.isFinite(declared) && declared > maxBytes) throw new EsseApiError('Provider 响应超过允许大小。', { code: 'response_too_large', chargeState: 'unknown' });
+  if (Number.isFinite(declared) && declared > maxBytes) throw new EsseApiError('Provider 响应超过允许大小。', { code: 'response_too_large', chargeState: 'unknown', origin: 'esse' });
   const bytes = new Uint8Array(await response.arrayBuffer());
-  if (bytes.byteLength > maxBytes) throw new EsseApiError('Provider 响应超过允许大小。', { code: 'response_too_large', chargeState: 'unknown' });
+  if (bytes.byteLength > maxBytes) throw new EsseApiError('Provider 响应超过允许大小。', { code: 'response_too_large', chargeState: 'unknown', origin: 'esse' });
   const text = new TextDecoder().decode(bytes);
   if (!text) return {};
   try { return JSON.parse(text); } catch { return { message: text.slice(0, 1000) }; }
 }
 
-function providerError(response: Response, body: unknown): EsseApiError {
+function providerError(response: Response, body: unknown, profile: ProviderProfile): EsseApiError {
   const status = response.status;
   const record = asRecord(body);
   const error = asRecord(record.error);
   const raw = firstString(error.message, record.message, error.type, error.code) || `HTTP ${status}`;
   const code = firstString(error.code, error.type) || `http_${status}`;
-  return new EsseApiError(`Provider 调用失败：${sanitize(raw)}`, {
+  return new EsseApiError(sanitizeProviderError(raw, profile), {
     status,
     code,
     requestId: requestId(response, body),
     chargeState: status === 429 || (status >= 400 && status < 500) ? 'not_charged' : 'unknown',
+    origin: 'upstream',
   });
 }
 
@@ -165,8 +167,33 @@ function firstString(...values: unknown[]): string | undefined {
   return values.find((value): value is string => typeof value === 'string' && value.trim().length > 0);
 }
 
-function sanitize(value: string): string {
-  return value.replace(/sk-[A-Za-z0-9_-]{8,}/g, '[redacted]').slice(0, 800);
+export function sanitizeProviderError(
+  value: string,
+  profile: Pick<ProviderProfile, 'displayName' | 'baseUrl'>,
+  attribution: { showProviderIdentity: boolean; redactProviderTerms: readonly string[] } = product.errorAttribution,
+): string {
+  let result = value.replace(/sk-[A-Za-z0-9_-]{8,}/g, '[redacted]');
+  if (!attribution.showProviderIdentity) {
+    const configuredTerms = [
+      profile.displayName,
+      profile.baseUrl,
+      providerHostname(profile.baseUrl),
+      ...attribution.redactProviderTerms,
+    ];
+    for (const term of configuredTerms) {
+      if (!term?.trim()) continue;
+      result = result.replace(new RegExp(escapeRegExp(term.trim()), 'gi'), '上游服务');
+    }
+  }
+  return result.slice(0, 800);
+}
+
+function providerHostname(baseUrl: string): string {
+  try { return new URL(baseUrl).hostname; } catch { return ''; }
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function networkErrorDiagnostic(error: unknown): string | undefined {

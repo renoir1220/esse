@@ -74,6 +74,12 @@ The initial import deliberately excludes the private commercial server, user acc
 - A transport failure is never automatically retried because the charge state may be unknown. After all concurrent Provider requests settle, the isolated session closes pooled connections and refreshes DNS and proxy state so the next explicit request does not require an application restart.
 - Safe transport codes such as `ETIMEDOUT` or `ERR_NETWORK_CHANGED` are shown with the existing unknown-charge message; URLs, credentials, and raw network errors remain hidden.
 
+## 2026-07-24 — structured error attribution
+
+- Failed jobs and individual call records persist an explicit `upstream` or `esse` error origin instead of relying on message-prefix parsing. Existing records without that field remain readable and are identified as historical errors.
+- Provider HTTP error bodies are preserved as the upstream message without an Esse-owned failure prefix. Transport, response-validation, image-import, and interrupted-process failures are attributed to the Esse-side path; Agent-reported generation failures are upstream.
+- Both UIs show a compact source badge beside the error. The Sidecar product profile controls whether Provider identity appears in error surfaces and can redact edition-specific Provider terms from raw upstream messages.
+
 ## Deferred
 
 - shared domain/provider/UI packages;

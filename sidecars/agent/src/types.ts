@@ -123,6 +123,8 @@ export interface JobBackup {
   createdAt: string;
 }
 
+export type ErrorOrigin = 'upstream' | 'esse';
+
 export interface JobCallRecord {
   id: string;
   sequence?: number;
@@ -136,6 +138,7 @@ export interface JobCallRecord {
   durationMs?: number;
   requestId?: string;
   error?: string;
+  errorOrigin?: ErrorOrigin;
 }
 
 export interface BatchJob {
@@ -154,6 +157,7 @@ export interface BatchJob {
   outputImageId?: string;
   backups: JobBackup[];
   error?: string;
+  errorOrigin?: ErrorOrigin;
   requestId?: string;
   createdAt: string;
   startedAt?: string;
