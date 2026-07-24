@@ -4,26 +4,32 @@ import { createPortal } from 'react-dom';
 import {
   ArrowClockwise,
   ArrowsOutSimple,
+  CalendarBlank,
   CaretDown,
   CaretLeft,
   CaretRight,
   Check,
+  CheckCircle,
   Copy,
   DotsThree,
   DownloadSimple,
   FolderSimple,
+  FunnelSimple,
   ImageSquare,
   Info,
   Lightning,
   LockSimple,
+  MagnifyingGlass,
   Plus,
   SlidersHorizontal,
   SquaresFour,
   Trash,
+  WarningCircle,
   X,
 } from '@phosphor-icons/react';
 import './index.css';
 import { retryAllFailedSelection } from './batch-actions';
+import { batchLibraryProgress, batchLibraryState, filterAndGroupBatches, type BatchLibraryState } from './batch-library';
 import { galleryAssets, selectableAssets, type GalleryAsset } from './gallery-assets';
 import { initialImageZoom, zoomImageAtPoint } from './image-zoom';
 import { shouldDismissOverlay } from './overlay-dismiss';
@@ -107,7 +113,20 @@ function App() {
       if (shouldDismissOverlay(event.target, '.image-context-menu')) setImageMenu(undefined);
     };
     const closeTransientOverlays = () => { setBatchPickerOpen(false); setBatchMenuOpen(false); setImageMenu(undefined); };
-    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') closeTransientOverlays(); };
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      if (batchPickerOpen || batchMenuOpen || imageMenu) {
+        closeTransientOverlays();
+        return;
+      }
+      if (viewerImageId || document.querySelector('.task-detail-backdrop')) return;
+      const target = event.target;
+      if (target instanceof HTMLElement && (target.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName))) return;
+      if (tab === 'batches') {
+        event.preventDefault();
+        setTab('browse');
+      }
+    };
     document.addEventListener('pointerdown', onPointerDown, { passive: true, capture: true });
     document.addEventListener('keydown', onKeyDown);
     window.addEventListener('blur', closeTransientOverlays);
@@ -120,7 +139,7 @@ function App() {
       window.removeEventListener('resize', closeTransientOverlays);
       document.removeEventListener('scroll', closeTransientOverlays, true);
     };
-  }, []);
+  }, [batchMenuOpen, batchPickerOpen, imageMenu, tab, viewerImageId]);
 
   const activeBatch = useMemo(
     () => state.batches.find((batch) => batch.id === activeBatchId) || state.batches[0],
@@ -130,6 +149,7 @@ function App() {
   const viewerImage = viewerImageId ? imagesById.get(viewerImageId) : undefined;
   const activeAssets = useMemo(() => activeBatch ? galleryAssets(activeBatch, imagesById) : [], [activeBatch, imagesById]);
   const viewerImages = useMemo(() => uniqueImages(selectableAssets(activeAssets).flatMap((asset) => asset.image ? [asset.image] : [])), [activeAssets]);
+  const hasActiveBatches = useMemo(() => state.batches.some((batch) => batchLibraryState(batch) === 'active'), [state.batches]);
 
   async function apply(action: () => Promise<DesktopState>, success?: string) {
     setBusy(true);
@@ -185,7 +205,7 @@ function App() {
     <main className="app-shell">
       <header className="app-header">
         <div className="header-context">
-          {tab === 'settings' ? <span className="header-context-icon"><SlidersHorizontal size={17} /></span> : (
+          {tab === 'browse' ? <><span className="header-context-icon"><SquaresFour size={17} /></span><strong>浏览批次</strong></> : tab === 'settings' ? <span className="header-context-icon"><SlidersHorizontal size={17} /></span> : (
             <div className="current-batch-picker">
               <button className="current-batch-trigger" onClick={() => { setBatchMenuOpen(false); setBatchPickerOpen((open) => !open); }} aria-expanded={batchPickerOpen} disabled={!state.batches.length}>
                 <span>{activeBatch ? `${activeBatch.title} · ${activeBatch.offering.displayName}` : 'Esse 图片工作台'}</span><CaretDown size={14} />
@@ -195,9 +215,9 @@ function App() {
               ))}</div> : null}
             </div>
           )}
-          {activeBatch && tab !== 'settings' ? <button type="button" className="batch-reference-copy" onClick={() => void copyBatchReference(activeBatch)} aria-label="复制批次名称和 ID" title="复制批次名称和 ID"><Copy size={14} /></button> : null}
+          {activeBatch && tab === 'batches' ? <button type="button" className="batch-reference-copy" onClick={() => void copyBatchReference(activeBatch)} aria-label="复制批次名称和 ID" title="复制批次名称和 ID"><Copy size={14} /></button> : null}
           {tab === 'settings' ? <strong>设置</strong> : null}
-          {activeBatch && tab !== 'settings' ? <div className="header-more">
+          {activeBatch && tab === 'batches' ? <div className="header-more">
             <button className="header-icon-action" onClick={() => { setBatchPickerOpen(false); setBatchMenuOpen((open) => !open); }} aria-label="批次菜单"><DotsThree size={18} weight="bold" /></button>
             {batchMenuOpen ? <div className="header-menu">
               <button onClick={() => void window.esse.openBatchFolder(activeBatch.id)}><FolderSimple size={15} />打开输出文件夹</button>
@@ -210,7 +230,11 @@ function App() {
         </div>
         <nav className="header-actions" aria-label="Esse 页面">
           <button className={tab === 'batches' ? 'is-active' : ''} onClick={() => setTab('batches')}><img className="esse-nav-icon" src={esseIconUrl} alt="" /><span>首页</span></button>
-          <button className={tab === 'browse' ? 'is-active' : ''} onClick={() => setTab('browse')}><SquaresFour size={16} /><span>浏览</span></button>
+          <button className={`nav-shortcut ${tab === 'browse' ? 'is-active' : ''}`} onClick={() => setTab('browse')} aria-keyshortcuts="Escape">
+            {hasActiveBatches ? <span className="nav-progress-spinner spinner" aria-hidden="true" /> : <SquaresFour size={16} />}
+            <span>浏览</span>
+            <span className="nav-shortcut-tooltip" role="tooltip">浏览批次 <kbd>Esc</kbd></span>
+          </button>
           <button className={tab === 'settings' ? 'is-active' : ''} onClick={() => setTab('settings')}><SlidersHorizontal size={16} /><span>设置</span></button>
         </nav>
       </header>
@@ -250,7 +274,16 @@ function App() {
         /> : <EmptyState title="还没有图片批次" copy="请从 Agent 向 Esse 提交第一个图片任务。" />
       ) : null}
 
-      {tab === 'browse' ? <BatchLibrary batches={state.batches} imagesById={imagesById} onOpen={(id) => void switchBatch(id)} /> : null}
+      {tab === 'browse' ? <BatchLibrary
+        batches={state.batches}
+        imagesById={imagesById}
+        busy={busy}
+        onOpen={(id) => void switchBatch(id)}
+        onRetry={(batch, jobIds, includesUnknownCharge) => apply(
+          () => window.esse.retryJobs(batch.id, jobIds, includesUnknownCharge),
+          includesUnknownCharge ? `“${batch.title}”的失败任务已重新排队；部分上次调用的扣费状态未知` : `“${batch.title}”的失败任务已重新排队`,
+        )}
+      /> : null}
       {tab === 'settings' ? <Settings state={state} busy={busy} apply={apply} onNotice={setNotice} /> : null}
 
       {imageMenu && activeBatch ? <ImageContextMenu batchId={activeBatch.id} imageId={imageMenu.imageId} x={imageMenu.x} y={imageMenu.y} selected={selectedImageIds.has(imageMenu.imageId)} onToggle={() => toggleSelected(imageMenu.imageId)} onClose={() => setImageMenu(undefined)} onNotice={setNotice} onDelete={() => deleteImage(activeBatch.id, imageMenu.imageId)} /> : null}
@@ -476,17 +509,107 @@ function TaskDetailDialog({ asset, imagesById, onClose }: { asset: GalleryAsset;
   </div>;
 }
 
-function BatchLibrary(props: { batches: BatchSnapshot[]; imagesById: Map<string, SavedImage>; onOpen: (id: string) => void }) {
+function BatchLibrary(props: {
+  batches: BatchSnapshot[];
+  imagesById: Map<string, SavedImage>;
+  busy: boolean;
+  onOpen: (id: string) => void;
+  onRetry: (batch: BatchSnapshot, jobIds: string[], includesUnknownCharge: boolean) => Promise<boolean>;
+}) {
+  const [query, setQuery] = useState('');
+  const [filterOpen, setFilterOpen] = useState(false);
+  const [from, setFrom] = useState('');
+  const [to, setTo] = useState('');
+  const groups = useMemo(() => filterAndGroupBatches(props.batches, { query, from, to }), [from, props.batches, query, to]);
+  const hasFilters = Boolean(query.trim() || from || to);
+  const hasMatches = groups.recent.length + groups.older.length > 0;
+  const clearFilters = () => { setQuery(''); setFrom(''); setTo(''); };
+
   return <section className="library-page">
-    <div className="library-page-header"><div><h1>浏览批次</h1><p>所有任务、原始图片和历史版本都由 Esse 保存在本机。</p></div></div>
-    {props.batches.length ? <div className="batch-library-grid">{props.batches.map((batch) => {
-      const previews = batch.jobs.flatMap((job) => job.outputImageId ? [props.imagesById.get(job.outputImageId)] : []).filter(Boolean) as SavedImage[];
-      return <button key={batch.id} className="batch-library-card" onClick={() => props.onOpen(batch.id)}>
-        <div className={`batch-thumbs count-${Math.min(3, previews.length)}`}>{previews.slice(0, 3).map((image) => <span key={image.id}><img src={image.mediaUrl} alt="" /></span>)}{!previews.length ? <span className="empty-thumb"><ImageSquare size={22} /></span> : null}</div>
-        <div><strong>{batch.title}</strong><span>{batch.offering.displayName} · {statusLabel(batch)}</span><time>{new Date(batch.updatedAt).toLocaleString()}</time></div>
-      </button>;
-    })}</div> : <EmptyState title="还没有图片批次" copy="请从 Agent 向 Esse 提交第一个图片任务。" />}
+    <div className="library-toolbar">
+      <div className="library-search">
+        <MagnifyingGlass size={16} aria-hidden="true" />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索批次" aria-label="按中文模糊搜索批次" />
+        {query ? <button type="button" onClick={() => setQuery('')} aria-label="清除搜索"><X size={13} /></button> : null}
+      </div>
+      <button type="button" className={filterOpen || from || to ? 'library-filter-trigger is-active' : 'library-filter-trigger'} onClick={() => setFilterOpen((open) => !open)} aria-expanded={filterOpen} aria-controls="batch-date-filter"><FunnelSimple size={15} /><span>日期</span></button>
+    </div>
+    {filterOpen ? <div className="library-filter-panel" id="batch-date-filter">
+      <CalendarBlank size={17} aria-hidden="true" />
+      <label><span>从</span><input type="date" value={from} max={to || undefined} onChange={(event) => setFrom(event.target.value)} /></label>
+      <span className="date-range-separator" aria-hidden="true">—</span>
+      <label><span>至</span><input type="date" value={to} min={from || undefined} onChange={(event) => setTo(event.target.value)} /></label>
+      {from || to ? <button type="button" className="library-clear-dates" onClick={() => { setFrom(''); setTo(''); }}>清除日期</button> : null}
+    </div> : null}
+    {props.batches.length && hasMatches ? <>
+      {groups.recent.length ? <BatchLibraryGroup {...props} batches={groups.recent} recent /> : null}
+      {groups.recent.length && groups.older.length ? <div className="batch-library-divider" role="separator" /> : null}
+      {groups.older.length ? <BatchLibraryGroup {...props} batches={groups.older} recent={false} /> : null}
+    </> : props.batches.length ? <div className="library-empty-filter"><MagnifyingGlass size={20} /><strong>没有符合条件的批次</strong>{hasFilters ? <button type="button" onClick={clearFilters}>清除筛选</button> : null}</div> : <EmptyState title="还没有图片批次" copy="请从 Agent 向 Esse 提交第一个图片任务。" />}
   </section>;
+}
+
+function BatchLibraryGroup(props: {
+  batches: BatchSnapshot[];
+  imagesById: Map<string, SavedImage>;
+  busy: boolean;
+  recent: boolean;
+  onOpen: (id: string) => void;
+  onRetry: (batch: BatchSnapshot, jobIds: string[], includesUnknownCharge: boolean) => Promise<boolean>;
+}) {
+  return <div className={`batch-library-group ${props.recent ? 'is-recent' : ''}`}>
+    <div className="batch-library-grid">{props.batches.map((batch) => <BatchLibraryCard key={batch.id} {...props} batch={batch} />)}</div>
+  </div>;
+}
+
+function BatchLibraryCard(props: {
+  batch: BatchSnapshot;
+  imagesById: Map<string, SavedImage>;
+  busy: boolean;
+  recent: boolean;
+  onOpen: (id: string) => void;
+  onRetry: (batch: BatchSnapshot, jobIds: string[], includesUnknownCharge: boolean) => Promise<boolean>;
+}) {
+  const { batch } = props;
+  const previews = batch.jobs.flatMap((job) => job.outputImageId ? [props.imagesById.get(job.outputImageId)] : []).filter(Boolean) as SavedImage[];
+  const state = batchLibraryState(batch);
+  const progress = batchLibraryProgress(batch);
+  const retrySelection = retryAllFailedSelection(batch);
+  const status = batchLibraryStatusLabel(state);
+  return <article className={`batch-library-card is-${state} ${props.recent ? 'is-recent' : ''}`}>
+    <button type="button" className="batch-library-open" onClick={() => props.onOpen(batch.id)}>
+      <div className={`batch-thumbs count-${Math.min(3, previews.length)}`} style={{ '--batch-progress': `${progress.percent}%` } as React.CSSProperties}>
+        {previews.slice(0, 3).map((image) => <span className="batch-thumb-cell" key={image.id}><img src={image.mediaUrl} alt="" /></span>)}
+        {!previews.length ? <span className="batch-thumb-cell empty-thumb"><ImageSquare size={22} /></span> : null}
+        <span className="batch-state-mask">
+          <span className="batch-state-label">{state === 'active' ? <span className="spinner" /> : state === 'error' ? <WarningCircle size={16} weight="fill" /> : <CheckCircle size={16} weight="fill" />}<strong>{status}</strong></span>
+        </span>
+        <span className="batch-progress-track" aria-hidden="true"><i /></span>
+      </div>
+      <div className="batch-library-copy">
+        <strong title={batch.title}>{batch.title}</strong>
+        <span>{batch.offering.displayName}</span>
+        <div className="batch-progress-copy"><strong>{progress.current} / {progress.total}</strong><span>{status}</span><time dateTime={batch.updatedAt}>{formatLibraryDate(batch.updatedAt)}</time></div>
+      </div>
+    </button>
+    {state === 'error' && retrySelection.jobIds.length ? <button type="button" className="batch-library-retry" disabled={props.busy} onClick={() => void props.onRetry(batch, retrySelection.jobIds, retrySelection.includesUnknownCharge)} aria-label={`重试“${batch.title}”的所有失败任务`} title="重试所有失败任务"><ArrowClockwise size={15} weight="bold" /></button> : null}
+  </article>;
+}
+
+function batchLibraryStatusLabel(state: BatchLibraryState): string {
+  if (state === 'active') return '进行中';
+  if (state === 'error') return '完成有错';
+  return '已完成';
+}
+
+function formatLibraryDate(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const now = new Date();
+  if (date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()) {
+    return `今日 ${date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' })}`;
+  }
+  return date.toLocaleDateString('zh-CN', { year: date.getFullYear() === now.getFullYear() ? undefined : 'numeric', month: 'numeric', day: 'numeric' });
 }
 
 function Settings(props: { state: DesktopState; busy: boolean; apply: (action: () => Promise<DesktopState>, success?: string) => Promise<boolean>; onNotice: (message?: string) => void }) {

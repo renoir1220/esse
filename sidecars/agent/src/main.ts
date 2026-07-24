@@ -140,6 +140,57 @@ function createWindow(): void {
             await new Promise((resolve) => setTimeout(resolve, 250));
           }
           await new Promise((resolve) => setTimeout(resolve, 900));
+          if (qaFixture === 'batch-library') {
+            mainWindow.webContents.send('navigation:requested', { tab: 'batches' });
+            for (let attempt = 0; attempt < 20; attempt += 1) {
+              const ready = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.batch-page'))");
+              if (ready) break;
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            await mainWindow.webContents.executeJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))");
+            for (let attempt = 0; attempt < 20; attempt += 1) {
+              const ready = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.library-page') && Array.from(document.images).every((image) => image.complete && image.naturalWidth > 0))");
+              if (ready) break;
+              await new Promise((resolve) => setTimeout(resolve, 100));
+            }
+            await new Promise((resolve) => setTimeout(resolve, 180));
+            const libraryResult = await mainWindow.webContents.executeJavaScript(`(async () => {
+              const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
+              const filter = document.querySelector('.library-filter-trigger');
+              filter?.click();
+              await settle();
+              const datePanelOpened = Boolean(document.querySelector('.library-filter-panel'));
+              filter?.click();
+              await settle();
+              return {
+                escapeOpened: Boolean(document.querySelector('.library-page')),
+                header: document.querySelector('.header-context > strong')?.textContent,
+                activeCards: document.querySelectorAll('.batch-library-card.is-active').length,
+                errorCards: document.querySelectorAll('.batch-library-card.is-error').length,
+                completeCards: document.querySelectorAll('.batch-library-card.is-complete').length,
+                retryButtons: document.querySelectorAll('.batch-library-retry').length,
+                navSpinner: Boolean(document.querySelector('.nav-shortcut .nav-progress-spinner')),
+                activeProgress: document.querySelector('.batch-library-card.is-active .batch-progress-copy strong')?.textContent?.replaceAll(' ', ''),
+                datePanelOpened,
+                datePanelClosed: !document.querySelector('.library-filter-panel'),
+                fullThumbnails: Array.from(document.querySelectorAll('.batch-thumb-cell img')).every((image) => getComputedStyle(image).objectFit === 'contain'),
+              };
+            })()`);
+            if (
+              !libraryResult.escapeOpened
+              || libraryResult.header !== '浏览批次'
+              || libraryResult.activeCards !== 1
+              || libraryResult.errorCards !== 2
+              || libraryResult.completeCards !== 2
+              || libraryResult.retryButtons !== 2
+              || !libraryResult.navSpinner
+              || libraryResult.activeProgress !== '2/6'
+              || !libraryResult.datePanelOpened
+              || !libraryResult.datePanelClosed
+              || !libraryResult.fullThumbnails
+            ) throw new Error(`Batch library assertion failed: ${JSON.stringify(libraryResult)}`);
+            console.log(`ESSE_QA_LIBRARY=${JSON.stringify(libraryResult)}`);
+          }
           if (process.env.ESSE_QA_SKIP_INTERACTIONS !== '1') {
             const overlayResult = await mainWindow.webContents.executeJavaScript(`(async () => {
             const settle = () => new Promise((resolve) => setTimeout(resolve, 60));
@@ -442,7 +493,9 @@ function requiredId(value: unknown, kind: string): string {
 }
 
 function applyQaFixture(state: DesktopState): DesktopState {
-  if (!qaCapturePath || qaFixture !== 'three-images') return state;
+  if (!qaCapturePath) return state;
+  if (qaFixture === 'batch-library') return batchLibraryQaFixture(state);
+  if (qaFixture !== 'three-images') return state;
   const baseImage = state.images[0];
   const baseBatch = state.batches[0];
   if (!baseImage || !baseBatch || !baseBatch.jobs[0]) return state;
@@ -481,6 +534,115 @@ function applyQaFixture(state: DesktopState): DesktopState {
     updatedAt: now,
   };
   return { ...state, images, batches: [batch], activeBatchId: batch.id };
+}
+
+function batchLibraryQaFixture(state: DesktopState): DesktopState {
+  const offering = state.offerings[0] || WORKBUDDY_AGENT_OFFERING;
+  const now = new Date();
+  const isoAt = (dayOffset: number, hour: number) => {
+    const date = new Date(now);
+    date.setDate(date.getDate() + dayOffset);
+    date.setHours(hour, 24, 0, 0);
+    return date.toISOString();
+  };
+  const palettes = [
+    ['#172a3a', '#5bc0be', 16, 9],
+    ['#efe7da', '#a26769', 3, 4],
+    ['#e8eee9', '#517664', 4, 3],
+    ['#201e50', '#f9d65c', 1, 1],
+    ['#f3e9dc', '#c8553d', 9, 16],
+    ['#263238', '#90a4ae', 16, 10],
+    ['#f3f7f0', '#5b8e7d', 4, 5],
+    ['#221d23', '#d8a7b1', 5, 3],
+    ['#e7ecef', '#274c77', 3, 2],
+  ] as const;
+  const images = palettes.map(([background, foreground, width, height], index) => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width * 100} ${height * 100}"><rect width="100%" height="100%" fill="${background}"/><circle cx="50%" cy="45%" r="22%" fill="${foreground}"/><path d="M18 ${height * 82} L${width * 42} ${height * 38} L${width * 78} ${height * 82}Z" fill="${foreground}" opacity=".62"/></svg>`;
+    return {
+      id: `qa-library-image-${index + 1}`,
+      requestId: `qa-library-request-${index + 1}`,
+      mediaUrl: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+      fileName: `qa-library-${index + 1}.svg`,
+      prompt: `视觉测试图片 ${index + 1}`,
+      model: offering.displayName,
+      createdAt: isoAt(0, 9),
+    };
+  });
+  let imageCursor = 0;
+  const createBatch = (
+    id: string,
+    title: string,
+    updatedAt: string,
+    statuses: Array<'queued' | 'running' | 'succeeded' | 'failed' | 'canceled'>,
+  ) => {
+    const jobs = statuses.map((status, index) => {
+      const image = status === 'succeeded' ? images[imageCursor++ % images.length] : undefined;
+      return {
+        id: `${id}-job-${index + 1}`,
+        index,
+        name: `图${index + 1}`,
+        prompt: `${title}的第 ${index + 1} 张图片`,
+        requestKey: `${id}-request-${index + 1}`,
+        operation: 'generate' as const,
+        status,
+        progress: status === 'succeeded' ? 100 : status === 'running' ? 46 + index * 8 : 0,
+        attempt: status === 'failed' ? 2 : 1,
+        retryable: status === 'failed',
+        chargeState: status === 'failed' ? 'not_charged' as const : status === 'succeeded' ? 'charged' as const : 'not_charged' as const,
+        referenceImageIds: [],
+        ...(image ? { outputImageId: image.id } : {}),
+        backups: [],
+        ...(status === 'failed' ? { error: '网络请求中断，可安全重试。' } : {}),
+        createdAt: updatedAt,
+        ...(status !== 'queued' ? { startedAt: updatedAt } : {}),
+        ...(status === 'succeeded' || status === 'failed' || status === 'canceled' ? { finishedAt: updatedAt } : {}),
+        callHistory: [],
+        offering,
+      };
+    });
+    const count = (status: typeof statuses[number]) => statuses.filter((value) => value === status).length;
+    const queued = count('queued');
+    const running = count('running');
+    const failed = count('failed');
+    const canceled = count('canceled');
+    const succeeded = count('succeeded');
+    return {
+      id,
+      requestKey: `${id}-request`,
+      appendKeys: {},
+      modificationKeys: {},
+      mergeKeys: {},
+      title,
+      prompt: `${title}的图片生成批次`,
+      offering,
+      jobs,
+      createdAt: updatedAt,
+      updatedAt,
+      status: queued + running ? 'running' as const : failed || canceled ? 'partial' as const : 'completed' as const,
+      total: jobs.length,
+      queued,
+      running,
+      succeeded,
+      failed,
+      canceled,
+      estimatedCostMicros: 0,
+    };
+  };
+  const batches = [
+    createBatch('qa-library-active', '夏季新品主视觉', isoAt(0, 11), ['succeeded', 'succeeded', 'running', 'running', 'queued', 'queued']),
+    createBatch('qa-library-clean', '沉默之后电影海报', isoAt(0, 10), ['succeeded', 'succeeded', 'succeeded', 'succeeded']),
+    createBatch('qa-library-error', '东方香氛礼盒', isoAt(0, 9), ['succeeded', 'succeeded', 'succeeded', 'failed', 'canceled']),
+    createBatch('qa-library-older-clean', '春日咖啡节物料', isoAt(-3, 16), ['succeeded', 'succeeded', 'succeeded']),
+    createBatch('qa-library-older-error', '城市夜景概念图', isoAt(-12, 14), ['succeeded', 'failed', 'failed']),
+  ];
+  return {
+    ...state,
+    configured: true,
+    offerings: state.offerings.length ? state.offerings : [offering],
+    images,
+    batches,
+    activeBatchId: batches[0].id,
+  };
 }
 
 function parseQaViewport(value: string | undefined): { width: number; height: number } | undefined {
