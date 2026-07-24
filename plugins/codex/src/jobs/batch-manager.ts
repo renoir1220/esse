@@ -813,7 +813,9 @@ export class BatchManager {
         images,
         size: runtime.size,
         quality: runtime.quality,
-        responseFormat: "url"
+        // This configured relay returns portable image bytes in JSON. Request them directly
+        // instead of relying on a provider-hosted URL that may be private or short-lived.
+        responseFormat: "b64_json"
       });
       const previousOutputs = job.generationInputPaths?.length ? job.generationInputPaths : job.generationInputPath ? [job.generationInputPath] : [];
       job.outputPath = await saveGeneratedImage({

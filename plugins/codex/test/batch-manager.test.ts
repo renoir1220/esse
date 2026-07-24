@@ -41,7 +41,9 @@ test("persistent local batch respects profile concurrency and writes unique outp
     });
     let active = 0;
     let peak = 0;
-    const fetchImpl: typeof fetch = async () => {
+    const responseFormats: unknown[] = [];
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      responseFormats.push((JSON.parse(String(init?.body || "{}")) as { response_format?: unknown }).response_format);
       active += 1;
       peak = Math.max(peak, active);
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -62,6 +64,7 @@ test("persistent local batch respects profile concurrency and writes unique outp
     assert.equal(new Set(completed.jobs.map((job) => job.outputPath)).size, 5);
     assert.equal((await readdir(completed.outputDirectory)).length, 5);
     assert.equal(completed.estimatedCost, 0.175);
+    assert.deepEqual(responseFormats, Array(5).fill("b64_json"));
     for (const job of completed.jobs) {
       assert.equal(job.callHistory?.length, 1);
       assert.equal(job.callHistory?.[0]?.source, "provider");
