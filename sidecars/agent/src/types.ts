@@ -123,7 +123,7 @@ export interface JobBackup {
   createdAt: string;
 }
 
-export type ErrorOrigin = 'upstream' | 'esse';
+export type ErrorOrigin = 'upstream' | 'esse' | 'transport';
 
 export interface JobCallRecord {
   id: string;

@@ -76,9 +76,10 @@ The initial import deliberately excludes the private commercial server, user acc
 
 ## 2026-07-24 — structured error attribution
 
-- Failed jobs and individual call records persist an explicit `upstream` or `esse` error origin instead of relying on message-prefix parsing. Existing records without that field remain readable and are identified as historical errors.
-- Provider HTTP error bodies are preserved as the upstream message without an Esse-owned failure prefix. Transport, response-validation, image-import, and interrupted-process failures are attributed to the Esse-side path; Agent-reported generation failures are upstream.
+- Failed jobs and individual call records persist an explicit `upstream`, `esse`, or `transport` error origin instead of relying on message-prefix parsing. Existing records without that field remain readable and are identified as historical errors.
+- Provider HTTP error bodies are preserved as the upstream message without an Esse-owned failure prefix. Response-validation, image-import, and interrupted-process failures are attributed to the Esse-side path; Agent-reported generation failures are upstream. Requests that never receive an HTTP response are labeled `请求链路`, because neither Esse nor the upstream service can be blamed conclusively from that evidence.
 - Both UIs show a compact source badge beside the error. The Sidecar product profile controls whether Provider identity appears in error surfaces and can redact edition-specific Provider terms from raw upstream messages.
+- Provider and Agent Sidecar image-generation requests now allow up to 15 minutes for queue-heavy models to respond. Connection tests retain their short timeout, and a terminal timeout remains an unknown-result failure that is never retried automatically.
 
 ## Deferred
 

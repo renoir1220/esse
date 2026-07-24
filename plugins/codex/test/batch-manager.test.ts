@@ -352,10 +352,10 @@ test("definitely uncharged failures auto retry three times, while unknown-charge
     assert.equal(failedJob.status, "failed");
     assert.equal(failedJob.chargeState, "unknown");
     assert.equal(failedJob.retryable, true);
-    assert.equal(failedJob.errorOrigin, "esse");
+    assert.equal(failedJob.errorOrigin, "transport");
     assert.equal(unknownCalls, 1);
-    assert.deepEqual(failedJob.callHistory?.map((call) => [call.status, call.chargeState, call.errorOrigin]), [["failed", "unknown", "esse"]]);
-    assert.match(failedJob.callHistory?.[0]?.error || "", /connection dropped/);
+    assert.deepEqual(failedJob.callHistory?.map((call) => [call.status, call.chargeState, call.errorOrigin]), [["failed", "unknown", "transport"]]);
+    assert.match(failedJob.callHistory?.[0]?.error || "", /请求链路/);
     const manualRetry = await unknownManager.retry(unknown.id, [failedJob.id], true);
     assert.equal(onlyJob(manualRetry).attempt, 2);
     const failedAgain = await waitForBatch(unknownManager, unknown.id);

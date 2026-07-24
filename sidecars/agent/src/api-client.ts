@@ -11,6 +11,8 @@ interface ApiImageItem {
   revised_prompt?: string;
 }
 
+export const IMAGE_REQUEST_TIMEOUT_MS = 15 * 60_000;
+
 export interface ApiGenerateResult {
   requestId: string;
   items: ApiImageItem[];
@@ -61,7 +63,11 @@ export class EsseApiClient {
     } catch (error) {
       if (error instanceof EsseApiError) throw error;
       const diagnostic = networkErrorDiagnostic(error);
-      throw new EsseApiError(`Provider 网络请求失败${diagnostic ? `（诊断码：${diagnostic}）` : ''}；此次调用不会自动重试。`, { code: 'network_error', chargeState: 'unknown', origin: 'esse' }, { cause: error });
+      const timedOut = diagnostic === 'TimeoutError' || diagnostic === 'AbortError';
+      const message = timedOut
+        ? `图片服务在 ${IMAGE_REQUEST_TIMEOUT_MS / 60_000} 分钟内未返回${diagnostic ? `（诊断码：${diagnostic}）` : ''}；结果与扣费状态未知，不会自动重试。`
+        : `图片服务请求链路失败${diagnostic ? `（诊断码：${diagnostic}）` : ''}；结果与扣费状态未知，不会自动重试。`;
+      throw new EsseApiError(message, { code: timedOut ? 'request_timeout' : 'network_error', chargeState: 'unknown', origin: 'transport' }, { cause: error });
     }
     const body = await parseResponse(response);
     if (!response.ok) throw providerError(response, body, profile);
@@ -83,7 +89,7 @@ export class EsseApiClient {
         ...(input.size ? { size: input.size } : {}),
         ...(input.quality ? { quality: input.quality } : {}),
       }),
-      signal: AbortSignal.timeout(300_000),
+      signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
     });
   }
 
@@ -93,7 +99,7 @@ export class EsseApiClient {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, response_format: 'b64_json', size: input.size, quality: input.quality }),
-        signal: AbortSignal.timeout(300_000),
+        signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
       });
     }
     const form = new FormData();
@@ -112,7 +118,7 @@ export class EsseApiClient {
       method: 'POST',
       headers: { authorization: `Bearer ${apiKey}` },
       body: form,
-      signal: AbortSignal.timeout(300_000),
+      signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
     });
   }
 }

@@ -1,5 +1,5 @@
 import type { GenerateRequest, GenerateResult, ProviderAdapter } from "../types.js";
-import { extractImageResult, normalizeTransportError, parseResponse, providerError, requestId, type FetchLike } from "./http.js";
+import { extractImageResult, IMAGE_REQUEST_TIMEOUT_MS, normalizeTransportError, parseResponse, providerError, requestId, type FetchLike } from "./http.js";
 
 export class TuziJsonImagesAdapter implements ProviderAdapter {
   readonly id = "tuzi-json-images" as const;
@@ -15,7 +15,7 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
     if (request.images.length) body.image = request.images;
     if (request.size) body.size = request.size;
     if (request.quality) body.quality = request.quality;
-    const timeout = AbortSignal.timeout(this.options.timeoutMs ?? 240_000);
+    const timeout = AbortSignal.timeout(this.options.timeoutMs ?? IMAGE_REQUEST_TIMEOUT_MS);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     try {
       const response = await (this.options.fetchImpl ?? fetch)(`${this.options.baseUrl}/v1/images/generations`, {

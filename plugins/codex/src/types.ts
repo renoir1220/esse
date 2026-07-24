@@ -7,7 +7,7 @@ export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "cancele
 export type JobCallStatus = "running" | "succeeded" | "failed" | "canceled";
 export type BatchStatus = "queued" | "running" | "completed" | "partial" | "failed" | "canceled";
 export type ChargeState = "not_charged" | "charged" | "unknown";
-export type ErrorOrigin = "upstream" | "esse";
+export type ErrorOrigin = "upstream" | "esse" | "transport";
 
 export interface PriceConfig {
   mode: PriceMode;

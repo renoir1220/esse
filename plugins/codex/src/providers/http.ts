@@ -2,6 +2,8 @@ import { ProviderRequestError, type ChargeState, type GenerateResult } from "../
 
 export type FetchLike = (input: string | URL | Request, init?: RequestInit) => Promise<Response>;
 
+export const IMAGE_REQUEST_TIMEOUT_MS = 15 * 60_000;
+
 const MAX_SUCCESS_RESPONSE_BYTES = 82 * 1024 * 1024;
 const MAX_ERROR_RESPONSE_BYTES = 1024 * 1024;
 
@@ -55,12 +57,35 @@ export function providerError(response: Response, body: unknown): ProviderReques
 
 export function normalizeTransportError(error: unknown): ProviderRequestError {
   if (error instanceof ProviderRequestError) return error;
-  const message = error instanceof Error ? error.message : "Unknown transport error";
-  return new ProviderRequestError(`Provider transport failed: ${sanitize(message)}`, {
+  const diagnostic = transportErrorDiagnostic(error);
+  const timedOut = diagnostic === "TimeoutError";
+  const message = timedOut
+    ? `图片服务在 ${IMAGE_REQUEST_TIMEOUT_MS / 60_000} 分钟内未返回（诊断码：${diagnostic}）；结果与扣费状态未知，不会自动重试。`
+    : `图片服务请求链路失败${diagnostic ? `（诊断码：${diagnostic}）` : ""}；结果与扣费状态未知，不会自动重试。`;
+  return new ProviderRequestError(message, {
     retryable: true,
     chargeState: "unknown",
-    origin: "esse"
+    origin: "transport"
   });
+}
+
+function transportErrorDiagnostic(error: unknown): string | undefined {
+  const pending = [error];
+  const visited = new Set<unknown>();
+  while (pending.length) {
+    const candidate = pending.shift();
+    if (!candidate || visited.has(candidate)) continue;
+    visited.add(candidate);
+    if (!(candidate instanceof Error)) continue;
+    const record = candidate as Error & { code?: unknown; cause?: unknown; errors?: unknown };
+    if (typeof record.code === "string" && /^[A-Z][A-Z0-9_]{1,63}$/.test(record.code)) return record.code;
+    const chromiumCode = /\bnet::(ERR_[A-Z0-9_]+)\b/.exec(candidate.message)?.[1];
+    if (chromiumCode) return chromiumCode;
+    if (record.cause) pending.push(record.cause);
+    if (Array.isArray(record.errors)) pending.push(...record.errors);
+    if (candidate.name === "TimeoutError" || candidate.name === "AbortError") return candidate.name;
+  }
+  return undefined;
 }
 
 export function extractImageResult(body: unknown): GenerateResult {

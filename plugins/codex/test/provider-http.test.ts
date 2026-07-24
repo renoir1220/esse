@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { extractImageResult, normalizeTransportError, parseResponse, providerError } from "../src/providers/http.js";
+import { extractImageResult, IMAGE_REQUEST_TIMEOUT_MS, normalizeTransportError, parseResponse, providerError } from "../src/providers/http.js";
 import { ProviderRequestError } from "../src/types.js";
 
 test("Provider response parsing stops oversized error bodies", async () => {
@@ -34,9 +34,17 @@ test("Provider errors preserve upstream text without an Esse-owned prefix", () =
   assert.equal(error.details.requestId, "request-1");
 });
 
-test("transport errors are attributed to the Esse-side request path", () => {
-  const error = normalizeTransportError(new Error("connection dropped"));
-  assert.equal(error.details.origin, "esse");
+test("transport errors are not attributed conclusively to Esse or the upstream service", () => {
+  const error = normalizeTransportError(Object.assign(new Error("connection dropped"), { code: "ETIMEDOUT" }));
+  assert.equal(error.details.origin, "transport");
+  assert.match(error.message, /ETIMEDOUT/);
+});
+
+test("image requests allow queue-heavy models up to fifteen minutes", () => {
+  assert.equal(IMAGE_REQUEST_TIMEOUT_MS, 900_000);
+  const error = normalizeTransportError(new DOMException("The operation was aborted due to timeout", "TimeoutError"));
+  assert.equal(error.details.origin, "transport");
+  assert.match(error.message, /15 分钟内未返回/);
 });
 
 test("Provider image parsing accepts data-image URLs returned by compatible relays", () => {

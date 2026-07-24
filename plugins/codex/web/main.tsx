@@ -1480,6 +1480,7 @@ function jobStatusLabel(job: JobSnapshot): string {
 function errorOriginLabel(origin: JobSnapshot["errorOrigin"], source: "provider" | "agent", providerName?: string): string {
   if (!origin) return "历史错误";
   if (origin === "esse") return "Esse 侧错误";
+  if (origin === "transport") return "请求链路";
   if (source === "agent") return "上游 Agent";
   return providerName ? `上游图片服务 · ${providerName}` : "上游图片服务";
 }
