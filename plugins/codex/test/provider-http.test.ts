@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { parseResponse } from "../src/providers/http.js";
+import { extractImageResult, parseResponse } from "../src/providers/http.js";
 import { ProviderRequestError } from "../src/types.js";
 
 test("Provider response parsing stops oversized error bodies", async () => {
@@ -21,4 +21,14 @@ test("Provider response parsing rejects an oversized declared body before readin
     headers: { "content-length": String(82 * 1024 * 1024 + 1) }
   });
   await assert.rejects(parseResponse(response), /exceeds the allowed size/);
+});
+
+test("Provider image parsing accepts data-image URLs returned by compatible relays", () => {
+  const result = extractImageResult({ data: [{ url: "data:image/webp;base64,AAECAw==" }] });
+  assert.deepEqual(result, { b64Json: "AAECAw==", mimeType: "image/webp", outputUrl: undefined });
+});
+
+test("Provider image parsing prefers base64 over a non-HTTP relay URL", () => {
+  const result = extractImageResult({ data: [{ url: "/generated/image.png", b64_json: "AAECAw==" }] });
+  assert.deepEqual(result, { b64Json: "AAECAw==", mimeType: "image/png", outputUrl: undefined });
 });
