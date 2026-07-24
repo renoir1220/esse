@@ -3,8 +3,15 @@ import { describe, expect, it } from 'vitest';
 import { resolveMacosSigning } from './macos-signing';
 
 describe('resolveMacosSigning', () => {
-  it('allows unsigned local development builds', () => {
-    expect(resolveMacosSigning({})).toEqual({ packager: {} });
+  it('fully ad-hoc signs builds when Developer ID credentials are absent', () => {
+    expect(resolveMacosSigning({})).toEqual({
+      packager: {
+        osxSign: {
+          identity: '-',
+          identityValidation: false,
+        },
+      },
+    });
   });
 
   it('configures Developer ID signing and API-key notarization', () => {

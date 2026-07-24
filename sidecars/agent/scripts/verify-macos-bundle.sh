@@ -50,10 +50,22 @@ require_square_icon_size 256 "$iconset"
 require_square_icon_size 1024 "$iconset"
 printf 'Verified Esse icon frames at 16px, 256px, and 1024px.\n'
 
+/usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
+signature_details="$(/usr/bin/codesign -dvvv "$app" 2>&1)"
 if test "$require_signed" = "--require-signed"; then
-  /usr/bin/codesign --verify --deep --strict --verbose=2 "$app"
+  if printf '%s\n' "$signature_details" | /usr/bin/grep -q '^Signature=adhoc$'; then
+    echo "Expected a Developer ID signature, got an ad-hoc signature." >&2
+    exit 1
+  fi
   /usr/sbin/spctl --assess --type execute --verbose=2 "$app"
   /usr/bin/xcrun stapler validate "$app"
+  printf 'Verified Developer ID signature, Gatekeeper assessment, and notarization ticket.\n'
+else
+  if ! printf '%s\n' "$signature_details" | /usr/bin/grep -q '^Signature=adhoc$'; then
+    echo "Expected a structurally valid ad-hoc signature when Developer ID credentials are absent." >&2
+    exit 1
+  fi
+  printf 'Verified structurally valid ad-hoc signature.\n'
 fi
 
 smoke_root="$(mktemp -d)"

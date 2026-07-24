@@ -40,7 +40,7 @@ The initial import deliberately excludes the private commercial server, user acc
 
 - Windows x64 and macOS arm64/x64 now package the same Sidecar source and runtime core; only paths, native window behavior, signing/notarization, and installer artifacts vary by platform.
 - macOS keeps the native title bar and application menu, stays active after the last window closes, uses Keychain-backed Electron safe storage, and stores data under `~/Library/Application Support/esse-agent-sidecar`.
-- The macOS release pipeline builds architecture-specific DMGs and checks bundle IDs, Mach-O architecture, bundled Esse icon resources, and packaged-app startup. It verifies Developer ID signing and Apple notarization when credentials are configured, or verifies and discloses unsigned artifacts when they are absent.
+- The macOS release pipeline builds architecture-specific DMGs and checks bundle IDs, Mach-O architecture, bundled Esse icon resources, and packaged-app startup. It verifies Developer ID signing and Apple notarization when credentials are configured. Without those credentials, Packager replaces the fuse tool's temporary signature with a complete ad-hoc signature after the bundle is finalized, and CI rejects any corrupted or non-ad-hoc result. This mode is still disclosed as lacking publisher identity and notarization.
 - The Windows Squirrel application ID no longer owns `%LOCALAPPDATA%\esse`, preventing the installer from deleting Codex Plugin history. The installer root, Plugin data, and Sidecar data now have three distinct identities.
 - Windows executable, installer, runtime title bar, macOS app bundle, and DMG all use the Esse application icon rather than Electron defaults.
 

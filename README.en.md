@@ -42,7 +42,7 @@ The directories are intentionally isolated, and the Sidecar installer never owns
 
 ## Code signing
 
-Agent Sidecar signing status follows the public [Code signing policy](CODE_SIGNING.md). Signing credentials are not currently a release prerequisite. When credentials are absent, CI explicitly verifies that artifacts are unsigned and the GitHub Release discloses that status. Windows may show unknown-publisher or SmartScreen warnings, and macOS Gatekeeper may reject an unsigned app. A verified checksum is not a publisher signature, and users must never be asked to disable platform security.
+Agent Sidecar signing status follows the public [Code signing policy](CODE_SIGNING.md). Publisher-signing credentials are not currently a release prerequisite. When credentials are absent, CI explicitly verifies unsigned Windows artifacts and structurally valid ad-hoc macOS app signatures; the GitHub Release discloses that neither establishes publisher identity. Windows may show unknown-publisher or SmartScreen warnings, and macOS Gatekeeper may reject an app without Developer ID signing and notarization. A verified checksum or ad-hoc signature is not a publisher signature, and users must never be asked to disable platform security.
 
 ## Repository layout
 

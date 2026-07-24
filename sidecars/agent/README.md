@@ -35,6 +35,6 @@ npm run "make:macos:$arch"
 bash scripts/verify-macos-bundle.sh "$arch"
 ```
 
-Local builds may be unsigned for development. A GitHub Release build must configure `MACOS_SIGN_IDENTITY` plus the three `MACOS_NOTARY_API_*` values, then pass the strict bundle signature, Gatekeeper, notarization-ticket, icon, architecture, and packaged-app smoke checks. User data is stored in `~/Library/Application Support/esse-community`; API keys and the MCP pairing token use Electron `safeStorage` backed by macOS Keychain.
+Builds without Developer ID credentials are fully ad-hoc signed after Electron fuses and bundle metadata are finalized, then must pass strict structural signature, icon, architecture, and packaged-app smoke checks. This prevents a corrupted temporary fuse signature from reaching users, but it is not publisher identity or Apple notarization and cannot provide a stable identity across versions. A trusted GitHub Release build must configure `MACOS_SIGN_IDENTITY` plus the three `MACOS_NOTARY_API_*` values and additionally pass Gatekeeper and notarization-ticket checks. User data is stored in `~/Library/Application Support/esse-community`; API keys and the MCP pairing token use Electron `safeStorage` backed by macOS Keychain.
 
 Use `npm start` only for development debugging. Do not commit `out/`, `.vite/`, `node_modules/`, local Provider settings, credentials, inputs, outputs, or QA captures.

@@ -82,7 +82,7 @@ Run the checksum-verified `.exe` installer. The release notes disclose whether t
 
 ### macOS arm64 and x64
 
-Open the checksum-verified `.dmg`, drag `Esse Community.app` into Applications, and open it normally. The release notes disclose whether the app is Developer ID-signed, notarized by Apple, and contains a stapled ticket. An unsigned release may be rejected by Gatekeeper; if that happens, stop and report the exact error. Never remove quarantine attributes, disable Gatekeeper, or instruct the user to choose an override.
+Open the checksum-verified `.dmg`, drag `Esse Community.app` into Applications, and open it normally. The release notes disclose whether the app is Developer ID-signed, notarized by Apple, and contains a stapled ticket. An ad-hoc signed release without Developer ID signing and notarization may still be rejected by Gatekeeper; if that happens, stop and report the exact error. Never remove quarantine attributes, disable Gatekeeper, or instruct the user to choose an override.
 
 After installation, the user opens Esse Community and completes setup inside its settings page:
 

@@ -23,7 +23,20 @@ export function resolveMacosSigning(env: NodeJS.ProcessEnv = process.env): Resol
   if (hasNotaryValue && !identity) {
     throw new Error('macOS notarization requires MACOS_SIGN_IDENTITY.');
   }
-  if (!identity) return { packager: {} };
+  if (!identity) {
+    return {
+      packager: {
+        // FusesPlugin changes the Electron executable before Packager's signing
+        // phase. Ask Packager to replace its temporary signature after all bundle
+        // paths and metadata are final, otherwise macOS can see a corrupted
+        // signature and refuse Keychain-backed safeStorage access.
+        osxSign: {
+          identity: '-',
+          identityValidation: false,
+        },
+      },
+    };
+  }
 
   return {
     identity,
