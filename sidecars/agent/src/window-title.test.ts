@@ -7,7 +7,7 @@ const renderer = fs.readFileSync(path.resolve(import.meta.dirname, 'renderer.tsx
 
 describe('product window title', () => {
   it('includes the edition profile and installed version', () => {
-    expect(formatWindowTitle('Esse Community', '0.3.2')).toBe('Esse Community 0.3.2');
+    expect(formatWindowTitle('Esse Community', '0.3.3-alpha.1')).toBe('Esse Community 0.3.3-alpha.1');
     expect(formatWindowTitle('Esse', '1.0.2')).toBe('Esse 1.0.2');
   });
 
