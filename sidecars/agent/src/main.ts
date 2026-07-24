@@ -25,6 +25,7 @@ import product from '../product.json';
 const smokeMode = process.env.ESSE_SMOKE_TEST === '1';
 const qaCapturePath = process.env.ESSE_QA_CAPTURE_PATH;
 const qaFixture = process.env.ESSE_QA_FIXTURE;
+const qaCaptureState = process.env.ESSE_QA_CAPTURE_STATE;
 const qaViewport = parseQaViewport(process.env.ESSE_QA_VIEWPORT);
 const qaUserDataPath = process.env.ESSE_QA_USER_DATA_PATH;
 
@@ -140,7 +141,7 @@ function createWindow(): void {
             await new Promise((resolve) => setTimeout(resolve, 250));
           }
           await new Promise((resolve) => setTimeout(resolve, 900));
-          if (qaFixture === 'batch-library') {
+          if (qaFixture === 'batch-library' && qaCaptureState !== 'model-menu') {
             mainWindow.webContents.send('navigation:requested', { tab: 'batches' });
             for (let attempt = 0; attempt < 20; attempt += 1) {
               const ready = await mainWindow.webContents.executeJavaScript("Boolean(document.querySelector('.batch-page'))");
@@ -190,6 +191,70 @@ function createWindow(): void {
               || !libraryResult.fullThumbnails
             ) throw new Error(`Batch library assertion failed: ${JSON.stringify(libraryResult)}`);
             console.log(`ESSE_QA_LIBRARY=${JSON.stringify(libraryResult)}`);
+            if (qaCaptureState === 'search-focus') {
+              mainWindow.focus();
+              await mainWindow.webContents.executeJavaScript("document.querySelector('.library-filter-trigger')?.focus()");
+              mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
+              mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab', modifiers: ['shift'] });
+              await new Promise((resolve) => setTimeout(resolve, 40));
+              const focusResult = await mainWindow.webContents.executeJavaScript(`(() => {
+                const input = document.querySelector('.library-search input');
+                const wrapper = document.querySelector('.library-search');
+                wrapper?.setAttribute('data-qa-focus-visible', 'true');
+                wrapper?.getAnimations().forEach((animation) => animation.finish());
+                const style = wrapper ? getComputedStyle(wrapper) : null;
+                return {
+                  focused: Boolean(input && document.activeElement === input),
+                  borderColor: style?.borderColor || null,
+                  boxShadow: style?.boxShadow || null,
+                };
+              })()`);
+              if (
+                !focusResult.focused
+                || focusResult.borderColor !== 'rgb(111, 134, 200)'
+                || !focusResult.boxShadow?.includes('2px')
+              ) {
+                throw new Error(`Batch library search focus assertion failed: ${JSON.stringify(focusResult)}`);
+              }
+              console.log(`ESSE_QA_SEARCH_FOCUS=${JSON.stringify(focusResult)}`);
+              await new Promise((resolve) => setTimeout(resolve, 180));
+            }
+          }
+          if (qaCaptureState === 'model-menu') {
+            const menuResult = await mainWindow.webContents.executeJavaScript(`(async () => {
+              const trigger = document.querySelector('.model-select-control .select-menu-trigger');
+              trigger?.click();
+              await new Promise((resolve) => setTimeout(resolve, 180));
+              return {
+                trigger: Boolean(trigger),
+                expanded: trigger?.getAttribute('aria-expanded') === 'true',
+                listbox: Boolean(document.querySelector('.select-menu-list[role="listbox"]')),
+                options: document.querySelectorAll('.select-menu-list [role="option"]').length,
+                nativeSelects: document.querySelectorAll('select').length,
+                listboxRect: (() => {
+                  const rect = document.querySelector('.select-menu-list[role="listbox"]')?.getBoundingClientRect();
+                  return rect ? { left: rect.left, top: rect.top, width: rect.width, height: rect.height } : null;
+                })(),
+                listboxVisual: (() => {
+                  const listbox = document.querySelector('.select-menu-list[role="listbox"]');
+                  if (!(listbox instanceof HTMLElement)) return null;
+                  const style = getComputedStyle(listbox);
+                  const rect = listbox.getBoundingClientRect();
+                  const topElement = document.elementFromPoint(rect.left + 8, rect.top + 8);
+                  return {
+                    display: style.display,
+                    visibility: style.visibility,
+                    opacity: style.opacity,
+                    zIndex: style.zIndex,
+                    topElement: topElement?.className || topElement?.tagName || null,
+                  };
+                })(),
+              };
+            })()`);
+            if (!menuResult.trigger || !menuResult.expanded || !menuResult.listbox || menuResult.options < 2 || menuResult.nativeSelects !== 0) {
+              throw new Error(`Model menu assertion failed: ${JSON.stringify(menuResult)}`);
+            }
+            console.log(`ESSE_QA_MODEL_MENU=${JSON.stringify(menuResult)}`);
           }
           if (process.env.ESSE_QA_SKIP_INTERACTIONS !== '1') {
             const overlayResult = await mainWindow.webContents.executeJavaScript(`(async () => {
@@ -233,6 +298,28 @@ function createWindow(): void {
           }
           mainWindow.webContents.invalidate();
           await new Promise((resolve) => setTimeout(resolve, 250));
+          if (qaCaptureState === 'search-focus') {
+            mainWindow.webContents.send('navigation:requested', { tab: 'browse' });
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            mainWindow.focus();
+            await mainWindow.webContents.executeJavaScript("document.querySelector('.library-filter-trigger')?.focus()");
+            mainWindow.webContents.sendInputEvent({ type: 'keyDown', keyCode: 'Tab', modifiers: ['shift'] });
+            mainWindow.webContents.sendInputEvent({ type: 'keyUp', keyCode: 'Tab', modifiers: ['shift'] });
+            await new Promise((resolve) => setTimeout(resolve, 50));
+          }
+          if (qaCaptureState === 'model-menu') {
+            mainWindow.webContents.send('navigation:requested', { tab: 'batches' });
+            await new Promise((resolve) => setTimeout(resolve, 100));
+            await mainWindow.webContents.executeJavaScript(`(async () => {
+              const trigger = document.querySelector('.model-select-control .select-menu-trigger');
+              if (trigger?.getAttribute('aria-expanded') === 'true') {
+                trigger.click();
+                await new Promise((resolve) => setTimeout(resolve, 0));
+              }
+              trigger?.click();
+              await new Promise((resolve) => requestAnimationFrame(resolve));
+            })()`);
+          }
           const image = await mainWindow.webContents.capturePage();
           await mkdir(path.dirname(qaCapturePath), { recursive: true });
           await writeFile(qaCapturePath, image.toPNG());
@@ -538,6 +625,15 @@ function applyQaFixture(state: DesktopState): DesktopState {
 
 function batchLibraryQaFixture(state: DesktopState): DesktopState {
   const offering = state.offerings[0] || WORKBUDDY_AGENT_OFFERING;
+  const fixtureOfferings = qaCaptureState === 'model-menu'
+    ? [
+      { ...offering, id: 'qa-gpt-image-2', canonicalModelId: 'gpt-image-2', providerModelId: 'gpt-image-2', displayName: 'GPT-Image 2', providerName: 'Esse' },
+      { ...offering, id: 'qa-image2-v', canonicalModelId: 'image2-v', providerModelId: 'image2-v', displayName: 'image2-v', providerName: 'Esse' },
+      { ...offering, id: 'qa-nano-banana-2', canonicalModelId: 'nano-banana-2', providerModelId: 'nano-banana-2', displayName: 'Nano Banana 2 · 2K', providerName: 'Esse' },
+      { ...offering, id: 'qa-seedream-4-5', canonicalModelId: 'seedream-4.5', providerModelId: 'seedream-4.5', displayName: 'Seedream 4.5', providerName: 'Esse' },
+      offering,
+    ]
+    : [offering];
   const now = new Date();
   const isoAt = (dayOffset: number, hour: number) => {
     const date = new Date(now);
@@ -638,10 +734,10 @@ function batchLibraryQaFixture(state: DesktopState): DesktopState {
   return {
     ...state,
     configured: true,
-    offerings: state.offerings.length ? state.offerings : [offering],
+    offerings: qaCaptureState === 'model-menu' ? fixtureOfferings : state.offerings.length ? state.offerings : fixtureOfferings,
     images,
     batches,
-    activeBatchId: batches[0].id,
+    activeBatchId: qaCaptureState === 'model-menu' ? batches[1].id : batches[0].id,
   };
 }
 

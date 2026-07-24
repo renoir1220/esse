@@ -36,6 +36,7 @@ import { initialImageZoom, zoomImageAtPoint } from './image-zoom';
 import { shouldDismissOverlay } from './overlay-dismiss';
 import { PENDING_TASK_HOVER_DELAY_MS, pendingTaskPeekPosition, type PeekPosition } from './pending-task-peek';
 import { blankOffering, createCustomProviderDraft, createTuziProviderDraft, offeringFromTuziModel, TUZI_PROVIDER_PRESETS, tuziProviderPresetForDraft } from './provider-catalog';
+import { SelectMenu } from './select-menu';
 import type { BatchSnapshot, DesktopState, ImageMetadata, OfferingConfig, OfferingSummary, ProviderDraft, ProviderProfile, SavedImage, SaveProviderInput } from './types';
 import { formatWindowTitle } from './window-title';
 import packageMetadata from '../package.json';
@@ -372,7 +373,15 @@ function BatchWorkspace(props: {
         }
       }} placeholder={selectable.length > 1 && !targetIds.length ? '双击选择想要编辑的图片' : '描述你想如何修改图片'} maxLength={20_000} />
       <div className="modify-toolbar">
-        <label className="model-select"><Lightning size={14} weight="fill" /><select value={offeringId} onChange={(event) => setOfferingId(event.target.value)}>{props.offerings.map((item) => <option key={item.id} value={item.id}>{item.displayName} · {item.providerName}</option>)}</select><CaretDown size={12} /></label>
+        <SelectMenu
+          className="model-select-control"
+          value={offeringId}
+          options={props.offerings.map((item) => ({ value: item.id, label: item.displayName }))}
+          onChange={setOfferingId}
+          ariaLabel={`选择修改模型，当前 ${offering.displayName}`}
+          placement="top"
+          leading={<Lightning size={14} weight="fill" />}
+        />
         <div className="composer-actions">
           {active ? <button type="button" className="subtle-button" disabled={props.busy || !batch.queued} onClick={() => void props.onCancel()}>取消排队</button> : null}
           <button className="primary-button" disabled={props.busy || !prompt.trim() || !targetIds.length}>提交修改</button>
@@ -681,14 +690,40 @@ function Settings(props: { state: DesktopState; busy: boolean; apply: (action: (
   return <section className="provider-settings-layout">
     <div className="default-model-panel">
       <div><strong>默认模型</strong><span>Agent 未明确指定模型时使用</span></div>
-      <select value={props.state.defaultOfferingId || ''} disabled={!availableOfferings.length || props.busy} onChange={(event) => void props.apply(() => window.esse.setDefaultOffering(event.target.value), '默认模型已更新')}>
-        {!props.state.defaultOfferingId ? <option value="">请选择默认模型</option> : null}
-        {availableOfferings.map((offering) => <option key={offering.id} value={offering.id}>{offering.displayName} · {offering.providerType === 'agent-generation' ? offering.providerName : `${offering.providerName}/${offering.tierName}`}</option>)}
-      </select>
+      <SelectMenu
+        className="settings-model-select"
+        value={props.state.defaultOfferingId || ''}
+        options={availableOfferings.map((offering) => ({
+          value: offering.id,
+          label: offering.displayName,
+          description: offering.providerType === 'agent-generation' ? offering.providerName : `${offering.providerName} / ${offering.tierName}`,
+        }))}
+        placeholder="请选择默认模型"
+        ariaLabel="选择默认模型"
+        disabled={!availableOfferings.length || props.busy}
+        onChange={(value) => void props.apply(() => window.esse.setDefaultOffering(value), '默认模型已更新')}
+      />
     </div>
 
     <aside className="provider-list">
-      <div className="provider-list-heading"><strong>Provider</strong><label className="compact-add"><Plus size={14} /><select value="" aria-label="添加 Provider" onChange={(event) => { if (event.target.value) startDraft(event.target.value); event.target.value = ''; }}><option value="">添加</option>{TUZI_PROVIDER_PRESETS.map((preset) => <option key={preset.id} value={preset.id} disabled={configuredPresetIds.has(preset.id)}>{preset.label}{configuredPresetIds.has(preset.id) ? '（已配置）' : ''}</option>)}<option value="custom">自定义</option></select></label></div>
+      <div className="provider-list-heading"><strong>Provider</strong><SelectMenu
+        className="compact-select"
+        value=""
+        placeholder="添加"
+        ariaLabel="添加 Provider"
+        align="end"
+        leading={<Plus size={14} />}
+        options={[
+          ...TUZI_PROVIDER_PRESETS.map((preset) => ({
+            value: preset.id,
+            label: preset.label,
+            disabled: configuredPresetIds.has(preset.id),
+            description: configuredPresetIds.has(preset.id) ? '已配置' : undefined,
+          })),
+          { value: 'custom', label: '自定义' },
+        ]}
+        onChange={startDraft}
+      /></div>
       {!props.state.providers.length ? <div className="empty-mini">尚未配置 Provider</div> : null}
       {props.state.providers.map((profile) => <button key={profile.id} className={`provider-item ${draft.id === profile.id ? 'is-active' : ''}`} onClick={() => { setDraft(providerDraftFromProfile(profile)); setModels([]); setConfirmDelete(false); }}><span className="provider-avatar">{profile.displayName.slice(0, 1)}</span><span><strong>{profile.displayName}</strong><small>{profile.tierName} · {adapterDisplayName(profile.adapterId)}</small></span><i className={profile.hasApiKey ? 'status-ok' : 'status-missing'} /></button>)}
       <div className="secure-note"><LockSimple size={14} /><span>{props.state.secureStorage}</span></div>
@@ -702,19 +737,35 @@ function Settings(props: { state: DesktopState; busy: boolean; apply: (action: (
         <Field label="服务商名称"><input value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
         <Field label="档位名称"><input value={draft.tierName} onChange={(event) => setDraft({ ...draft, tierName: event.target.value })} /></Field>
         <Field label="API 地址" wide><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} /></Field>
-        <Field label="接口格式"><select value={draft.adapterId} onChange={(event) => setDraft({ ...draft, adapterId: event.target.value as ProviderDraft['adapterId'] })}><option value="tuzi-json-images">兔子 JSON Images</option><option value="openai-images">OpenAI Images</option></select></Field>
+        <SelectField label="接口格式"><SelectMenu value={draft.adapterId} ariaLabel="选择接口格式" options={[{ value: 'tuzi-json-images', label: '兔子 JSON Images' }, { value: 'openai-images', label: 'OpenAI Images' }]} onChange={(value) => setDraft({ ...draft, adapterId: value as ProviderDraft['adapterId'] })} /></SelectField>
         <Field label="并发数"><input type="number" min="1" max="12" value={draft.concurrency} onChange={(event) => setDraft({ ...draft, concurrency: Number(event.target.value) })} /></Field>
         <Field label="API Key" wide hint={draft.hasApiKey ? '留空保留现有密钥' : '只保存在当前系统用户的安全存储中'}><div className="secret-input"><input type="password" autoComplete="off" placeholder={draft.hasApiKey ? '•••••••• 已安全保存' : '粘贴 API Key'} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} /><button type="button" onClick={() => void test()} disabled={Boolean(busyAction) || !draft.baseUrl || (!draft.hasApiKey && !draft.apiKey.trim())}>{busyAction === 'test' ? '测试中…' : '测试连接'}</button></div></Field>
       </div></section>
 
       {models.length && !activePreset ? <div className="models-found"><strong>已发现模型</strong><div>{models.slice(0, 20).map((model) => <button key={model} onClick={() => updateOffering(0, { providerModelId: model, canonicalModelId: model, displayName: model })}>{model}</button>)}</div></div> : null}
 
-      <section className="provider-form-section models-section"><div className="offerings-heading"><span><strong>模型</strong>{activePreset ? <small>价格仅供参考</small> : null}</span><label className="compact-add"><Plus size={14} /><select value="" aria-label="添加模型" onChange={(event) => { if (event.target.value) addOffering(event.target.value); event.target.value = ''; }}><option value="">添加</option>{activePreset?.models.map((model) => <option key={model.catalogId} value={model.catalogId} disabled={draft.offerings.some((offering) => offering.providerModelId === model.providerModelId)}>{model.displayName}</option>)}<option value="custom">自定义</option></select></label></div>
+      <section className="provider-form-section models-section"><div className="offerings-heading"><span><strong>模型</strong>{activePreset ? <small>价格仅供参考</small> : null}</span><SelectMenu
+        className="compact-select"
+        value=""
+        placeholder="添加"
+        ariaLabel="添加模型"
+        align="end"
+        leading={<Plus size={14} />}
+        options={[
+          ...(activePreset?.models.map((model) => ({
+            value: model.catalogId,
+            label: model.displayName,
+            disabled: draft.offerings.some((offering) => offering.providerModelId === model.providerModelId),
+          })) || []),
+          { value: 'custom', label: '自定义' },
+        ]}
+        onChange={addOffering}
+      /></div>
         <div className="offering-list">{draft.offerings.map((offering, index) => <article className="offering-editor" key={offering.id || index}><span className="offering-number">{String(index + 1).padStart(2, '0')}</span><div className="offering-fields">
           <Field label="显示名称"><input value={offering.displayName} onChange={(event) => updateOffering(index, { displayName: event.target.value })} /></Field>
           <Field label="服务商模型 ID"><input value={offering.providerModelId} onChange={(event) => updateOffering(index, { providerModelId: event.target.value })} /></Field>
           <Field label="标准模型 ID"><input value={offering.canonicalModelId} onChange={(event) => updateOffering(index, { canonicalModelId: event.target.value })} /></Field>
-          <Field label="计费"><div className="price-row"><select value={offering.price.mode} onChange={(event) => updateOffering(index, { price: { ...offering.price, mode: event.target.value as OfferingConfig['price']['mode'] } })}><option value="per_request">按次</option><option value="token">按 Token</option><option value="unknown">未知</option></select><input type="number" step="0.001" placeholder="价格" value={offering.price.amount ?? ''} onChange={(event) => updateOffering(index, { price: { ...offering.price, amount: event.target.value ? Number(event.target.value) : undefined } })} /><input className="currency" value={offering.price.currency} onChange={(event) => updateOffering(index, { price: { ...offering.price, currency: event.target.value } })} /></div></Field>
+          <SelectField label="计费"><div className="price-row"><SelectMenu value={offering.price.mode} ariaLabel={`选择模型 ${index + 1} 的计费方式`} options={[{ value: 'per_request', label: '按次' }, { value: 'token', label: '按 Token' }, { value: 'unknown', label: '未知' }]} onChange={(value) => updateOffering(index, { price: { ...offering.price, mode: value as OfferingConfig['price']['mode'] } })} /><input type="number" step="0.001" placeholder="价格" aria-label={`模型 ${index + 1} 的价格`} value={offering.price.amount ?? ''} onChange={(event) => updateOffering(index, { price: { ...offering.price, amount: event.target.value ? Number(event.target.value) : undefined } })} /><input className="currency" aria-label={`模型 ${index + 1} 的币种`} value={offering.price.currency} onChange={(event) => updateOffering(index, { price: { ...offering.price, currency: event.target.value } })} /></div></SelectField>
         </div>{draft.offerings.length > 1 ? <button className="remove-offering" onClick={() => setDraft((current) => ({ ...current, offerings: current.offerings.filter((_, offeringIndex) => offeringIndex !== index) }))}><Trash size={14} /></button> : null}</article>)}</div>
       </section>
       <footer className="provider-actions"><div>{draft.id ? <button className={`subtle-button is-danger ${confirmDelete ? 'confirm' : ''}`} onClick={() => void remove()} disabled={Boolean(busyAction)}>{confirmDelete ? '再次点击确认删除' : '删除配置'}</button> : null}</div><button className="primary-button" onClick={() => void save()} disabled={Boolean(busyAction) || !draft.displayName || !draft.baseUrl || (!draft.id && !draft.apiKey.trim()) || draft.offerings.some((offering) => !offering.providerModelId)}>{busyAction === 'save' ? '保存中…' : '保存'}</button></footer>
@@ -724,6 +775,10 @@ function Settings(props: { state: DesktopState; busy: boolean; apply: (action: (
 
 function Field(props: { label: string; wide?: boolean; hint?: string; children: React.ReactNode }) {
   return <label className={`provider-field ${props.wide ? 'wide' : ''}`}><span><strong>{props.label}</strong>{props.hint ? <small>{props.hint}</small> : null}</span>{props.children}</label>;
+}
+
+function SelectField(props: { label: string; wide?: boolean; hint?: string; children: React.ReactNode }) {
+  return <div className={`provider-field ${props.wide ? 'wide' : ''}`}><span><strong>{props.label}</strong>{props.hint ? <small>{props.hint}</small> : null}</span>{props.children}</div>;
 }
 
 function providerDraftFromProfile(profile: ProviderProfile): ProviderDraft {
