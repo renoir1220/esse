@@ -114,6 +114,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .job-error p { margin: 0; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .job-error button { padding: 0; border: 0; background: transparent; color: var(--accent); cursor: pointer; }
 .job-error span { color: var(--muted); white-space: nowrap; }
+.error-origin { display: inline-flex; align-items: center; min-height: 18px; margin: 0 6px 1px 0; padding: 0 5px; border-radius: 5px; background: color-mix(in srgb, var(--danger) 9%, var(--surface-2)); color: color-mix(in srgb, var(--danger) 72%, var(--text)) !important; font-size: 10px; font-weight: 600; line-height: 18px; vertical-align: middle; white-space: nowrap; }
 .card-meta { min-height: 29px; display: flex; align-items: center; justify-content: space-between; gap: 7px; padding: 3px 2px 0; color: var(--muted); font-size: var(--font-size-meta); }
 .card-meta > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .card-tools { display: flex; align-items: center; gap: 1px; opacity: .68; }
@@ -320,7 +321,7 @@ button { -webkit-tap-highlight-color: transparent; }
 .call-history dt { color: var(--muted); }
 .call-history dd { min-width: 0; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .call-history code { font-size: 10px; }
-.call-error { color: var(--danger); font-size: var(--font-size-meta); }
+.call-error { margin: 0; color: var(--danger); font-size: var(--font-size-meta); line-height: 1.55; }
 .detail-muted { color: var(--muted); font-size: var(--font-size-control); }
 
 .lightbox { position: fixed; z-index: 90; inset: 0; background: rgba(8,10,8,.88); }

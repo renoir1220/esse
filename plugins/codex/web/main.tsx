@@ -1242,7 +1242,7 @@ function JobCard(props: { asset: ImageAsset; preview?: string; sourcePreviews: A
       {canRetry && <button onClick={(event) => { event.stopPropagation(); props.onRetry?.(); }} disabled={props.busy}>{props.busy ? "重试中…" : "重试"}</button>}
     </div>
     <div className="card-copy"><strong title={props.asset.name}>{props.asset.name}</strong></div>
-    {job?.error && <p className="error-copy" title={job.error}>{job.error}</p>}
+    {job?.error && <p className="error-copy" title={`${errorOriginLabel(job.errorOrigin, job.offering?.adapterId === "agent-generation" ? "agent" : "provider", job.offering?.providerName)}：${job.error}`}><span className="error-origin-badge">{errorOriginLabel(job.errorOrigin, job.offering?.adapterId === "agent-generation" ? "agent" : "provider", job.offering?.providerName)}</span>{job.error}</p>}
   </article>;
 }
 
@@ -1273,7 +1273,7 @@ function TaskDetailDialog({ asset, metadata, referencePaths, previews, onClose }
         {calls.length ? <div className="call-history-list">{[...calls].reverse().map((call) => <article className={`call-history-item is-${call.status}`} key={call.id}>
           <header><span className="call-status-dot" /><strong>第 {call.sequence} 次 · {callStatusLabel(call.status)}</strong><time dateTime={call.startedAt}>{formatCallTime(call.startedAt)}</time></header>
           <div className="call-history-meta"><span>{call.source === "agent" ? "当前 Agent" : `${call.offering.providerName} · ${call.offering.tierName}`}</span><span>{call.offering.displayName}</span><span>{call.status === "running" ? "进行中" : formatDuration(call.durationMs || 0)}</span>{call.providerRequestId && <code title={call.providerRequestId}>{call.providerRequestId}</code>}</div>
-          {call.error && <p>{call.error}</p>}
+          {call.error && <p><span className="error-origin-badge">{errorOriginLabel(call.errorOrigin, call.source, call.offering.providerName)}</span>{call.error}</p>}
         </article>)}</div> : <div className="call-history-empty">任务尚未发起模型调用</div>}
       </section>}
       <section className="task-detail-section"><strong>参考图</strong>
@@ -1475,6 +1475,13 @@ function jobStatusLabel(job: JobSnapshot): string {
   if (job.status === "queued") return "排队";
   if (job.status === "failed") return job.retryable ? "可重试" : "失败";
   return "已取消";
+}
+
+function errorOriginLabel(origin: JobSnapshot["errorOrigin"], source: "provider" | "agent", providerName?: string): string {
+  if (!origin) return "历史错误";
+  if (origin === "esse") return "Esse 侧错误";
+  if (source === "agent") return "上游 Agent";
+  return providerName ? `上游图片服务 · ${providerName}` : "上游图片服务";
 }
 
 function isProcessing(job: JobSnapshot): boolean {

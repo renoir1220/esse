@@ -15,4 +15,9 @@ describe('desktop product profile', () => {
     expect(product.macosAppBundleId).toMatch(/^com\.renoir\.esse\./);
     expect(product.releasePrefix).toMatch(/^esse-/);
   });
+
+  it('declares an explicit error-attribution privacy policy', () => {
+    expect(typeof product.errorAttribution.showProviderIdentity).toBe('boolean');
+    expect(product.errorAttribution.redactProviderTerms).toEqual(expect.any(Array));
+  });
 });

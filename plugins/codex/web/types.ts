@@ -71,6 +71,7 @@ export interface JobSnapshot {
   retryable: boolean;
   chargeState: "not_charged" | "charged" | "unknown";
   error?: string;
+  errorOrigin?: "upstream" | "esse";
   providerRequestId?: string;
   createdAt: string;
   startedAt?: string;
@@ -93,6 +94,7 @@ export interface JobCallSnapshot {
   finishedAt?: string;
   durationMs?: number;
   error?: string;
+  errorOrigin?: "upstream" | "esse";
   providerRequestId?: string;
 }
 

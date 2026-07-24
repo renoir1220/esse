@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EsseApiClient, EsseApiError } from './api-client';
+import { EsseApiClient, EsseApiError, sanitizeProviderError } from './api-client';
 import type { ProviderSettingsStore } from './provider-settings';
 import type { OfferingConfig, OfferingSummary, ProviderProfile } from './types';
 
@@ -75,8 +75,17 @@ describe('Esse Provider client', () => {
     const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
     const error = await client.generate({ prompt: 'ambiguous', model: 'provider-1:gpt-image-2' }, 'stable-request-key').catch((cause) => cause);
     expect(error).toBeInstanceOf(EsseApiError);
-    expect((error as EsseApiError).details).toMatchObject({ requestId: 'review-request-1', chargeState: 'unknown' });
+    expect((error as EsseApiError).details).toMatchObject({ requestId: 'review-request-1', chargeState: 'unknown', origin: 'upstream' });
+    expect((error as EsseApiError).message).toBe('Provider result is unknown.');
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('can hide configured Provider identity without replacing it with the Esse brand', () => {
+    expect(sanitizeProviderError(
+      'Tuzi at https://api.tu-zi.com rejected sk-example-secret',
+      { displayName: 'Tuzi', baseUrl: 'https://api.tu-zi.com' },
+      { showProviderIdentity: false, redactProviderTerms: ['兔子'] },
+    )).toBe('上游服务 at 上游服务 rejected [redacted]');
   });
 
   it('shows a safe nested network diagnostic without retrying the request', async () => {
@@ -86,8 +95,10 @@ describe('Esse Provider client', () => {
     const fetchMock = vi.fn(async () => { throw failure; }) as unknown as typeof fetch;
     const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
 
-    await expect(client.generate({ prompt: 'diagnose', model: 'provider-1:gpt-image-2' }))
-      .rejects.toThrow('诊断码：ETIMEDOUT');
+    const error = await client.generate({ prompt: 'diagnose', model: 'provider-1:gpt-image-2' }).catch((cause) => cause);
+    expect(error).toBeInstanceOf(EsseApiError);
+    expect((error as EsseApiError).details.origin).toBe('esse');
+    expect((error as EsseApiError).message).toContain('诊断码：ETIMEDOUT');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

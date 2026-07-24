@@ -10,6 +10,7 @@ import {
   type BatchRecord,
   type BatchSnapshot,
   type CreateBatchInput,
+  type ErrorOrigin,
   type ModifyBatchInput,
   type OfferingSummary,
   type SavedImage,
@@ -66,8 +67,18 @@ export class BatchManager {
           job.error = job.operation === 'agent'
             ? 'Esse stopped while the Agent-owned task was running. It was not restarted automatically.'
             : 'Esse stopped while this Provider request was running. Its charge state is unknown, so it was not retried.';
+          job.errorOrigin = 'esse';
           job.finishedAt = new Date(finished).toISOString();
           job.durationMs = Math.max(0, finished - started);
+          const call = job.callHistory.at(-1);
+          if (call?.status === 'running') Object.assign(call, {
+            status: 'failed',
+            chargeState: 'unknown',
+            error: job.error,
+            errorOrigin: 'esse',
+            finishedAt: job.finishedAt,
+            durationMs: job.durationMs,
+          });
           changed = true;
         }
       }
@@ -256,6 +267,7 @@ export class BatchManager {
       job.retryable = false;
       job.chargeState = 'not_charged';
       job.error = undefined;
+      job.errorOrigin = undefined;
       job.requestId = undefined;
       job.startedAt = undefined;
       job.finishedAt = undefined;
@@ -303,6 +315,7 @@ export class BatchManager {
       job.progress = 0;
       job.retryable = false;
       job.error = undefined;
+      job.errorOrigin = undefined;
       job.requestId = undefined;
       job.startedAt = undefined;
       job.finishedAt = undefined;
@@ -439,7 +452,7 @@ export class BatchManager {
       });
       finishSucceeded(job, { requestId: job.requestKey, items: [], reused: false }, saved.id);
     } catch (error) {
-      finishFailed(job, error, 'unknown', false);
+      finishFailed(job, error, 'unknown', false, 'esse');
       throw error;
     } finally {
       batch.updatedAt = new Date().toISOString();
@@ -454,7 +467,7 @@ export class BatchManager {
     if (job.operation === 'agent' && job.status === 'failed') return snapshot(batch);
     if (job.operation !== 'agent' || !['queued', 'running'].includes(job.status)) throw new Error('Agent job is not pending.');
     if (job.status === 'queued') beginJob(job, job.offering || batch.offering, 'agent');
-    finishFailed(job, new Error(requiredPrompt(reason)), 'unknown', false);
+    finishFailed(job, new Error(requiredPrompt(reason)), 'unknown', false, 'upstream');
     batch.updatedAt = new Date().toISOString();
     await this.options.store.save(batch);
     await this.changed();
@@ -741,6 +754,7 @@ function beginJob(job: BatchJob, offering: OfferingSummary, source: 'provider' |
   job.startedAt = now;
   job.finishedAt = undefined;
   job.error = undefined;
+  job.errorOrigin = undefined;
   job.callHistory.push({
     id: randomUUID(),
     sequence: job.callHistory.length + 1,
@@ -768,20 +782,28 @@ function finishSucceeded(job: BatchJob, result: ApiGenerateResult, imageId: stri
   if (call) Object.assign(call, { status: 'succeeded', chargeState: 'charged', requestId: result.requestId, finishedAt: now, durationMs: job.durationMs });
 }
 
-function finishFailed(job: BatchJob, error: unknown, chargeState: 'not_charged' | 'unknown', retryable: boolean): void {
+function finishFailed(
+  job: BatchJob,
+  error: unknown,
+  chargeState: 'not_charged' | 'unknown',
+  retryable: boolean,
+  explicitOrigin?: ErrorOrigin,
+): void {
   const now = new Date().toISOString();
   const started = job.startedAt ? new Date(job.startedAt).getTime() : Date.now();
   const message = error instanceof Error ? error.message : 'Image request failed.';
+  const errorOrigin = explicitOrigin || (error instanceof EsseApiError ? error.details.origin : 'esse');
   job.status = 'failed';
   job.progress = 100;
   job.retryable = retryable;
   job.chargeState = chargeState;
   job.error = message;
+  job.errorOrigin = errorOrigin;
   job.finishedAt = now;
   job.durationMs = Math.max(0, Date.now() - started);
   if (error instanceof EsseApiError) job.requestId = error.details.requestId;
   const call = job.callHistory.at(-1);
-  if (call) Object.assign(call, { status: 'failed', chargeState, requestId: job.requestId, error: message, finishedAt: now, durationMs: job.durationMs });
+  if (call) Object.assign(call, { status: 'failed', chargeState, requestId: job.requestId, error: message, errorOrigin, finishedAt: now, durationMs: job.durationMs });
 }
 
 function snapshot(batch: BatchRecord): BatchSnapshot {

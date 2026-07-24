@@ -7,5 +7,9 @@
   "windowsSetupExe": "Esse-Community-Setup.exe",
   "macosAppBundleId": "com.renoir.esse.community",
   "releasePrefix": "esse-community",
-  "releaseVersionPolicy": "shared-components"
+  "releaseVersionPolicy": "shared-components",
+  "errorAttribution": {
+    "showProviderIdentity": true,
+    "redactProviderTerms": []
+  }
 }

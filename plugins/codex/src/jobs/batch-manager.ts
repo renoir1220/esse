@@ -102,6 +102,7 @@ export class BatchManager {
             retryable: !agentGenerated,
             chargeState: "unknown",
             error: interruptionError,
+            errorOrigin: "esse",
             finishedAt: new Date(finished).toISOString(),
             durationMs: Math.max(0, finished - started)
           });
@@ -109,7 +110,8 @@ export class BatchManager {
             finishedAt: new Date(finished).toISOString(),
             durationMs: Math.max(0, finished - started),
             chargeState: "unknown",
-            error: interruptionError
+            error: interruptionError,
+            errorOrigin: "esse"
           });
           changed = true;
         } else if (job.status === "queued") {
@@ -121,6 +123,7 @@ export class BatchManager {
             error: agentGenerated
               ? "本地插件重启前，当前 Agent 尚未开始这项生成任务。"
               : "Canceled because the local plugin restarted before this job began.",
+            errorOrigin: "esse",
             finishedAt: new Date().toISOString()
           });
           changed = true;
@@ -343,6 +346,7 @@ export class BatchManager {
           retryable: false,
           chargeState: "not_charged",
           error: undefined,
+          errorOrigin: undefined,
           providerRequestId: undefined,
           startedAt: undefined,
           finishedAt: undefined,
@@ -394,7 +398,8 @@ export class BatchManager {
         progress: 15,
         chargeState: "unknown",
         startedAt,
-        error: undefined
+        error: undefined,
+        errorOrigin: undefined
       });
       beginCall(job, job.offering || batch.offering, startedAt);
       batch.updatedAt = new Date().toISOString();
@@ -427,6 +432,7 @@ export class BatchManager {
       retryable: false,
       chargeState: "unknown",
       error: failureMessage,
+      errorOrigin: "upstream",
       finishedAt: new Date(finished).toISOString(),
       durationMs: Math.max(0, finished - started)
     });
@@ -434,7 +440,8 @@ export class BatchManager {
       finishedAt: new Date(finished).toISOString(),
       durationMs: Math.max(0, finished - started),
       chargeState: "unknown",
-      error: failureMessage
+      error: failureMessage,
+      errorOrigin: "upstream"
     });
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
@@ -518,6 +525,7 @@ export class BatchManager {
         retryable: false,
         chargeState: "not_charged",
         error: undefined,
+        errorOrigin: undefined,
         providerRequestId: undefined,
         startedAt: undefined,
         finishedAt: undefined,
@@ -723,7 +731,8 @@ export class BatchManager {
       progress: 90,
       chargeState: "unknown",
       startedAt: job.startedAt || new Date(started).toISOString(),
-      error: undefined
+      error: undefined,
+      errorOrigin: undefined
     });
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
@@ -758,6 +767,7 @@ export class BatchManager {
         retryable: false,
         chargeState: "unknown",
         error: failureMessage,
+        errorOrigin: "esse",
         finishedAt: new Date(finished).toISOString(),
         durationMs: Math.max(0, finished - started)
       });
@@ -765,7 +775,8 @@ export class BatchManager {
         finishedAt: new Date(finished).toISOString(),
         durationMs: Math.max(0, finished - started),
         chargeState: "unknown",
-        error: failureMessage
+        error: failureMessage,
+        errorOrigin: "esse"
       });
       throw error;
     } finally {
@@ -787,7 +798,7 @@ export class BatchManager {
     const started = Date.now();
     const startedAt = new Date(started).toISOString();
     const call = beginCall(job, resolved.snapshot, startedAt);
-    Object.assign(job, { status: "running", progress: 15, chargeState: "unknown", startedAt });
+    Object.assign(job, { status: "running", progress: 15, chargeState: "unknown", startedAt, error: undefined, errorOrigin: undefined });
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
     let autoRetry = false;
@@ -831,18 +842,21 @@ export class BatchManager {
     } catch (error) {
       const providerError = error instanceof ProviderError ? error as ProviderRequestError : undefined;
       const failureMessage = error instanceof Error ? error.message : "Unknown local image generation error";
+      const errorOrigin = providerError?.details.origin ?? "esse";
       Object.assign(job, {
         status: "failed",
         progress: 100,
         retryable: providerError?.details.retryable ?? false,
         chargeState: providerError?.details.chargeState ?? "unknown",
         error: failureMessage,
+        errorOrigin,
         providerRequestId: providerError?.details.requestId
       });
       Object.assign(call, {
         status: "failed",
         chargeState: providerError?.details.chargeState ?? "unknown",
         error: failureMessage,
+        errorOrigin,
         providerRequestId: providerError?.details.requestId
       });
       if (providerError?.details.retryable && providerError.details.chargeState === "not_charged" && job.attempt <= AUTO_RETRY_LIMIT) {

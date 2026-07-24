@@ -30,6 +30,7 @@ import {
 import './index.css';
 import { retryAllFailedSelection } from './batch-actions';
 import { batchLibraryProgress, batchLibraryState, filterAndGroupBatches, type BatchLibraryState } from './batch-library';
+import { errorOriginLabel } from './error-display';
 import { galleryAssets, selectableAssets, type GalleryAsset } from './gallery-assets';
 import { initialImageZoom, zoomImageAtPoint } from './image-zoom';
 import { shouldDismissOverlay } from './overlay-dismiss';
@@ -451,7 +452,7 @@ function JobCard(props: { asset: GalleryAsset; referenceImages: SavedImage[]; se
       {pending ? <span className="status-overlay"><span className="spinner" />{job.status === 'queued' ? '等待中' : `生成中 ${Math.max(1, job.progress)}%`}</span> : null}
     </button>
     <div className="card-meta"><span>{asset.kind === 'backup' ? '历史版本' : job.status === 'succeeded' ? asset.offering.displayName : statusText(job.status)}</span><div className="card-tools"><button title="任务详情" onClick={props.onDetails}><Info size={14} /></button>{image ? <button title="另存为" onClick={() => void window.esse.saveImage(image.id)}><DownloadSimple size={14} /></button> : null}</div></div>
-    {asset.kind === 'job' && job.status === 'failed' ? <div className="job-error"><p>{job.error || '生成失败'}</p>{job.operation !== 'agent' ? <button onClick={() => void props.onRetry()}>重试</button> : <span>需由 Agent 重新发起</span>}</div> : null}
+    {asset.kind === 'job' && job.status === 'failed' ? <div className="job-error"><p><span className="error-origin">{jobErrorOriginLabel(job, asset.offering.providerName)}</span>{job.error || '生成失败'}</p>{job.operation !== 'agent' ? <button onClick={() => void props.onRetry()}>重试</button> : <span>需由 Agent 重新发起</span>}</div> : null}
     {pending && peekPosition ? createPortal(<PendingTaskPeek id={peekId} prompt={asset.prompt} images={props.referenceImages} position={peekPosition} onPointerEnter={keepPeekOpen} onPointerLeave={closePeekSoon} />, document.body) : null}
   </article>;
 }
@@ -501,9 +502,9 @@ function TaskDetailDialog({ asset, imagesById, onClose }: { asset: GalleryAsset;
       <div className="detail-section"><h3>提示词</h3><p>{asset.prompt}</p></div>
       {references.length ? <div className="detail-section"><h3>参考图片 · {references.length}</h3><div className="detail-reference-grid">{references.map((image) => <figure key={image.id}><img src={image.mediaUrl} alt={image.sourceFileName || image.fileName} /><figcaption title={image.sourceFileName || image.fileName}>{image.sourceFileName || image.fileName}</figcaption></figure>)}</div></div> : null}
       <div className="detail-section"><h3>调用记录</h3>{job.callHistory.length ? <div className="call-history">{job.callHistory.map((call, index) => <article key={call.id}>
-        <div><strong>#{call.sequence || index + 1} · {call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'running' ? '进行中' : '已取消'}</strong><span>{call.source === 'agent' ? 'Agent' : call.offering?.providerName || asset.offering.providerName}</span></div>
+        <div><strong>#{call.sequence || index + 1} · {call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'running' ? '进行中' : '已取消'}</strong><span>{callSourceLabel(call.source, call.offering?.providerName || asset.offering.providerName)}</span></div>
         <dl><dt>模型</dt><dd>{call.offering?.displayName || asset.offering.displayName}</dd><dt>扣费</dt><dd>{chargeText(call.chargeState)}</dd><dt>耗时</dt><dd>{formatDuration(call.durationMs)}</dd><dt>开始</dt><dd>{new Date(call.startedAt).toLocaleString()}</dd>{call.requestId ? <><dt>Request ID</dt><dd><code>{call.requestId}</code></dd></> : null}</dl>
-        {call.error ? <p className="call-error">{call.error}</p> : null}
+        {call.error ? <p className="call-error"><span className="error-origin">{errorOriginLabel({ origin: call.errorOrigin, source: call.source, providerName: call.offering?.providerName || asset.offering.providerName, showProviderIdentity: product.errorAttribution.showProviderIdentity })}</span>{call.error}</p> : null}
       </article>)}</div> : <p className="detail-muted">尚未调用模型。</p>}</div>
     </section>
   </div>;
@@ -809,6 +810,8 @@ function isTerminal(batch: BatchSnapshot) { return batch.queued === 0 && batch.r
 function statusLabel(batch: BatchSnapshot) { if (batch.running) return `${batch.running}个生成中`; if (batch.queued) return `${batch.queued}个等待中`; if (batch.failed) return batch.succeeded ? `${batch.succeeded}成功 · ${batch.failed}失败` : `${batch.failed}个失败`; return `${batch.succeeded}张图片`; }
 function statusText(status: BatchSnapshot['jobs'][number]['status']) { return ({ queued: '等待中', running: '生成中', succeeded: '已完成', failed: '失败', canceled: '已取消' })[status]; }
 function chargeText(state: BatchSnapshot['jobs'][number]['chargeState']) { return ({ charged: '已扣费', not_charged: '未扣费', unknown: '待复核' })[state]; }
+function jobErrorOriginLabel(job: BatchSnapshot['jobs'][number], providerName: string) { return errorOriginLabel({ origin: job.errorOrigin, source: job.operation === 'agent' ? 'agent' : 'provider', providerName, showProviderIdentity: product.errorAttribution.showProviderIdentity }); }
+function callSourceLabel(source: 'provider' | 'agent' | undefined, providerName: string) { if (source === 'agent') return 'Agent'; return product.errorAttribution.showProviderIdentity ? providerName : '图片服务'; }
 function formatDuration(value?: number) { if (value === undefined) return '—'; return value < 1000 ? `${value} ms` : `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)} s`; }
 function formatBytes(value: number) { if (value < 1024) return `${value} B`; if (value < 1024 ** 2) return `${(value / 1024).toFixed(1)} KB`; return `${(value / 1024 ** 2).toFixed(1)} MB`; }
 function uniqueImages(images: SavedImage[]) { return [...new Map(images.map((image) => [image.id, image])).values()]; }
