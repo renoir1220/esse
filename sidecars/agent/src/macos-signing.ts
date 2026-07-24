@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
 import type { ForgeConfig } from '@electron-forge/shared-types';
 
 type PackagerConfig = NonNullable<ForgeConfig['packagerConfig']>;
@@ -6,6 +7,33 @@ type PackagerConfig = NonNullable<ForgeConfig['packagerConfig']>;
 export interface ResolvedMacosSigning {
   identity?: string;
   packager: Pick<PackagerConfig, 'osxNotarize' | 'osxSign'>;
+}
+
+interface PackageResult {
+  platform: string;
+  outputPaths: string[];
+}
+
+type CodesignRunner = (file: string, args: string[], options: { stdio: 'inherit' }) => unknown;
+
+export function resignAdhocMacosBundles(
+  result: PackageResult,
+  displayName: string,
+  developerIdentity: string | undefined,
+  runCodesign: CodesignRunner = execFileSync,
+): void {
+  if (result.platform !== 'darwin' || developerIdentity) return;
+  for (const outputPath of result.outputPaths) {
+    const appPath = outputPath.endsWith('.app')
+      ? outputPath
+      : path.join(outputPath, `${displayName}.app`);
+    // @electron/osx-sign can leave Electron Framework carrying its original
+    // Team ID while the top-level executable is ad-hoc signed. Hardened
+    // runtime then rejects the mixed bundle at launch even though a deep
+    // structural verification succeeds. Re-sign the finished bundle as one
+    // ad-hoc unit after Forge has changed every executable, path, and fuse.
+    runCodesign('/usr/bin/codesign', ['--force', '--deep', '--sign', '-', appPath], { stdio: 'inherit' });
+  }
 }
 
 export function resolveMacosSigning(env: NodeJS.ProcessEnv = process.env): ResolvedMacosSigning {

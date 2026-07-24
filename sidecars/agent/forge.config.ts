@@ -7,7 +7,7 @@ import { FusesPlugin } from '@electron-forge/plugin-fuses';
 import { FuseV1Options, FuseVersion } from '@electron/fuses';
 import { resolve } from 'node:path';
 import { resolveWindowsSignOptions } from './src/windows-signing';
-import { resolveMacosSigning } from './src/macos-signing';
+import { resolveMacosSigning, resignAdhocMacosBundles } from './src/macos-signing';
 import { MACOS_APP_BUNDLE_ID, WINDOWS_SQUIRREL_APP_ID } from './src/platform';
 import product from './product.json';
 
@@ -97,6 +97,11 @@ const config: ForgeConfig = {
       [FuseV1Options.OnlyLoadAppFromAsar]: true,
     }),
   ],
+  hooks: {
+    postPackage: async (_forgeConfig, packageResult) => {
+      resignAdhocMacosBundles(packageResult, product.displayName, macosSigning.identity);
+    },
+  },
 };
 
 export default config;
