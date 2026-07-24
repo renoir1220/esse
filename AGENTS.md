@@ -50,7 +50,7 @@ Every time a new Esse version is published on GitHub, update the maintainer's lo
 2. Inspect the installer from a fresh temporary checkout before running it.
 3. Require a successful `ESSE_INSTALL_RESULT` and verify that the installed receipt version matches the new release.
 4. Treat this installation as part of the release smoke test. A release is not fully handed off until the user-path installation succeeds or the exact blocker is reported.
-5. Signing is optional until the maintainer restores credentials. A platform must either receive its complete signing/notarization secret set or no signing secrets at all; partial configuration is a release error. Unsigned artifacts must be verified as unsigned and disclosed accurately.
+5. Publisher signing is optional until the maintainer restores credentials. A platform must either receive its complete signing/notarization secret set or no signing secrets at all; partial configuration is a release error. Unsigned Windows artifacts must be verified as unsigned. macOS app bundles without Developer ID credentials must be fully ad-hoc signed after packaging and pass strict structural signature verification. Disclose accurately that neither mode establishes publisher identity or Apple notarization.
 
 ## GitHub release notes
 

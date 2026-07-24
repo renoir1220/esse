@@ -1,13 +1,13 @@
 import { randomUUID } from "node:crypto";
 import type { GenerateRequest, GenerateResult, ProviderAdapter } from "../types.js";
-import { extractImageResult, normalizeTransportError, parseResponse, providerError, requestId, type FetchLike } from "./http.js";
+import { extractImageResult, IMAGE_REQUEST_TIMEOUT_MS, normalizeTransportError, parseResponse, providerError, requestId, type FetchLike } from "./http.js";
 
 export class OpenAiImagesAdapter implements ProviderAdapter {
   readonly id = "openai-images" as const;
   constructor(private readonly options: { baseUrl: string; apiKey: string; fetchImpl?: FetchLike; timeoutMs?: number }) {}
 
   async generate(request: GenerateRequest, signal?: AbortSignal): Promise<GenerateResult> {
-    const timeout = AbortSignal.timeout(this.options.timeoutMs ?? 300_000);
+    const timeout = AbortSignal.timeout(this.options.timeoutMs ?? IMAGE_REQUEST_TIMEOUT_MS);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
     try {
       const response = request.images.length

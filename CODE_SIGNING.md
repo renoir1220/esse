@@ -2,7 +2,7 @@
 
 Free code signing provided by [SignPath.io](https://signpath.io/), certificate by [SignPath Foundation](https://signpath.org/).
 
-This policy applies to the Windows x64 and macOS arm64/x64 Esse Community Agent Sidecar distributed from this repository's [GitHub Releases](https://github.com/renoir1220/esse/releases). Signing credentials are not currently a release prerequisite. When a complete platform credential set is available, the workflow signs and verifies that platform. When no credentials are configured, the workflow verifies that the artifacts are unsigned and the release notes disclose that status. A partial credential set is always a release error.
+This policy applies to the Windows x64 and macOS arm64/x64 Esse Community Agent Sidecar distributed from this repository's [GitHub Releases](https://github.com/renoir1220/esse/releases). Publisher-signing credentials are not currently a release prerequisite. When a complete platform credential set is available, the workflow signs and verifies that platform. When no credentials are configured, Windows artifacts are verified as unsigned, while macOS app bundles receive and verify a complete ad-hoc signature after packaging. Release notes disclose that neither mode establishes publisher identity. A partial credential set is always a release error.
 
 ## Team roles
 
@@ -13,7 +13,7 @@ Changes from other contributors require review by the maintainer. Every signing 
 
 ## Signed artifacts and provenance
 
-The policy covers the Windows Sidecar application executable and its installer, plus both architecture-specific macOS app bundles and DMGs. Release artifacts must be built by the repository's GitHub Actions workflow from the tagged public source revision. Signed Windows builds are checked for Authenticode signatures and trusted timestamps. Signed macOS builds are checked for Developer ID signing, Gatekeeper assessment, notarization, and a stapled ticket. Unsigned builds are checked as unsigned and still pass architecture, package, icon, startup, and checksum validation.
+The policy covers the Windows Sidecar application executable and its installer, plus both architecture-specific macOS app bundles and DMGs. Release artifacts must be built by the repository's GitHub Actions workflow from the tagged public source revision. Signed Windows builds are checked for Authenticode signatures and trusted timestamps. Developer ID-signed macOS builds are checked for Developer ID signing, Gatekeeper assessment, notarization, and a stapled ticket. Unsigned Windows builds are checked as unsigned. macOS builds without Developer ID credentials are checked for a structurally valid ad-hoc signature rather than an invalid or partial signature. Every mode still passes architecture, package, icon, startup, and checksum validation.
 
 No binary built from unpublished or proprietary source is eligible for this signing policy.
 

@@ -42,7 +42,7 @@ Codex 应先阅读 [`INSTALL.md`](INSTALL.md)，再识别平台、下载 Release
 
 ## 代码签名
 
-Agent Sidecar 的签名状态遵循仓库公开的 [Code signing policy](CODE_SIGNING.md)。当前签名凭据不是发布前置条件；没有凭据时，CI 会明确验证产物为未签名并在 Release 说明中披露。Windows 可能显示未知发布者或 SmartScreen 提示，macOS Gatekeeper 可能拒绝未签名应用。不得把校验哈希等同于发布者签名，也不得要求用户关闭系统安全机制。
+Agent Sidecar 的签名状态遵循仓库公开的 [Code signing policy](CODE_SIGNING.md)。当前发布者签名凭据不是发布前置条件；没有凭据时，CI 会明确验证 Windows 产物未签名、macOS 应用具有结构有效的 ad-hoc 签名，并在 Release 说明中披露两者均不代表发布者身份。Windows 可能显示未知发布者或 SmartScreen 提示，macOS Gatekeeper 可能拒绝未做 Developer ID 签名和 Apple 公证的应用。不得把校验哈希或 ad-hoc 签名等同于发布者签名，也不得要求用户关闭系统安全机制。
 
 ## 仓库结构
 

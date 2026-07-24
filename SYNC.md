@@ -40,7 +40,7 @@ The initial import deliberately excludes the private commercial server, user acc
 
 - Windows x64 and macOS arm64/x64 now package the same Sidecar source and runtime core; only paths, native window behavior, signing/notarization, and installer artifacts vary by platform.
 - macOS keeps the native title bar and application menu, stays active after the last window closes, uses Keychain-backed Electron safe storage, and stores data under `~/Library/Application Support/esse-agent-sidecar`.
-- The macOS release pipeline builds architecture-specific DMGs and checks bundle IDs, Mach-O architecture, bundled Esse icon resources, and packaged-app startup. It verifies Developer ID signing and Apple notarization when credentials are configured, or verifies and discloses unsigned artifacts when they are absent.
+- The macOS release pipeline builds architecture-specific DMGs and checks bundle IDs, Mach-O architecture, bundled Esse icon resources, and packaged-app startup. It verifies Developer ID signing and Apple notarization when credentials are configured. Without those credentials, Packager replaces the fuse tool's temporary signature with a complete ad-hoc signature after the bundle is finalized, and CI rejects any corrupted or non-ad-hoc result. This mode is still disclosed as lacking publisher identity and notarization.
 - The Windows Squirrel application ID no longer owns `%LOCALAPPDATA%\esse`, preventing the installer from deleting Codex Plugin history. The installer root, Plugin data, and Sidecar data now have three distinct identities.
 - Windows executable, installer, runtime title bar, macOS app bundle, and DMG all use the Esse application icon rather than Electron defaults.
 
@@ -76,9 +76,10 @@ The initial import deliberately excludes the private commercial server, user acc
 
 ## 2026-07-24 — structured error attribution
 
-- Failed jobs and individual call records persist an explicit `upstream` or `esse` error origin instead of relying on message-prefix parsing. Existing records without that field remain readable and are identified as historical errors.
-- Provider HTTP error bodies are preserved as the upstream message without an Esse-owned failure prefix. Transport, response-validation, image-import, and interrupted-process failures are attributed to the Esse-side path; Agent-reported generation failures are upstream.
+- Failed jobs and individual call records persist an explicit `upstream`, `esse`, or `transport` error origin instead of relying on message-prefix parsing. Existing records without that field remain readable and are identified as historical errors.
+- Provider HTTP error bodies are preserved as the upstream message without an Esse-owned failure prefix. Response-validation, image-import, and interrupted-process failures are attributed to the Esse-side path; Agent-reported generation failures are upstream. Requests that never receive an HTTP response are labeled `请求链路`, because neither Esse nor the upstream service can be blamed conclusively from that evidence.
 - Both UIs show a compact source badge beside the error. The Sidecar product profile controls whether Provider identity appears in error surfaces and can redact edition-specific Provider terms from raw upstream messages.
+- Provider and Agent Sidecar image-generation requests now allow up to 15 minutes for queue-heavy models to respond. Connection tests retain their short timeout, and a terminal timeout remains an unknown-result failure that is never retried automatically.
 
 ## Deferred
 

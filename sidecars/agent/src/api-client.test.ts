@@ -2,7 +2,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EsseApiClient, EsseApiError, sanitizeProviderError } from './api-client';
+import { EsseApiClient, EsseApiError, IMAGE_REQUEST_TIMEOUT_MS, sanitizeProviderError } from './api-client';
 import type { ProviderSettingsStore } from './provider-settings';
 import type { OfferingConfig, OfferingSummary, ProviderProfile } from './types';
 
@@ -13,6 +13,10 @@ afterEach(async () => {
 });
 
 describe('Esse Provider client', () => {
+  it('allows queue-heavy image models up to fifteen minutes', () => {
+    expect(IMAGE_REQUEST_TIMEOUT_MS).toBe(900_000);
+  });
+
   it('sends the locally stored Provider key and requests original image data', async () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(String(url)).toBe('https://provider.example/v1/images/generations');
@@ -88,7 +92,7 @@ describe('Esse Provider client', () => {
     )).toBe('上游服务 at 上游服务 rejected [redacted]');
   });
 
-  it('shows a safe nested network diagnostic without retrying the request', async () => {
+  it('attributes a safe nested network diagnostic to an inconclusive request path', async () => {
     const failure = new TypeError('fetch failed', {
       cause: Object.assign(new Error('connection timed out for a private endpoint'), { code: 'ETIMEDOUT' }),
     });
@@ -97,8 +101,21 @@ describe('Esse Provider client', () => {
 
     const error = await client.generate({ prompt: 'diagnose', model: 'provider-1:gpt-image-2' }).catch((cause) => cause);
     expect(error).toBeInstanceOf(EsseApiError);
-    expect((error as EsseApiError).details.origin).toBe('esse');
+    expect((error as EsseApiError).details.origin).toBe('transport');
     expect((error as EsseApiError).message).toContain('诊断码：ETIMEDOUT');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not blame Esse or the upstream service when the local wait deadline expires', async () => {
+    const fetchMock = vi.fn(async () => {
+      throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
+    }) as unknown as typeof fetch;
+    const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
+
+    const error = await client.generate({ prompt: 'slow queue', model: 'provider-1:gpt-image-2' }).catch((cause) => cause);
+    expect(error).toBeInstanceOf(EsseApiError);
+    expect((error as EsseApiError).details).toMatchObject({ code: 'request_timeout', chargeState: 'unknown', origin: 'transport' });
+    expect((error as EsseApiError).message).toContain('15 分钟内未返回');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

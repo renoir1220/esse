@@ -8,6 +8,7 @@ export function errorOriginLabel(input: {
 }): string {
   if (!input.origin) return '历史错误';
   if (input.origin === 'esse') return 'Esse 侧错误';
+  if (input.origin === 'transport') return '请求链路';
   if (input.source === 'agent') return '上游 Agent';
   const providerName = input.providerName?.trim();
   return input.showProviderIdentity && providerName
