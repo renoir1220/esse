@@ -18,7 +18,9 @@ describe('desktop image store', () => {
     const bytes = testPng('original-bytes');
     const [saved] = await store.saveBatch({ requestId: 'request-1', prompt: 'A test image', model: 'test', items: [{ b64_json: bytes.toString('base64') }] });
     expect(saved.mediaUrl).toMatch(/^esse-media:\/\/local\//);
+    expect(saved.thumbnailUrl).toMatch(/^esse-media:\/\/thumbnail\//);
     const filePath = store.resolveMediaRequest(saved.mediaUrl);
+    expect(store.resolveThumbnailRequest(saved.thumbnailUrl!)).toBe(filePath);
     expect(await readFile(filePath)).toEqual(bytes);
     expect((await store.list())[0].id).toBe(saved.id);
   });
@@ -28,6 +30,7 @@ describe('desktop image store', () => {
     temporaryDirectories.push(directory);
     const store = new ImageStore(directory);
     expect(() => store.resolveMediaRequest('esse-media://local/%2E%2E/secret.txt')).toThrow();
+    expect(() => store.resolveThumbnailRequest('esse-media://thumbnail/%2E%2E/secret.txt')).toThrow();
   });
 
   it('reuses saved originals when an idempotent API response is replayed', async () => {

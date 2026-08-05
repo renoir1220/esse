@@ -81,6 +81,13 @@ The initial import deliberately excludes the private commercial server, user acc
 - Both UIs show a compact source badge beside the error. The Sidecar product profile controls whether Provider identity appears in error surfaces and can redact edition-specific Provider terms from raw upstream messages.
 - Provider and Agent Sidecar image-generation requests now allow up to 15 minutes for queue-heavy models to respond. Connection tests retain their short timeout, and a terminal timeout remains an unknown-result failure that is never retried automatically.
 
+## 2026-08-05 — bounded Sidecar thumbnail rendering
+
+- Sidecar galleries and batch-browser cards use a disposable 512-pixel preview cache instead of decoding full-resolution originals for thumbnail surfaces. The original files remain untouched and are loaded only for explicit full-image and file operations.
+- Preview generation is serialized and deduplicated, cached data is capped and pruned, and missing or corrupt previews fall back without making the original image unavailable.
+- Renderer image sources are attached only near the viewport and removed again when far offscreen. Chromium lazy decoding plus offscreen paint containment keeps loaded and decoded image counts bounded as batch history grows.
+- A cross-platform Electron stress E2E opens 120 high-resolution historical batches and rejects eager original loading or unbounded preview generation before Windows or macOS release packaging.
+
 ## Deferred
 
 - shared domain/provider/UI packages;

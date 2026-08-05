@@ -14,6 +14,7 @@ import { ImageStore } from './image-store';
 import { McpPairingStore } from './mcp-pairing-store';
 import { DEFAULT_MCP_PORT, startDesktopMcpServer, type RunningDesktopMcpServer } from './mcp-server';
 import { ProviderSettingsStore } from './provider-settings';
+import { ThumbnailStore } from './thumbnail-store';
 import { ProviderNetworkTransport } from './provider-network';
 import { WORKBUDDY_AGENT_OFFERING, type DesktopState, type ModifyBatchInput, type SaveProviderInput } from './types';
 import { desktopWindowChrome, shouldRemoveWindowMenu } from './window-chrome';
@@ -49,6 +50,7 @@ let credentialStore: CredentialStore;
 let providerSettings: ProviderSettingsStore;
 let providerNetwork: ProviderNetworkTransport;
 let imageStore: ImageStore;
+let thumbnailStore: ThumbnailStore;
 let batchManager: BatchManager;
 let desktopSettings: DesktopSettingsStore;
 let mcpPairingStore: McpPairingStore;
@@ -75,6 +77,7 @@ app.whenReady().then(async () => {
   providerSettings = new ProviderSettingsStore(path.join(userData, 'providers.json'), credentialStore);
   providerNetwork = new ProviderNetworkTransport(session.fromPartition('esse-provider-network', { cache: false }));
   imageStore = new ImageStore(userData);
+  thumbnailStore = new ThumbnailStore(path.join(userData, 'cache', 'thumbnails', 'v1'), createThumbnailPng);
   desktopSettings = new DesktopSettingsStore(path.join(userData, 'settings.json'));
   mcpPairingStore = new McpPairingStore(userData);
   batchManager = new BatchManager({
@@ -85,9 +88,19 @@ app.whenReady().then(async () => {
     onChanged: broadcastState,
   });
   await batchManager.initialize();
-  protocol.handle('esse-media', (request) => {
-    const filePath = imageStore.resolveMediaRequest(request.url);
-    return net.fetch(pathToFileURL(filePath).toString());
+  protocol.handle('esse-media', async (request) => {
+    try {
+      if (new URL(request.url).hostname === 'thumbnail') {
+        const sourcePath = imageStore.resolveThumbnailRequest(request.url);
+        const thumbnailPath = await thumbnailStore.ensure(sourcePath);
+        return net.fetch(pathToFileURL(thumbnailPath).toString());
+      }
+      const filePath = imageStore.resolveMediaRequest(request.url);
+      return net.fetch(pathToFileURL(filePath).toString());
+    } catch (error) {
+      console.error('[esse] media request failed', error instanceof Error ? error.message : error);
+      return new Response(null, { status: 500 });
+    }
   });
   await startMcpBridge();
   registerIpc();
@@ -220,6 +233,64 @@ function createWindow(): void {
               await new Promise((resolve) => setTimeout(resolve, 180));
             }
           }
+          if (qaCaptureState === 'thumbnail-stress') {
+            mainWindow.webContents.send('navigation:requested', { tab: 'browse' });
+            for (let attempt = 0; attempt < 40; attempt += 1) {
+              const ready = await mainWindow.webContents.executeJavaScript(`(() => {
+                const images = Array.from(document.querySelectorAll('.batch-thumb-cell img[data-preview-src]'));
+                return document.querySelectorAll('.batch-library-card').length >= 100
+                  && images.some((image) => image.getAttribute('src'))
+                  && images.every((image) => !image.getAttribute('src') || (image.complete && image.naturalWidth > 0));
+              })()`);
+              if (ready) break;
+              await new Promise((resolve) => setTimeout(resolve, 150));
+            }
+            const thumbnailResult = await mainWindow.webContents.executeJavaScript(`(() => {
+              const images = Array.from(document.querySelectorAll('.batch-thumb-cell img[data-preview-src]'));
+              const loaded = images.filter((image) => image.getAttribute('src'));
+              return {
+                cards: document.querySelectorAll('.batch-library-card').length,
+                total: images.length,
+                loaded: loaded.length,
+                thumbnailSources: loaded.filter((image) => image.currentSrc.startsWith('esse-media://thumbnail/')).length,
+                originalSources: loaded.filter((image) => image.currentSrc.startsWith('esse-media://local/')).length,
+              };
+            })()`);
+            if (
+              thumbnailResult.cards < 100
+              || thumbnailResult.loaded <= 0
+              || thumbnailResult.loaded >= thumbnailResult.total
+              || thumbnailResult.thumbnailSources !== thumbnailResult.loaded
+              || thumbnailResult.originalSources !== 0
+            ) throw new Error(`Thumbnail stress assertion failed: ${JSON.stringify(thumbnailResult)}`);
+            const scrolledThumbnailResult = await mainWindow.webContents.executeJavaScript(`(async () => {
+              window.scrollTo(0, document.documentElement.scrollHeight);
+              for (let attempt = 0; attempt < 40; attempt += 1) {
+                const images = Array.from(document.querySelectorAll('.batch-thumb-cell img[data-preview-src]'));
+                if (!images[0]?.getAttribute('src') && images.at(-1)?.getAttribute('src') && images.at(-1)?.complete) break;
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              const images = Array.from(document.querySelectorAll('.batch-thumb-cell img[data-preview-src]'));
+              const loaded = images.filter((image) => image.getAttribute('src'));
+              return {
+                total: images.length,
+                loaded: loaded.length,
+                thumbnailSources: loaded.filter((image) => image.currentSrc.startsWith('esse-media://thumbnail/')).length,
+                originalSources: loaded.filter((image) => image.currentSrc.startsWith('esse-media://local/')).length,
+                firstUnloaded: !images[0]?.getAttribute('src'),
+                lastLoaded: Boolean(images.at(-1)?.getAttribute('src')),
+              };
+            })()`);
+            if (
+              scrolledThumbnailResult.loaded <= 0
+              || scrolledThumbnailResult.loaded >= scrolledThumbnailResult.total
+              || scrolledThumbnailResult.thumbnailSources !== scrolledThumbnailResult.loaded
+              || scrolledThumbnailResult.originalSources !== 0
+              || !scrolledThumbnailResult.firstUnloaded
+              || !scrolledThumbnailResult.lastLoaded
+            ) throw new Error(`Scrolled thumbnail stress assertion failed: ${JSON.stringify(scrolledThumbnailResult)}`);
+            console.log(`ESSE_QA_THUMBNAILS=${JSON.stringify({ initial: thumbnailResult, scrolled: scrolledThumbnailResult })}`);
+          }
           if (qaCaptureState === 'model-menu') {
             const menuResult = await mainWindow.webContents.executeJavaScript(`(async () => {
               const trigger = document.querySelector('.model-select-control .select-menu-trigger');
@@ -290,7 +361,7 @@ function createWindow(): void {
             if (!overlayResult.batchPicker || !overlayResult.headerMenu || !overlayResult.lightboxMask || !overlayResult.finalOverlaysClosed) throw new Error(`Overlay dismissal assertion failed: ${JSON.stringify(overlayResult)}`);
             console.log(`ESSE_QA_OVERLAYS=${JSON.stringify(overlayResult)}`);
           }
-          const renderedState = await mainWindow.webContents.executeJavaScript("JSON.stringify({ bridge: typeof window.esse, shell: Boolean(document.querySelector('.app-shell')), connect: Boolean(document.querySelector('.connect-screen')), splash: Boolean(document.querySelector('.splash')), images: Array.from(document.images).map((image) => ({ complete: image.complete, width: image.naturalWidth })), layout: { batchPage: Boolean(document.querySelector('.batch-page')), viewportHeight: window.innerHeight, documentHeight: document.documentElement.scrollHeight, verticalOverflow: document.documentElement.scrollHeight > window.innerHeight } })");
+          const renderedState = await mainWindow.webContents.executeJavaScript("JSON.stringify({ bridge: typeof window.esse, shell: Boolean(document.querySelector('.app-shell')), connect: Boolean(document.querySelector('.connect-screen')), splash: Boolean(document.querySelector('.splash')), imageCount: document.images.length, images: Array.from(document.images).slice(0, 20).map((image) => ({ complete: image.complete, width: image.naturalWidth })), layout: { batchPage: Boolean(document.querySelector('.batch-page')), viewportHeight: window.innerHeight, documentHeight: document.documentElement.scrollHeight, verticalOverflow: document.documentElement.scrollHeight > window.innerHeight } })");
           console.log(`ESSE_QA_STATE=${renderedState}`);
           const layout = (JSON.parse(renderedState) as { layout?: { batchPage?: boolean; verticalOverflow?: boolean } }).layout;
           if (layout?.batchPage && layout.verticalOverflow) {
@@ -565,6 +636,19 @@ async function createNativeImagePreview(filePath: string, maxDimension: number):
   return { data: resized.toPNG().toString('base64'), mimeType: 'image/png' };
 }
 
+function createThumbnailPng(filePath: string, maxDimension: number): Buffer {
+  const source = nativeImage.createFromPath(filePath);
+  if (source.isEmpty()) throw new Error('The local image could not be decoded for its thumbnail.');
+  const size = source.getSize();
+  const ratio = Math.min(1, maxDimension / Math.max(size.width, size.height));
+  const resized = ratio < 1
+    ? source.resize({ width: Math.max(1, Math.round(size.width * ratio)), height: Math.max(1, Math.round(size.height * ratio)), quality: 'good' })
+    : source;
+  const bytes = resized.toPNG();
+  if (!bytes.length) throw new Error('The local image thumbnail could not be encoded.');
+  return bytes;
+}
+
 async function broadcastState(): Promise<void> {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send('state:changed', await loadState());
@@ -582,6 +666,10 @@ function requiredId(value: unknown, kind: string): string {
 function applyQaFixture(state: DesktopState): DesktopState {
   if (!qaCapturePath) return state;
   if (qaFixture === 'batch-library') return batchLibraryQaFixture(state);
+  if (qaFixture === 'thumbnail-cache' || qaFixture === 'thumbnail-stress') {
+    const offering = state.batches[0]?.offering || WORKBUDDY_AGENT_OFFERING;
+    return { ...state, configured: true, offerings: [offering], defaultOfferingId: offering.id };
+  }
   if (qaFixture !== 'three-images') return state;
   const baseImage = state.images[0];
   const baseBatch = state.batches[0];

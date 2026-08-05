@@ -5,7 +5,7 @@ import { decodeImageBase64, detectImageFormat, MAX_IMAGE_BYTES } from './image-f
 import { downloadRemoteImage } from './remote-image-download';
 import type { SavedImage } from './types';
 
-interface StoredImage extends Omit<SavedImage, 'mediaUrl'> {
+interface StoredImage extends Omit<SavedImage, 'mediaUrl' | 'thumbnailUrl'> {
   relativePath: string;
   batchLinks?: string[];
   hidden?: boolean;
@@ -34,7 +34,7 @@ export class ImageStore {
       const fullPath = this.resolveRelative(image.relativePath);
       try {
         await access(fullPath);
-        visible.push({ ...image, mediaUrl: this.mediaUrlFor(fullPath) });
+        visible.push(this.savedImage(image, fullPath));
       } catch { /* omit missing user files without deleting library history */ }
     }
     return visible.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
@@ -46,7 +46,7 @@ export class ImageStore {
     const fullPath = this.resolveRelative(image.relativePath);
     try {
       await access(fullPath);
-      return { ...image, mediaUrl: this.mediaUrlFor(fullPath) };
+      return this.savedImage(image, fullPath);
     } catch {
       return undefined;
     }
@@ -79,7 +79,7 @@ export class ImageStore {
         const fullPath = this.resolveRelative(image.relativePath);
         try {
           await access(fullPath);
-          available.push({ ...image, mediaUrl: this.mediaUrlFor(fullPath) });
+          available.push(this.savedImage(image, fullPath));
         } catch { /* a replay may restore a user-deleted local file below */ }
       }
       if (available.length === existing.length) return available;
@@ -114,7 +114,7 @@ export class ImageStore {
     }
     library.images.unshift(...stored);
     await this.writeLibrary(library);
-    return stored.map((image) => ({ ...image, mediaUrl: this.mediaUrlFor(this.resolveRelative(image.relativePath)) }));
+    return stored.map((image) => this.savedImage(image, this.resolveRelative(image.relativePath)));
   }
 
   async pathForId(id: string): Promise<string> {
@@ -189,7 +189,7 @@ export class ImageStore {
       const fullPath = this.resolveRelative(existing.relativePath);
       try {
         await access(fullPath);
-        return { ...existing, mediaUrl: this.mediaUrlFor(fullPath) };
+        return this.savedImage(existing, fullPath);
       } catch { /* restore a missing imported file below */ }
     }
     const source = path.resolve(input.sourcePath);
@@ -215,7 +215,7 @@ export class ImageStore {
       hidden: input.hidden,
     };
     await this.updateLibrary((library) => { library.images.unshift(stored); });
-    return { ...stored, mediaUrl: this.mediaUrlFor(destination) };
+    return this.savedImage(stored, destination);
   }
 
   async trash(ids: string[]): Promise<string[]> {
@@ -253,7 +253,15 @@ export class ImageStore {
   }
 
   resolveMediaRequest(urlText: string): string {
-    const rawPath = urlText.replace(/^esse-media:\/\/local\/?/i, '').split(/[?#]/, 1)[0];
+    return this.resolveProtocolRequest(urlText, 'local');
+  }
+
+  resolveThumbnailRequest(urlText: string): string {
+    return this.resolveProtocolRequest(urlText, 'thumbnail');
+  }
+
+  private resolveProtocolRequest(urlText: string, hostname: 'local' | 'thumbnail'): string {
+    const rawPath = urlText.replace(new RegExp(`^esse-media:\\/\\/${hostname}\\/?`, 'i'), '').split(/[?#]/, 1)[0];
     for (const rawSegment of rawPath.split('/')) {
       const segment = decodeURIComponent(rawSegment);
       if (segment === '.' || segment === '..' || segment.includes('/') || segment.includes('\\')) {
@@ -261,16 +269,28 @@ export class ImageStore {
       }
     }
     const url = new URL(urlText);
-    if (url.protocol !== 'esse-media:' || url.hostname !== 'local') throw new Error('Invalid media URL.');
+    if (url.protocol !== 'esse-media:' || url.hostname !== hostname) throw new Error('Invalid media URL.');
     const relative = url.pathname.split('/').filter(Boolean).map(decodeURIComponent).join(path.sep);
     return this.resolveRelative(relative);
   }
 
   private mediaUrlFor(fullPath: string): string {
+    return this.protocolUrlFor(fullPath, 'local');
+  }
+
+  private thumbnailUrlFor(fullPath: string): string {
+    return this.protocolUrlFor(fullPath, 'thumbnail');
+  }
+
+  private protocolUrlFor(fullPath: string, hostname: 'local' | 'thumbnail'): string {
     const relative = path.relative(this.outputDir, fullPath);
     if (relative.startsWith('..') || path.isAbsolute(relative)) throw new Error('Image is outside the Esse output directory.');
     const encoded = relative.split(path.sep).map(encodeURIComponent).join('/');
-    return `esse-media://local/${encoded}`;
+    return `esse-media://${hostname}/${encoded}`;
+  }
+
+  private savedImage(image: StoredImage, fullPath: string): SavedImage {
+    return { ...image, mediaUrl: this.mediaUrlFor(fullPath), thumbnailUrl: this.thumbnailUrlFor(fullPath) };
   }
 
   private resolveRelative(relative: string): string {

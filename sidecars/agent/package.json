@@ -1,7 +1,7 @@
 {
   "name": "@esse/community-sidecar",
   "productName": "Esse Community",
-  "version": "0.3.3-alpha.1",
+  "version": "0.3.3-alpha.2",
   "description": "Esse local image workspace and Agent harness integration",
   "main": ".vite/build/main.js",
   "private": false,
@@ -14,6 +14,7 @@
     "make:macos:x64": "electron-forge make --platform=darwin --arch=x64",
     "stage:release": "node scripts/stage-release.mjs",
     "e2e:live:banana-1k": "node scripts/live-provider-e2e.mjs",
+    "e2e:thumbnails": "tsx scripts/thumbnail-e2e.ts",
     "publish": "electron-forge publish",
     "smoke": "tsx scripts/smoke.ts",
     "verify:signatures": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-signatures.ps1",
