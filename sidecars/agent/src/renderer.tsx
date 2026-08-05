@@ -44,8 +44,73 @@ import product from '../product.json';
 
 const esseIconUrl = new URL('../assets/esse.png', import.meta.url).href;
 const windowTitle = formatWindowTitle(product.displayName, packageMetadata.version);
+const THUMBNAIL_ROOT_MARGIN = '800px 0px';
+const deferredImageListeners = new Map<Element, (nearViewport: boolean) => void>();
+let deferredImageObserver: IntersectionObserver | undefined;
 
 type Tab = 'batches' | 'browse' | 'settings';
+
+type DeferredImageProps = Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src' | 'loading' | 'decoding'> & {
+  previewSrc: string;
+  originalSrc: string;
+};
+
+function observeDeferredImage(element: HTMLImageElement, listener: (nearViewport: boolean) => void): () => void {
+  if (typeof IntersectionObserver === 'undefined') {
+    listener(true);
+    return () => undefined;
+  }
+  deferredImageObserver ??= new IntersectionObserver((entries) => {
+    for (const entry of entries) deferredImageListeners.get(entry.target)?.(entry.isIntersecting);
+  }, { rootMargin: THUMBNAIL_ROOT_MARGIN });
+  deferredImageListeners.set(element, listener);
+  deferredImageObserver.observe(element);
+  return () => {
+    deferredImageListeners.delete(element);
+    deferredImageObserver?.unobserve(element);
+    if (!deferredImageListeners.size) {
+      deferredImageObserver?.disconnect();
+      deferredImageObserver = undefined;
+    }
+  };
+}
+
+function DeferredImage({ previewSrc, originalSrc, onError, ...props }: DeferredImageProps) {
+  const imageRef = useRef<HTMLImageElement>(null);
+  const [nearViewport, setNearViewport] = useState(() => typeof IntersectionObserver === 'undefined');
+  const [useOriginal, setUseOriginal] = useState(false);
+
+  useEffect(() => setUseOriginal(false), [originalSrc, previewSrc]);
+  useEffect(() => {
+    const element = imageRef.current;
+    if (!element) {
+      setNearViewport(true);
+      return;
+    }
+    return observeDeferredImage(element, setNearViewport);
+  }, []);
+
+  const source = useOriginal ? originalSrc : previewSrc;
+  return <img
+    {...props}
+    ref={imageRef}
+    src={nearViewport ? source : undefined}
+    data-preview-src={previewSrc}
+    loading="lazy"
+    decoding="async"
+    onError={(event) => {
+      if (!useOriginal && previewSrc !== originalSrc) {
+        setUseOriginal(true);
+        return;
+      }
+      onError?.(event);
+    }}
+  />;
+}
+
+function deferredImageProps(image: SavedImage): Pick<DeferredImageProps, 'previewSrc' | 'originalSrc'> {
+  return { previewSrc: image.thumbnailUrl || image.mediaUrl, originalSrc: image.mediaUrl };
+}
 
 const emptyState: DesktopState = {
   configured: false,
@@ -364,7 +429,7 @@ function BatchWorkspace(props: {
     }}>
       {targetIds.length ? <div className="composer-attachments">{targetIds.map((id) => {
         const image = props.imagesById.get(id);
-        return image ? <button key={id} type="button" title="移除这张图片" onClick={() => props.onToggleSelected(id)}><img src={image.mediaUrl} alt="" /><X size={11} /></button> : null;
+        return image ? <button key={id} type="button" title="移除这张图片" onClick={() => props.onToggleSelected(id)}><DeferredImage {...deferredImageProps(image)} alt="" /><X size={11} /></button> : null;
       })}</div> : null}
       <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} onKeyDown={(event) => {
         if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
@@ -455,7 +520,7 @@ function JobCard(props: { asset: GalleryAsset; referenceImages: SavedImage[]; se
     onBlur={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) { cancelPeekOpen(); setPeekPosition(undefined); } }}
   >
     <button className="image-card-stage" disabled={!image} onClick={() => image && props.onOpen(image.id)} onDoubleClick={(event) => { event.preventDefault(); if (image) props.onToggle(image.id); }} onContextMenu={(event) => image && props.onContextMenu(event, image.id)}>
-      {pending ? <ProcessingPreview images={props.referenceImages} prompt={asset.prompt} /> : image ? <img src={image.mediaUrl} alt={asset.prompt} /> : <JobPlaceholder prompt={asset.prompt} failed={job.status === 'failed'} />}
+      {pending ? <ProcessingPreview images={props.referenceImages} prompt={asset.prompt} /> : image ? <DeferredImage {...deferredImageProps(image)} alt={asset.prompt} /> : <JobPlaceholder prompt={asset.prompt} failed={job.status === 'failed'} />}
       <span className="image-name">{asset.name}</span>
       {props.selected ? <span className="selected-check"><Check size={13} weight="bold" /></span> : null}
       {pending ? <span className="status-overlay"><span className="spinner" />{job.status === 'queued' ? '等待中' : `生成中 ${Math.max(1, job.progress)}%`}</span> : null}
@@ -470,13 +535,13 @@ function PendingTaskPeek({ id, prompt, images, position, onPointerEnter, onPoint
   return <aside id={id} className="pending-task-peek" role="tooltip" data-placement={position.placement} style={{ left: position.left, top: position.top }} onPointerEnter={onPointerEnter} onPointerLeave={onPointerLeave}>
     <div className="pending-task-peek-heading"><strong>提示词</strong>{images.length ? <span>{images.length} 张参考图</span> : <span>无参考图</span>}</div>
     <p>{prompt}</p>
-    {images.length ? <div className="pending-task-references">{images.slice(0, 4).map((image) => <img key={image.id} src={image.mediaUrl} alt={image.sourceFileName || image.fileName} />)}{images.length > 4 ? <span>另有 {images.length - 4} 张</span> : null}</div> : null}
+    {images.length ? <div className="pending-task-references">{images.slice(0, 4).map((image) => <DeferredImage key={image.id} {...deferredImageProps(image)} alt={image.sourceFileName || image.fileName} />)}{images.length > 4 ? <span>另有 {images.length - 4} 张</span> : null}</div> : null}
   </aside>;
 }
 
 function ProcessingPreview({ images, prompt }: { images: SavedImage[]; prompt: string }) {
   if (!images.length) return <JobPlaceholder prompt={prompt} failed={false} />;
-  return <div className={`processing-preview count-${Math.min(images.length, 4)}`}>{images.slice(0, 4).map((image) => <img key={image.id} src={image.mediaUrl} alt="参考图" />)}<span className="processing-tint" /></div>;
+  return <div className={`processing-preview count-${Math.min(images.length, 4)}`}>{images.slice(0, 4).map((image) => <DeferredImage key={image.id} {...deferredImageProps(image)} alt="参考图" />)}<span className="processing-tint" /></div>;
 }
 
 function JobPlaceholder({ prompt, failed }: { prompt: string; failed: boolean }) {
@@ -509,7 +574,7 @@ function TaskDetailDialog({ asset, imagesById, onClose }: { asset: GalleryAsset;
         {metadata.available ? <><div><span>尺寸</span><strong>{metadata.width} × {metadata.height}</strong></div><div><span>文件</span><strong>{formatBytes(metadata.sizeBytes || 0)}</strong></div></> : null}
       </div>
       <div className="detail-section"><h3>提示词</h3><p>{asset.prompt}</p></div>
-      {references.length ? <div className="detail-section"><h3>参考图片 · {references.length}</h3><div className="detail-reference-grid">{references.map((image) => <figure key={image.id}><img src={image.mediaUrl} alt={image.sourceFileName || image.fileName} /><figcaption title={image.sourceFileName || image.fileName}>{image.sourceFileName || image.fileName}</figcaption></figure>)}</div></div> : null}
+      {references.length ? <div className="detail-section"><h3>参考图片 · {references.length}</h3><div className="detail-reference-grid">{references.map((image) => <figure key={image.id}><DeferredImage {...deferredImageProps(image)} alt={image.sourceFileName || image.fileName} /><figcaption title={image.sourceFileName || image.fileName}>{image.sourceFileName || image.fileName}</figcaption></figure>)}</div></div> : null}
       <div className="detail-section"><h3>调用记录</h3>{job.callHistory.length ? <div className="call-history">{job.callHistory.map((call, index) => <article key={call.id}>
         <div><strong>#{call.sequence || index + 1} · {call.status === 'succeeded' ? '成功' : call.status === 'failed' ? '失败' : call.status === 'running' ? '进行中' : '已取消'}</strong><span>{callSourceLabel(call.source, call.offering?.providerName || asset.offering.providerName)}</span></div>
         <dl><dt>模型</dt><dd>{call.offering?.displayName || asset.offering.displayName}</dd><dt>扣费</dt><dd>{chargeText(call.chargeState)}</dd><dt>耗时</dt><dd>{formatDuration(call.durationMs)}</dd><dt>开始</dt><dd>{new Date(call.startedAt).toLocaleString()}</dd>{call.requestId ? <><dt>Request ID</dt><dd><code>{call.requestId}</code></dd></> : null}</dl>
@@ -589,7 +654,7 @@ function BatchLibraryCard(props: {
   return <article className={`batch-library-card is-${state} ${props.recent ? 'is-recent' : ''}`}>
     <button type="button" className="batch-library-open" onClick={() => props.onOpen(batch.id)}>
       <div className={`batch-thumbs count-${Math.min(3, previews.length)}`} style={{ '--batch-progress': `${progress.percent}%` } as React.CSSProperties}>
-        {previews.slice(0, 3).map((image) => <span className="batch-thumb-cell" key={image.id}><img src={image.mediaUrl} alt="" /></span>)}
+        {previews.slice(0, 3).map((image) => <span className="batch-thumb-cell" key={image.id}><DeferredImage {...deferredImageProps(image)} alt="" /></span>)}
         {!previews.length ? <span className="batch-thumb-cell empty-thumb"><ImageSquare size={22} /></span> : null}
         <span className="batch-state-mask">
           <span className="batch-state-label">{state === 'active' ? <span className="spinner" /> : state === 'error' ? <WarningCircle size={16} weight="fill" /> : <CheckCircle size={16} weight="fill" />}<strong>{status}</strong></span>

@@ -115,6 +115,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run e2e:thumbnails
       - name: Resolve Windows signing mode
         id: windows-signing
         shell: pwsh
@@ -199,6 +200,7 @@ jobs:
           cache: npm
           cache-dependency-path: sidecars/agent/package-lock.json
       - run: npm ci
+      - run: npm run e2e:thumbnails
       - name: Resolve macOS signing mode
         id: macos-signing
         shell: bash

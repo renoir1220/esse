@@ -98,6 +98,7 @@ export interface SavedImage {
   id: string;
   requestId: string;
   mediaUrl: string;
+  thumbnailUrl?: string;
   fileName: string;
   sourceFileName?: string;
   prompt: string;

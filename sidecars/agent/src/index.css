@@ -116,7 +116,7 @@ input:focus-visible, textarea:focus-visible { border-color: var(--focus); box-sh
 .batch-workspace { min-height: 0; }
 .image-grid { display: grid; grid-template-columns: repeat(auto-fill, var(--gallery-thumbnail-size)); align-items: start; justify-content: start; gap: 11px; }
 .batch-workspace.is-single .image-grid { grid-template-columns: var(--gallery-thumbnail-size); }
-.image-card { min-width: 0; overflow: hidden; border: 0; border-radius: 8px; background: transparent; }
+.image-card { min-width: 0; overflow: hidden; border: 0; border-radius: 8px; background: transparent; content-visibility: auto; contain-intrinsic-size: 182px 224px; }
 .image-card[data-pending-task="true"]:focus-visible { outline: 0; }
 .image-card[data-pending-task="true"]:focus-visible .image-card-stage { border-color: var(--focus); box-shadow: 0 0 0 2px color-mix(in srgb, var(--focus) 18%, transparent); }
 .image-card-stage { position: relative; width: 100%; aspect-ratio: 1; display: grid; place-items: center; overflow: hidden; padding: 0; border: 1px solid transparent; border-radius: 7px; background: var(--surface-2); cursor: zoom-in; transition: border-color 120ms ease, box-shadow 120ms ease; }
@@ -207,7 +207,7 @@ input:focus-visible, textarea:focus-visible { border-color: var(--focus); box-sh
 .batch-library-group { min-width: 0; }
 .batch-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 8px; }
 .batch-library-divider { height: 1px; margin: 5px 3px; background: linear-gradient(90deg, var(--border), color-mix(in srgb, var(--border) 28%, transparent) 65%, transparent); }
-.batch-library-card { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; overflow: hidden; border: 1px solid transparent; border-radius: 11px; background: transparent; transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease; }
+.batch-library-card { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; overflow: hidden; border: 1px solid transparent; border-radius: 11px; background: transparent; content-visibility: auto; contain-intrinsic-size: auto 90px; transition: border-color 120ms ease, background-color 120ms ease, box-shadow 120ms ease; }
 .batch-library-card.is-recent { border-color: var(--border); background: var(--surface); box-shadow: 0 2px 9px rgba(25,27,24,.035); }
 .batch-library-card:hover { border-color: var(--border-strong); background: var(--surface-2); }
 .batch-library-open { min-width: 0; min-height: 88px; display: grid; grid-template-columns: 138px minmax(0, 1fr); align-items: center; gap: 12px; padding: 9px; border: 0; outline: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }

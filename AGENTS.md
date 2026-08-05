@@ -13,6 +13,8 @@ When a user asks Codex to install Esse Community from this repository or provide
 
 For development work, preserve user-generated `inputs/`, `outputs/`, internal QA screenshots, and local credentials. They are not release artifacts and must not be committed.
 
+Gallery grids, batch-browser cards, reference lists, and other repeated image surfaces must use bounded cached previews rather than decoding original files as thumbnails. Keep preview loading viewport-scoped, unload far-off decoded images, preserve the original aspect ratio with UI-provided letterboxing, and reserve original-file URLs for explicit full-image, download, copy, export, or Provider-reference operations. Any change to this path must pass the high-resolution thumbnail stress E2E before release.
+
 ## Repository architecture
 
 - `plugins/codex` contains the Codex Plugin.
