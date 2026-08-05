@@ -84,6 +84,13 @@ for _ in $(seq 1 45); do
 done
 if kill -0 "$smoke_pid" 2>/dev/null; then
   kill "$smoke_pid" 2>/dev/null || true
+  for _ in $(seq 1 5); do
+    if ! kill -0 "$smoke_pid" 2>/dev/null; then break; fi
+    sleep 1
+  done
+  if kill -0 "$smoke_pid" 2>/dev/null; then
+    kill -KILL "$smoke_pid" 2>/dev/null || true
+  fi
   wait "$smoke_pid" 2>/dev/null || true
   cat "$smoke_log" >&2
   echo "Packaged macOS app smoke test timed out." >&2

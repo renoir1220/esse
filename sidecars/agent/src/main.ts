@@ -12,6 +12,7 @@ import { DesktopSettingsStore } from './desktop-settings';
 import { configureWorkBuddyForDevelopment } from './dev-bootstrap';
 import { ImageStore } from './image-store';
 import { McpPairingStore } from './mcp-pairing-store';
+import { resolveSessionPairingToken } from './mcp-pairing-policy';
 import { DEFAULT_MCP_PORT, startDesktopMcpServer, type RunningDesktopMcpServer } from './mcp-server';
 import { ProviderSettingsStore } from './provider-settings';
 import { ThumbnailStore } from './thumbnail-store';
@@ -602,7 +603,10 @@ async function loadState(): Promise<DesktopState> {
 
 async function startMcpBridge(): Promise<void> {
   try {
-    const pairingToken = await mcpPairingStore.getOrCreate();
+    const pairingToken = await resolveSessionPairingToken({
+      ephemeral: smokeMode || Boolean(qaCapturePath),
+      persistent: () => mcpPairingStore.getOrCreate(),
+    });
     mcpServer = await startDesktopMcpServer({
       pairingToken,
       port: smokeMode || Boolean(qaCapturePath) ? 0 : DEFAULT_MCP_PORT,
