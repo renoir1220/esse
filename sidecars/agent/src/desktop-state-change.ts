@@ -1,6 +1,6 @@
 import type { DesktopState, DesktopStateChange } from './types';
 
-export function applyDesktopStateChange(state: DesktopState, change: DesktopStateChange): DesktopState {
+export function applyDesktopStateChange<T extends DesktopState>(state: T, change: DesktopStateChange): T {
   if (change.type === 'activate') return { ...state, activeBatchId: change.activeBatchId };
   if (change.type === 'batch-delete') {
     return { ...state, batches: state.batches.filter((batch) => batch.id !== change.batchId), activeBatchId: change.activeBatchId };

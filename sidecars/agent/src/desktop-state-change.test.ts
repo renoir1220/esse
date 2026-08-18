@@ -8,7 +8,7 @@ describe('desktop state changes', () => {
     const second = batch('batch-second', '2026-08-18T02:00:00.000Z');
     const oldImage = image('image-old');
     const unrelatedImage = image('image-unrelated');
-    const state = desktopState([second, first], [oldImage, unrelatedImage]);
+    const state = { ...desktopState([second, first], [oldImage, unrelatedImage]), editionState: 'preserved' };
     const updated = { ...first, updatedAt: '2026-08-18T03:00:00.000Z', running: 1, queued: 0, status: 'running' as const };
     const nextImage = image('image-next');
 
@@ -25,6 +25,7 @@ describe('desktop state changes', () => {
     expect(next.images.map((candidate) => candidate.id).sort()).toEqual([nextImage.id, unrelatedImage.id].sort());
     expect(next.providers).toBe(state.providers);
     expect(next.offerings).toBe(state.offerings);
+    expect(next.editionState).toBe('preserved');
   });
 });
 
