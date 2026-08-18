@@ -19,6 +19,9 @@ interface LibraryFile {
 export class ImageStore {
   readonly outputDir: string;
   private readonly libraryPath: string;
+  private libraryPromise: Promise<LibraryFile> | undefined;
+  private imageIndex = new Map<string, StoredImage>();
+  private visibleCache: SavedImage[] | undefined;
   private writeQueue: Promise<void> = Promise.resolve();
 
   constructor(private readonly dataDir: string) {
@@ -27,6 +30,7 @@ export class ImageStore {
   }
 
   async list(): Promise<SavedImage[]> {
+    if (this.visibleCache) return this.visibleCache.slice();
     const library = await this.readLibrary();
     const visible: SavedImage[] = [];
     for (const image of library.images) {
@@ -37,11 +41,13 @@ export class ImageStore {
         visible.push(this.savedImage(image, fullPath));
       } catch { /* omit missing user files without deleting library history */ }
     }
-    return visible.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    this.visibleCache = visible.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return this.visibleCache.slice();
   }
 
   async get(id: string): Promise<SavedImage | undefined> {
-    const image = (await this.readLibrary()).images.find((candidate) => candidate.id === id);
+    await this.readLibrary();
+    const image = this.imageIndex.get(id);
     if (!image) return undefined;
     const fullPath = this.resolveRelative(image.relativePath);
     try {
@@ -50,6 +56,17 @@ export class ImageStore {
     } catch {
       return undefined;
     }
+  }
+
+  async getMany(ids: Iterable<string>): Promise<SavedImage[]> {
+    await this.readLibrary();
+    const idsToRead = [...new Set(ids)];
+    const images: SavedImage[] = [];
+    for (let offset = 0; offset < idsToRead.length; offset += 16) {
+      const chunk = await Promise.all(idsToRead.slice(offset, offset + 16).map((id) => this.get(id)));
+      images.push(...chunk.filter((image): image is SavedImage => Boolean(image)));
+    }
+    return images;
   }
 
   async saveBatch(input: {
@@ -114,11 +131,13 @@ export class ImageStore {
     }
     library.images.unshift(...stored);
     await this.writeLibrary(library);
+    this.addToIndex(stored);
     return stored.map((image) => this.savedImage(image, this.resolveRelative(image.relativePath)));
   }
 
   async pathForId(id: string): Promise<string> {
-    const image = (await this.readLibrary()).images.find((candidate) => candidate.id === id);
+    await this.readLibrary();
+    const image = this.imageIndex.get(id);
     if (!image) throw new Error('Image not found.');
     const fullPath = this.resolveRelative(image.relativePath);
     await access(fullPath);
@@ -215,6 +234,7 @@ export class ImageStore {
       hidden: input.hidden,
     };
     await this.updateLibrary((library) => { library.images.unshift(stored); });
+    this.addToIndex([stored]);
     return this.savedImage(stored, destination);
   }
 
@@ -249,6 +269,7 @@ export class ImageStore {
       }
       library.images = retained;
     });
+    this.removeFromIndex(removed);
     return removed;
   }
 
@@ -321,20 +342,57 @@ export class ImageStore {
   }
 
   private async readLibrary(): Promise<LibraryFile> {
+    this.libraryPromise ??= this.loadLibrary();
+    return this.libraryPromise;
+  }
+
+  private async loadLibrary(): Promise<LibraryFile> {
+    let library: LibraryFile;
     try {
       const parsed = JSON.parse(await readFile(this.libraryPath, 'utf8')) as LibraryFile;
-      return parsed.version === 1 && Array.isArray(parsed.images) ? parsed : { version: 1, images: [] };
+      library = parsed.version === 1 && Array.isArray(parsed.images) ? parsed : { version: 1, images: [] };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { version: 1, images: [] };
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      library = { version: 1, images: [] };
+    }
+    this.reindex(library);
+    return library;
+  }
+
+  private async writeLibrary(library: LibraryFile): Promise<void> {
+    try {
+      await mkdir(this.dataDir, { recursive: true });
+      const temporary = `${this.libraryPath}.tmp`;
+      await writeFile(temporary, JSON.stringify(library, null, 2), { encoding: 'utf8', mode: 0o600 });
+      await rename(temporary, this.libraryPath);
+    } catch (error) {
+      this.libraryPromise = undefined;
+      this.imageIndex.clear();
+      this.visibleCache = undefined;
       throw error;
     }
   }
 
-  private async writeLibrary(library: LibraryFile): Promise<void> {
-    await mkdir(this.dataDir, { recursive: true });
-    const temporary = `${this.libraryPath}.tmp`;
-    await writeFile(temporary, JSON.stringify(library, null, 2), { encoding: 'utf8', mode: 0o600 });
-    await rename(temporary, this.libraryPath);
+  private reindex(library: LibraryFile): void {
+    this.imageIndex = new Map(library.images.map((image) => [image.id, image]));
+    this.visibleCache = undefined;
+  }
+
+  private addToIndex(images: StoredImage[]): void {
+    for (const image of images) this.imageIndex.set(image.id, image);
+    if (!this.visibleCache) return;
+    const added = images
+      .filter((image) => !image.hidden)
+      .map((image) => this.savedImage(image, this.resolveRelative(image.relativePath)));
+    this.visibleCache = [...added, ...this.visibleCache].sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  private removeFromIndex(ids: string[]): void {
+    for (const id of ids) this.imageIndex.delete(id);
+    if (this.visibleCache) {
+      const removed = new Set(ids);
+      this.visibleCache = this.visibleCache.filter((image) => !removed.has(image.id));
+    }
   }
 
   private async updateLibrary(mutate: (library: LibraryFile) => void | Promise<void>): Promise<void> {

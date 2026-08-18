@@ -44,10 +44,11 @@ export class EsseApiClient {
 
   async edit(input: GenerateInput, sourcePaths: string[], _idempotencyKey: string = randomUUID()): Promise<ApiGenerateResult> {
     if (!sourcePaths.length || sourcePaths.length > 20) throw new Error('Provide between 1 and 20 source images.');
-    const images = await Promise.all(sourcePaths.map(async (sourcePath) => {
+    const images: string[] = [];
+    for (const sourcePath of sourcePaths) {
       const bytes = await readFile(sourcePath);
-      return `data:${mimeFor(sourcePath)};base64,${bytes.toString('base64')}`;
-    }));
+      images.push(`data:${mimeFor(sourcePath)};base64,${bytes.toString('base64')}`);
+    }
     return this.request(input, images);
   }
 

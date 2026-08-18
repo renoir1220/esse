@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EsseApiError } from './api-client';
-import { BatchManager } from './batch-manager';
+import { BatchManager, type BatchManagerChange } from './batch-manager';
 import { BatchStore } from './batch-store';
 import { ImageStore } from './image-store';
 
@@ -16,6 +16,20 @@ afterEach(async () => {
 });
 
 describe('Esse batch manager', () => {
+  it('publishes a batch-local change after durable acceptance', async () => {
+    const fixture = await fixtureDirectory();
+    const changes: BatchManagerChange[] = [];
+    const manager = managerFor(fixture, fakeApi(), { canRun: async () => false, onChanged: (change) => { changes.push(change); } });
+    await manager.initialize();
+
+    const accepted = await manager.create({ prompt: 'local change', requestKey: 'batch-local-change' });
+
+    expect(changes).toHaveLength(1);
+    expect(changes[0]).toMatchObject({ type: 'upsert', batch: { id: accepted.id, status: 'queued' } });
+    expect(changes[0]).not.toHaveProperty('images');
+    expect(changes[0]).not.toHaveProperty('batches');
+  });
+
   it('uses the configured Provider price silently when the legacy estimate is omitted', async () => {
     const fixture = await fixtureDirectory();
     const manager = managerFor(fixture, fakeApi(), { canRun: async () => false });
@@ -60,6 +74,37 @@ describe('Esse batch manager', () => {
     pending.get('blue beetle')!(generatedResult('blue'));
     pending.get('red beetle')!(generatedResult('red'));
     await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('completed'));
+  });
+
+  it('uses a bounded default and gives each batch a scheduling turn', async () => {
+    const fixture = await fixtureDirectory();
+    let runnable = false;
+    const pending: Array<(value: ReturnType<typeof generatedResult>) => void> = [];
+    const generate = vi.fn((_input?: unknown) => new Promise<ReturnType<typeof generatedResult>>((resolve) => pending.push(resolve)));
+    const manager = managerFor(fixture, { ...fakeApi(), generate }, { canRun: async () => runnable });
+    await manager.initialize();
+    await manager.create({
+      title: 'First batch',
+      jobs: [{ prompt: 'first-1' }, { prompt: 'first-2' }, { prompt: 'first-3' }],
+      requestKey: 'bounded-first-batch',
+    });
+    await manager.create({
+      title: 'Second batch',
+      jobs: [{ prompt: 'second-1' }],
+      requestKey: 'bounded-second-batch',
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    runnable = true;
+    manager.resume();
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(3));
+
+    const prompts = generate.mock.calls.map(([input]) => (input as { prompt: string }).prompt);
+    expect(new Set(prompts.slice(0, 2))).toEqual(new Set(['first-1', 'second-1']));
+    expect(prompts[2]).toBe('first-2');
+    pending.splice(0).forEach((resolve, index) => resolve(generatedResult(`bounded-${index}`)));
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(4));
+    pending.splice(0).forEach((resolve) => resolve(generatedResult('bounded-final')));
   });
 
   it('waits for background generation and persistence before reporting idle', async () => {
@@ -152,7 +197,7 @@ describe('Esse batch manager', () => {
     expect(generate).toHaveBeenCalledTimes(2);
   });
 
-  it('automatically retries definitely-not-charged transient failures three times', async () => {
+  it('reports a definitely-not-charged transient failure without automatic retries', async () => {
     const fixture = await fixtureDirectory();
     const generate = vi.fn(async () => {
       throw new EsseApiError('Provider is temporarily unavailable.', { code: 'provider_unavailable', status: 503, chargeState: 'not_charged', origin: 'upstream' });
@@ -161,14 +206,14 @@ describe('Esse batch manager', () => {
     await manager.initialize();
     const accepted = await manager.create({
       prompt: 'safe retry',
-      requestKey: 'safe-auto-retry-request',
+      requestKey: 'no-auto-retry-request',
       approvedEstimatedCostMicros: 100_000,
     });
-    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(4));
     await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('failed'));
     const job = manager.get(accepted.id).jobs[0];
-    expect(job).toMatchObject({ attempt: 4, chargeState: 'not_charged', retryable: true });
-    expect(job.callHistory).toHaveLength(4);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(job).toMatchObject({ attempt: 1, chargeState: 'not_charged', retryable: true });
+    expect(job.callHistory).toHaveLength(1);
     expect(job.callHistory.every((call) => call.chargeState === 'not_charged')).toBe(true);
     expect(job.callHistory.every((call) => call.errorOrigin === 'upstream')).toBe(true);
   });
@@ -348,7 +393,7 @@ async function fixtureDirectory() {
 function managerFor(
   fixture: Awaited<ReturnType<typeof fixtureDirectory>>,
   api: ReturnType<typeof fakeApi>,
-  options: { concurrency?: number; canRun?: () => Promise<boolean> } = {},
+  options: { concurrency?: number; canRun?: () => Promise<boolean>; onChanged?: (change: BatchManagerChange) => void } = {},
 ) {
   const manager = new BatchManager({
     store: fixture.batchStore,
@@ -356,6 +401,7 @@ function managerFor(
     createApiClient: async () => api,
     concurrency: options.concurrency,
     canRun: options.canRun,
+    onChanged: options.onChanged,
   });
   managers.push(manager);
   return manager;

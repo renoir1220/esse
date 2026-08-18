@@ -5,7 +5,7 @@ import { pathToFileURL } from 'node:url';
 import started from 'electron-squirrel-startup';
 import { buildAgentSetupPrompt } from './agent-setup-prompt';
 import { EsseApiClient } from './api-client';
-import { BatchManager } from './batch-manager';
+import { BatchManager, type BatchManagerChange } from './batch-manager';
 import { BatchStore } from './batch-store';
 import { CredentialStore } from './credential-store';
 import { DesktopSettingsStore } from './desktop-settings';
@@ -17,7 +17,7 @@ import { DEFAULT_MCP_PORT, startDesktopMcpServer, type RunningDesktopMcpServer }
 import { ProviderSettingsStore } from './provider-settings';
 import { ThumbnailStore } from './thumbnail-store';
 import { ProviderNetworkTransport } from './provider-network';
-import { WORKBUDDY_AGENT_OFFERING, type DesktopState, type ModifyBatchInput, type SaveProviderInput } from './types';
+import { WORKBUDDY_AGENT_OFFERING, type DesktopState, type DesktopStateChange, type ModifyBatchInput, type SaveProviderInput } from './types';
 import { desktopWindowChrome, shouldRemoveWindowMenu } from './window-chrome';
 import { resolveSidecarUserDataPath, shouldQuitWhenAllWindowsClose } from './platform';
 import { batchReferenceText, imageIdReferenceText } from './reference-text';
@@ -59,6 +59,7 @@ let mcpServer: RunningDesktopMcpServer | undefined;
 let mcpError: string | undefined;
 let smokeTimer: NodeJS.Timeout | undefined;
 let smokeReported = false;
+const stateChangeQueues = new Map<string, Promise<void>>();
 
 const hasSingleInstanceLock = smokeMode || Boolean(qaCapturePath) || app.requestSingleInstanceLock();
 if (!hasSingleInstanceLock) app.quit();
@@ -557,10 +558,8 @@ async function loadState(): Promise<DesktopState> {
     ...job.referenceImageIds,
     ...job.backups.flatMap((backup) => backup.referenceImageIds ?? []),
   ]));
-  for (const imageId of [...new Set(referenceIds)]) {
-    if (visibleIds.has(imageId)) continue;
-    const image = await imageStore.get(imageId);
-    if (image) { images.push(image); visibleIds.add(image.id); }
+  for (const image of await imageStore.getMany(referenceIds)) {
+    if (!visibleIds.has(image.id)) { images.push(image); visibleIds.add(image.id); }
   }
   const mcp = {
     available: Boolean(mcpServer),
@@ -653,9 +652,36 @@ function createThumbnailPng(filePath: string, maxDimension: number): Buffer {
   return bytes;
 }
 
-async function broadcastState(): Promise<void> {
+function broadcastState(change: BatchManagerChange): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
-  mainWindow.webContents.send('state:changed', await loadState());
+  const key = change.type === 'activate' ? 'active-batch' : change.type === 'delete' ? change.batchId : change.batch.id;
+  const task = (stateChangeQueues.get(key) ?? Promise.resolve()).then(() => sendStateChange(change)).catch((error) => {
+    console.error('[esse] state update failed', error instanceof Error ? error.message : error);
+  });
+  stateChangeQueues.set(key, task);
+  void task.finally(() => {
+    if (stateChangeQueues.get(key) === task) stateChangeQueues.delete(key);
+  });
+}
+
+async function sendStateChange(change: BatchManagerChange): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  let message: DesktopStateChange;
+  if (change.type === 'upsert') {
+    message = {
+      type: 'batch-upsert',
+      batch: change.batch,
+      images: await imageStore.getMany(change.imageIds ?? []),
+      removedImageIds: change.removedImageIds ?? [],
+      activeBatchId: batchManager.getActiveId(),
+    };
+  } else if (change.type === 'delete') {
+    message = { type: 'batch-delete', batchId: change.batchId, activeBatchId: change.activeBatchId };
+  } else {
+    message = change;
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send('state:changed', message);
 }
 
 async function createApiClient(): Promise<EsseApiClient> {
