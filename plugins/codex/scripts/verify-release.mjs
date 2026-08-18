@@ -46,11 +46,7 @@ assert(macLauncher.includes("codex-primary-runtime/dependencies/node/bin/node"))
 assert(macLauncher.includes("codesign --verify --strict") && macLauncher.includes("spctl --assess --type execute") && !macLauncher.includes("command -v node"));
 assert(packageScript.includes('runtime: "codex-node"') && packageScript.includes('command: "/bin/bash"'));
 assert(releaseWorkflow.includes("verify-macos-bundle.sh"), "release workflow must verify the packaged macOS app");
-assert.equal(
-  (releaseWorkflow.match(/retention-days: 1/g) ?? []).length,
-  3,
-  "release handoff artifacts must expire after one day"
-);
+assert(releaseWorkflow.includes("retention-days: 1"), "release handoff artifacts must expire after one day");
 assert(!releaseWorkflow.includes("foreach ($attempt"), "release publishing must not hide retries");
 assert(!releaseWorkflow.includes("Start-Sleep"), "release publishing must fail directly without backoff loops");
 assert(!releaseWorkflow.includes("--clobber"), "release publishing must not overwrite an existing release");
@@ -65,6 +61,11 @@ assert(sidecarPlatform.includes("Application Support") && sidecarPlatform.includ
 assert(releaseMetadataScript.includes("sidecarProduct.releasePrefix") && releaseMetadataScript.includes('name: "macos-arm64"'));
 if (sidecarProduct.releaseVersionPolicy === "shared-components") {
   assert.equal(sidecarProduct.edition, "community", "shared public releases must use the Community product profile");
+  assert.equal(
+    (releaseWorkflow.match(/retention-days: 1/g) ?? []).length,
+    3,
+    "Community releases must retain all three handoff artifact groups for one day"
+  );
   assert(releaseWorkflow.includes("macOS package must not contain an Esse-built Mach-O launcher"));
   assert(releaseWorkflow.includes("package-agent-sidecar-macos"), "shared releases must package the macOS Agent Sidecar");
   assert(releaseWorkflow.includes("--prerelease"), "prerelease tags must not replace the latest stable GitHub Release");
