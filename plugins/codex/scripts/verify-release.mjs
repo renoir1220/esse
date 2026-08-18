@@ -46,6 +46,18 @@ assert(macLauncher.includes("codex-primary-runtime/dependencies/node/bin/node"))
 assert(macLauncher.includes("codesign --verify --strict") && macLauncher.includes("spctl --assess --type execute") && !macLauncher.includes("command -v node"));
 assert(packageScript.includes('runtime: "codex-node"') && packageScript.includes('command: "/bin/bash"'));
 assert(releaseWorkflow.includes("verify-macos-bundle.sh"), "release workflow must verify the packaged macOS app");
+assert.equal(
+  (releaseWorkflow.match(/retention-days: 1/g) ?? []).length,
+  3,
+  "release handoff artifacts must expire after one day"
+);
+assert(!releaseWorkflow.includes("foreach ($attempt"), "release publishing must not hide retries");
+assert(!releaseWorkflow.includes("Start-Sleep"), "release publishing must fail directly without backoff loops");
+assert(!releaseWorkflow.includes("--clobber"), "release publishing must not overwrite an existing release");
+assert(
+  releaseWorkflow.includes("refusing to overwrite it"),
+  "release publishing must fail when the immutable release already exists"
+);
 assert(sidecarForgeConfig.includes("WINDOWS_SQUIRREL_APP_ID"), "Windows installer identity must be isolated from Plugin data");
 assert(sidecarForgeConfig.includes("MakerDMG"), "Agent Sidecar must configure a macOS DMG");
 assert.equal(sidecarPackage.productName, sidecarProduct.displayName, "package and product names must match");

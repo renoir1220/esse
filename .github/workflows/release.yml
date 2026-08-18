@@ -95,7 +95,7 @@ jobs:
           name: esse-${{ matrix.target }}
           path: release/esse-${{ matrix.target }}-v*.zip
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   package-agent-sidecar:
     needs: verify
@@ -174,7 +174,7 @@ jobs:
           name: esse-community-windows-x64
           path: release/esse-community-windows-x64-v*.exe
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   package-agent-sidecar-macos:
     needs: verify
@@ -276,7 +276,7 @@ jobs:
           name: esse-community-macos-${{ matrix.arch }}
           path: release/esse-community-macos-${{ matrix.arch }}-v*.dmg
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 1
 
   publish:
     needs: [package, package-agent-sidecar, package-agent-sidecar-macos]
@@ -323,26 +323,19 @@ jobs:
           $tag = $env:GITHUB_REF_NAME
           $assets = Get-ChildItem -LiteralPath .\release -File | Select-Object -ExpandProperty FullName
           $releaseNotes = Get-Content -Raw -Encoding UTF8 .\.github\release-notes-prefix.md
-          $lastFailure = ""
-          foreach ($attempt in 1..5) {
-            $viewOutput = (& gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1 | Out-String)
-            $viewExit = $LASTEXITCODE
-            if ($viewExit -eq 0) {
-              $publishOutput = (& gh release upload $tag @assets --clobber 2>&1 | Out-String)
-              $publishExit = $LASTEXITCODE
-            } elseif ($viewOutput -match 'HTTP 404|Not Found') {
-              if ($tag -match "-") {
-                $publishOutput = (& gh release create $tag @assets --verify-tag --prerelease --title "Esse Community $tag" --notes $releaseNotes 2>&1 | Out-String)
-              } else {
-                $publishOutput = (& gh release create $tag @assets --verify-tag --title "Esse Community $tag" --notes $releaseNotes 2>&1 | Out-String)
-              }
-              $publishExit = $LASTEXITCODE
-            } else {
-              $publishOutput = $viewOutput
-              $publishExit = $viewExit
-            }
-            if ($publishExit -eq 0) { exit 0 }
-            $lastFailure = $publishOutput.Trim()
-            if ($attempt -lt 5) { Start-Sleep -Seconds ([Math]::Pow(2, $attempt)) }
+          $viewOutput = (& gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" 2>&1 | Out-String)
+          $viewExit = $LASTEXITCODE
+          if ($viewExit -eq 0) {
+            throw "GitHub Release $tag already exists; refusing to overwrite it."
           }
-          throw "GitHub Release publish failed after 5 attempts: $lastFailure"
+          if ($viewOutput -notmatch 'HTTP 404|Not Found') {
+            throw "Unable to verify whether GitHub Release $tag exists: $($viewOutput.Trim())"
+          }
+          if ($tag -match "-") {
+            $publishOutput = (& gh release create $tag @assets --verify-tag --prerelease --title "Esse Community $tag" --notes $releaseNotes 2>&1 | Out-String)
+          } else {
+            $publishOutput = (& gh release create $tag @assets --verify-tag --title "Esse Community $tag" --notes $releaseNotes 2>&1 | Out-String)
+          }
+          if ($LASTEXITCODE -ne 0) {
+            throw "GitHub Release publish failed: $($publishOutput.Trim())"
+          }
