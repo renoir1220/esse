@@ -256,6 +256,11 @@ export interface DesktopState {
   error?: string;
 }
 
+export type DesktopStateChange =
+  | { type: 'batch-upsert'; batch: BatchSnapshot; images: SavedImage[]; removedImageIds: string[]; activeBatchId?: string }
+  | { type: 'batch-delete'; batchId: string; activeBatchId?: string }
+  | { type: 'activate'; activeBatchId: string };
+
 export interface McpStatus {
   available: boolean;
   endpoint: string;
@@ -285,7 +290,7 @@ export interface EsseDesktopBridge {
   saveImage(id: string): Promise<string | undefined>;
   openBatchFolder(batchId: string): Promise<void>;
   copyAgentSetupPrompt(): Promise<void>;
-  onStateChanged(callback: (state: DesktopState) => void): () => void;
+  onStateChanged(callback: (change: DesktopStateChange) => void): () => void;
   onNavigate(callback: (input: { tab: 'batches' | 'settings'; batchId?: string }) => void): () => void;
   reportReady(details: { title: string; bridgeAvailable: boolean }): void;
 }

@@ -44,6 +44,24 @@ describe('desktop image store', () => {
     expect((await store.list()).filter((image) => image.requestId === 'request-replay')).toHaveLength(1);
   });
 
+  it('loads the library once and serves indexed lookups without reparsing it', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-desktop-test-'));
+    temporaryDirectories.push(directory);
+    const store = new ImageStore(directory);
+    const [saved] = await store.saveBatch({
+      requestId: 'request-indexed',
+      prompt: 'Indexed image',
+      model: 'test',
+      items: [{ b64_json: testPng('indexed-original').toString('base64') }],
+    });
+
+    await writeFile(path.join(directory, 'library.json'), '{invalid after initial load');
+
+    expect(await store.get(saved.id)).toMatchObject({ id: saved.id });
+    expect(await store.getMany([saved.id, saved.id])).toHaveLength(1);
+    expect((await store.list()).map((image) => image.id)).toEqual([saved.id]);
+  });
+
   it('collects one batch into a single output folder and removes managed links on trash', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-desktop-test-'));
     temporaryDirectories.push(directory);

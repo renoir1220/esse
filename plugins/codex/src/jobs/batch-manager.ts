@@ -49,7 +49,6 @@ type SelectedBatchImage =
 type ImageForDeletion =
   | { kind: "job"; job: JobRecord }
   | { kind: "backup"; job: JobRecord; backup: JobBackup };
-const AUTO_RETRY_LIMIT = 3;
 const MAX_BATCH_IMAGES = 50;
 
 export class BatchManager {
@@ -801,7 +800,6 @@ export class BatchManager {
     Object.assign(job, { status: "running", progress: 15, chargeState: "unknown", startedAt, error: undefined, errorOrigin: undefined });
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
-    let autoRetry = false;
     try {
       const adapter = await this.registry.adapterFor(resolved.profile);
       const generationInputs = generationInputsFor(job);
@@ -861,28 +859,12 @@ export class BatchManager {
         errorOrigin,
         providerRequestId: providerError?.details.requestId
       });
-      if (providerError?.details.retryable && providerError.details.chargeState === "not_charged" && job.attempt <= AUTO_RETRY_LIMIT) {
-        Object.assign(job, {
-          status: "queued",
-          progress: 0,
-          attempt: job.attempt + 1,
-          retryable: false,
-          chargeState: "not_charged",
-          error: `自动重试 ${job.attempt}/${AUTO_RETRY_LIMIT}：${job.error}`,
-          startedAt: undefined,
-          finishedAt: undefined,
-          durationMs: undefined
-        });
-        autoRetry = true;
-      }
     } finally {
       const finished = Date.now();
       Object.assign(call, { finishedAt: new Date(finished).toISOString(), durationMs: Math.max(0, finished - started) });
-      if (autoRetry) Object.assign(job, { finishedAt: undefined, durationMs: undefined });
-      else Object.assign(job, { finishedAt: new Date(finished).toISOString(), durationMs: finished - started });
+      Object.assign(job, { finishedAt: new Date(finished).toISOString(), durationMs: finished - started });
       batch.updatedAt = new Date().toISOString();
       await this.persist(batch);
-      if (autoRetry) this.schedule(batch, job, resolved);
     }
   }
 

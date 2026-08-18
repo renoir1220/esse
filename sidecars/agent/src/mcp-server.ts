@@ -25,7 +25,7 @@ interface DesktopMcpServerOptions {
   pairingToken: string;
   port?: number;
   batchManager: McpBatchManager;
-  imageStore: Pick<ImageStore, 'get' | 'importFile' | 'pathForId'>;
+  imageStore: Pick<ImageStore, 'get' | 'getMany' | 'importFile' | 'pathForId' | 'resolveMediaRequest'>;
   createImagePreview?: (filePath: string, maxDimension: number) => Promise<{ data: string; mimeType: string } | undefined>;
   onOpenRequested?: (input: { tab: 'batches' | 'settings'; batchId?: string }) => void | Promise<void>;
 }
@@ -350,7 +350,7 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
     inputSchema: { limit: z.number().int().min(1).max(50).default(20) },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ limit }) => toolResult(async () => ({
-    batches: await Promise.all(options.batchManager.list().slice(0, limit).map((batch) => enrichBatch(options, batch))),
+    batches: await enrichBatches(options, options.batchManager.list().slice(0, limit)),
   })));
 
   server.registerTool('get_image_batch', {
@@ -513,30 +513,41 @@ function resolveExistingReference(batch: BatchSnapshot, nameOrId: string): strin
 }
 
 async function enrichBatch(options: DesktopMcpServerOptions, batch: BatchSnapshot) {
-  const images = [];
-  for (const job of batch.jobs) {
-    if (job.outputImageId) images.push(await imageDescriptor(options, job.outputImageId, job.name, job.status));
-    else if (job.status === 'failed') {
-      for (const referenceImageId of job.referenceImageIds) {
-        const source = await options.imageStore.get(referenceImageId);
-        if (source) images.push(await imageDescriptor(options, referenceImageId, `${job.name} 原输入`, 'failed-source'));
-      }
-    }
-    for (const backup of job.backups) images.push(await imageDescriptor(options, backup.imageId, backup.name, 'backup'));
-  }
-  return { ...batch, images };
+  return (await enrichBatches(options, [batch]))[0];
 }
 
-async function imageDescriptor(options: DesktopMcpServerOptions, id: string, name: string, status: string) {
-  const image = await options.imageStore.get(id);
-  return {
-    id,
-    name,
-    status,
-    fileName: image?.fileName,
-    sourceFileName: image?.sourceFileName,
-    path: image ? await options.imageStore.pathForId(id) : undefined,
-  };
+async function enrichBatches(options: DesktopMcpServerOptions, batches: BatchSnapshot[]) {
+  const descriptors = batches.map(batchImageDescriptors);
+  const imagesById = new Map((await options.imageStore.getMany(descriptors.flat().map((descriptor) => descriptor.id))).map((image) => [image.id, image]));
+  return batches.map((batch, index) => ({
+    ...batch,
+    images: descriptors[index]!.flatMap((descriptor) => {
+      const image = imagesById.get(descriptor.id);
+      if (!image && descriptor.omitWhenMissing) return [];
+      return [{
+        id: descriptor.id,
+        name: descriptor.name,
+        status: descriptor.status,
+        fileName: image?.fileName,
+        sourceFileName: image?.sourceFileName,
+        path: image ? options.imageStore.resolveMediaRequest(image.mediaUrl) : undefined,
+      }];
+    }),
+  }));
+}
+
+function batchImageDescriptors(batch: BatchSnapshot): Array<{ id: string; name: string; status: string; omitWhenMissing?: boolean }> {
+  const descriptors: Array<{ id: string; name: string; status: string; omitWhenMissing?: boolean }> = [];
+  for (const job of batch.jobs) {
+    if (job.outputImageId) descriptors.push({ id: job.outputImageId, name: job.name, status: job.status });
+    else if (job.status === 'failed') {
+      for (const referenceImageId of job.referenceImageIds) {
+        descriptors.push({ id: referenceImageId, name: `${job.name} 原输入`, status: 'failed-source', omitWhenMissing: true });
+      }
+    }
+    for (const backup of job.backups) descriptors.push({ id: backup.imageId, name: backup.name, status: 'backup' });
+  }
+  return descriptors;
 }
 
 function accepted(batch: BatchSnapshot) {

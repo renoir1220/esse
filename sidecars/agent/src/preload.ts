@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron';
-import type { EsseDesktopBridge, ModifyBatchInput, SaveProviderInput } from './types';
+import type { DesktopStateChange, EsseDesktopBridge, ModifyBatchInput, SaveProviderInput } from './types';
 
 const bridge: EsseDesktopBridge = {
   platform: process.platform,
@@ -25,7 +25,7 @@ const bridge: EsseDesktopBridge = {
   openBatchFolder: (batchId: string) => ipcRenderer.invoke('batches:open-folder', batchId),
   copyAgentSetupPrompt: () => ipcRenderer.invoke('mcp:copy-agent-setup'),
   onStateChanged: (callback) => {
-    const listener = (_event: Electron.IpcRendererEvent, state: Awaited<ReturnType<EsseDesktopBridge['getState']>>) => callback(state);
+    const listener = (_event: Electron.IpcRendererEvent, change: DesktopStateChange) => callback(change);
     ipcRenderer.on('state:changed', listener);
     return () => ipcRenderer.removeListener('state:changed', listener);
   },

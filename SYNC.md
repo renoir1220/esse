@@ -68,10 +68,10 @@ The initial import deliberately excludes the private commercial server, user acc
 - Sidecar window titles append the installed package version so screenshots and support reports identify the exact build.
 - The Windows batch workspace subtracts the integrated title-bar overlay height from its minimum page height, preventing an empty root-page vertical scrollbar without hiding legitimate scrollable content.
 
-## 2026-07-23 — Sidecar Provider network recovery
+## 2026-07-23 — Sidecar Provider network isolation
 
 - Windows and macOS Sidecars route Provider requests and connection tests through an isolated Electron session backed by Chromium's network stack, so current system proxy and network changes are handled consistently.
-- A transport failure is never automatically retried because the charge state may be unknown. After all concurrent Provider requests settle, the isolated session closes pooled connections and refreshes DNS and proxy state so the next explicit request does not require an application restart.
+- A transport failure is returned to its own caller immediately and is never automatically retried. Esse does not reset shared connections, DNS, or proxy state after a request fails; a later explicit request starts independently through the same isolated session.
 - Safe transport codes such as `ETIMEDOUT` or `ERR_NETWORK_CHANGED` are shown with the existing unknown-charge message; URLs, credentials, and raw network errors remain hidden.
 
 ## 2026-07-24 — structured error attribution
@@ -88,6 +88,13 @@ The initial import deliberately excludes the private commercial server, user acc
 - Renderer image sources are attached only near the viewport and removed again when far offscreen. Chromium lazy decoding plus offscreen paint containment keeps loaded and decoded image counts bounded as batch history grows.
 - A cross-platform Electron stress E2E opens 120 high-resolution historical batches and rejects eager original loading or unbounded preview generation before Windows or macOS release packaging.
 - QA and packaged-app smoke sessions use an ephemeral MCP pairing token so headless macOS runners never reuse or prompt for a persistent Keychain entry. macOS smoke cleanup escalates from a bounded graceful stop to a forced stop instead of waiting indefinitely.
+
+## 2026-08-18 — batch-local Sidecar runtime updates
+
+- Durable batch acceptance no longer waits for a desktop-wide state rebuild. A background job change publishes only that batch snapshot and the exact image IDs added or removed by the change; unrelated batches, Provider settings, and the full image library are not reconstructed or copied over IPC.
+- The Sidecar reads and indexes `library.json` once per process. Image lookup is indexed, visible-image results are maintained incrementally, and repeated MCP status enrichment no longer reparses the complete library for every image.
+- Provider execution has a default global bound of three jobs and schedules one eligible job per batch per pass. Reference files within one job are encoded sequentially, keeping image preparation bounded without changing prompts, references, task states, or Provider payloads.
+- Provider and transport errors finish the affected job after the first failed call. Esse retains explicit user-initiated retry, including the existing unknown-charge confirmation rule, but performs no automatic retry or shared network recovery.
 
 ## Deferred
 

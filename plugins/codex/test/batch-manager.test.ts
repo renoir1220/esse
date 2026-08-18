@@ -320,26 +320,23 @@ test("backup and failed-source modifications append jobs to the same batch", asy
   }
 });
 
-test("definitely uncharged failures auto retry three times, while unknown-charge failures do not", async () => {
+test("Provider failures remain terminal until an explicit retry", async () => {
   const retryRoot = await mkdtemp(path.join(os.tmpdir(), "esse-retry-"));
   const unknownRoot = await mkdtemp(path.join(os.tmpdir(), "esse-unknown-"));
   try {
     let retryCalls = 0;
     const { manager: retryManager } = await createManager(retryRoot, async () => {
       retryCalls += 1;
-      if (retryCalls <= 3) return new Response(JSON.stringify({ error: { message: "busy" } }), { status: 429, headers: { "content-type": "application/json" } });
-      return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify({ error: { message: "busy" } }), { status: 429, headers: { "content-type": "application/json" } });
     });
     const retried = await retryManager.create({ offeringId: "offer-default", prompt: "retry", count: 1 });
-    const completed = await waitForBatch(retryManager, retried.id);
-    const completedJob = onlyJob(completed);
-    assert.equal(completedJob.status, "succeeded");
-    assert.equal(completedJob.attempt, 4);
-    assert.equal(retryCalls, 4);
-    assert.deepEqual(completedJob.callHistory?.map((call) => call.status), ["failed", "failed", "failed", "succeeded"]);
-    assert(completedJob.callHistory?.slice(0, 3).every((call) => Boolean(call.error)));
-    assert(completedJob.callHistory?.slice(0, 3).every((call) => call.errorOrigin === "upstream"));
-    assert(completedJob.callHistory?.every((call) => typeof call.durationMs === "number"));
+    const notCharged = await waitForBatch(retryManager, retried.id);
+    const notChargedJob = onlyJob(notCharged);
+    assert.equal(notChargedJob.status, "failed");
+    assert.equal(notChargedJob.attempt, 1);
+    assert.equal(notChargedJob.chargeState, "not_charged");
+    assert.equal(retryCalls, 1);
+    assert.deepEqual(notChargedJob.callHistory?.map((call) => call.status), ["failed"]);
 
     let unknownCalls = 0;
     const { manager: unknownManager } = await createManager(unknownRoot, async () => {

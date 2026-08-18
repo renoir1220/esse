@@ -20,7 +20,6 @@ import {
 const MAX_BATCH_IMAGES = 50;
 const MAX_REFERENCE_IMAGES = 20;
 const DEFAULT_CONCURRENCY = 3;
-const AUTO_RETRY_LIMIT = 3;
 
 type ApiClient = Pick<EsseApiClient, 'offerings' | 'generate' | 'edit'>;
 type ResolvedBatchImage =
@@ -35,8 +34,13 @@ export interface BatchManagerOptions {
   canRun?: () => Promise<boolean>;
   concurrency?: number;
   getDefaultOfferingId?: () => Promise<string | undefined>;
-  onChanged?: () => void | Promise<void>;
+  onChanged?: (change: BatchManagerChange) => void;
 }
+
+export type BatchManagerChange =
+  | { type: 'upsert'; batch: BatchSnapshot; imageIds?: string[]; removedImageIds?: string[] }
+  | { type: 'delete'; batchId: string; activeBatchId?: string }
+  | { type: 'activate'; activeBatchId: string };
 
 export class BatchManager {
   private readonly batches = new Map<string, BatchRecord>();
@@ -123,7 +127,7 @@ export class BatchManager {
   async activate(id: string): Promise<BatchSnapshot> {
     const batch = this.requiredBatch(id);
     this.activeBatchId = id;
-    await this.changed();
+    this.changed({ type: 'activate', activeBatchId: id });
     return snapshot(batch);
   }
 
@@ -168,7 +172,7 @@ export class BatchManager {
     this.batches.set(batch.id, batch);
     this.createKeys.set(input.requestKey, batch.id);
     this.activeBatchId = batch.id;
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: batch.jobs.flatMap((job) => job.referenceImageIds) });
     this.schedule();
     return snapshot(batch);
   }
@@ -201,7 +205,7 @@ export class BatchManager {
     batch.updatedAt = now;
     await this.options.store.save(batch);
     this.activeBatchId = batch.id;
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: appended.flatMap((job) => job.referenceImageIds) });
     this.schedule();
     return { batch: snapshot(batch), appendedJobIds: appended.map((job) => job.id) };
   }
@@ -280,7 +284,7 @@ export class BatchManager {
     batch.updatedAt = now;
     await this.options.store.save(batch);
     this.activeBatchId = batch.id;
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: scheduled.flatMap((job) => job.referenceImageIds) });
     this.schedule();
     return { batch: snapshot(batch), modifiedJobIds: ids };
   }
@@ -297,7 +301,7 @@ export class BatchManager {
     }
     batch.updatedAt = now;
     await this.options.store.save(batch);
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch) });
     return snapshot(batch);
   }
 
@@ -325,7 +329,7 @@ export class BatchManager {
     }
     batch.updatedAt = now;
     await this.options.store.save(batch);
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch) });
     this.schedule();
     return snapshot(batch);
   }
@@ -357,7 +361,7 @@ export class BatchManager {
     }
     batch.updatedAt = new Date().toISOString();
     await this.options.store.save(batch);
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch), removedImageIds: ids });
     return snapshot(batch);
   }
 
@@ -368,7 +372,7 @@ export class BatchManager {
     if (batch.requestKey) this.createKeys.delete(batch.requestKey);
     await this.options.store.delete(batchId);
     this.activeBatchId = this.list()[0]?.id;
-    await this.changed();
+    this.changed({ type: 'delete', batchId, activeBatchId: this.activeBatchId });
   }
 
   async merge(input: {
@@ -409,7 +413,7 @@ export class BatchManager {
       }
     }
     this.activeBatchId = target.id;
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(target) });
     return snapshot(target);
   }
 
@@ -421,7 +425,7 @@ export class BatchManager {
     beginJob(job, job.offering || batch.offering, 'agent');
     batch.updatedAt = new Date().toISOString();
     await this.options.store.save(batch);
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch) });
     return structuredClone(job);
   }
 
@@ -442,7 +446,8 @@ export class BatchManager {
     if (job.status !== 'running') throw new Error('Agent job is not running.');
     batch.updatedAt = new Date().toISOString();
     await this.options.store.save(batch);
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch) });
+    let changedImageId: string | undefined;
     try {
       const saved = await this.options.imageStore.importFile({
         sourcePath: outputPath,
@@ -451,13 +456,14 @@ export class BatchManager {
         model: (job.offering || batch.offering).id,
       });
       finishSucceeded(job, { requestId: job.requestKey, items: [], reused: false }, saved.id);
+      changedImageId = saved.id;
     } catch (error) {
       finishFailed(job, error, 'unknown', false, 'esse');
       throw error;
     } finally {
       batch.updatedAt = new Date().toISOString();
       await this.options.store.save(batch);
-      await this.changed();
+      this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: changedImageId ? [changedImageId] : undefined });
     }
     return snapshot(batch);
   }
@@ -470,7 +476,7 @@ export class BatchManager {
     finishFailed(job, new Error(requiredPrompt(reason)), 'unknown', false, 'upstream');
     batch.updatedAt = new Date().toISOString();
     await this.options.store.save(batch);
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch) });
     return snapshot(batch);
   }
 
@@ -507,8 +513,9 @@ export class BatchManager {
     beginJob(job, offering, 'provider');
     batch.updatedAt = new Date().toISOString();
     await this.options.store.save(batch);
-    await this.changed();
+    this.changed({ type: 'upsert', batch: snapshot(batch) });
     let providerSubmitted = false;
+    let changedImageId: string | undefined;
     try {
       const client = await this.options.createApiClient();
       const input = {
@@ -536,30 +543,18 @@ export class BatchManager {
       });
       if (!saved) throw new Error('Provider returned no image that Esse could save.');
       finishSucceeded(job, result, saved.id);
+      changedImageId = saved.id;
     } catch (error) {
       const chargeState = error instanceof EsseApiError ? error.details.chargeState : providerSubmitted ? 'unknown' : 'not_charged';
       const retryable = error instanceof EsseApiError && (error.details.chargeState === 'unknown'
         || (error.details.chargeState === 'not_charged'
           && (error.details.status === 429 || (error.details.status !== undefined && error.details.status >= 500))));
       finishFailed(job, error, chargeState, retryable);
-      if (retryable && chargeState === 'not_charged' && job.attempt <= AUTO_RETRY_LIMIT) {
-        const failedMessage = job.error;
-        job.status = 'queued';
-        job.progress = 0;
-        job.retryable = false;
-        job.chargeState = 'not_charged';
-        job.error = `自动重试 ${job.attempt}/${AUTO_RETRY_LIMIT}：${failedMessage}`;
-        job.requestId = undefined;
-        job.startedAt = undefined;
-        job.finishedAt = undefined;
-        job.durationMs = undefined;
-        job.requestKey = derivedRequestKey(job.requestKey, `auto-retry:${job.attempt + 1}`);
-      }
     } finally {
       batch.updatedAt = new Date().toISOString();
       await this.options.store.save(batch);
       this.activeJobs.delete(jobKey);
-      await this.changed();
+      this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: changedImageId ? [changedImageId] : undefined });
       this.schedule();
     }
   }
@@ -570,17 +565,25 @@ export class BatchManager {
     this.trackBackground(new Promise<void>((resolve) => queueMicrotask(resolve)).then(async () => {
       this.scheduling = false;
       if (this.options.canRun && !await this.options.canRun()) return;
-      const globalLimit = Math.max(1, Math.min(12, this.options.concurrency ?? 12));
-      for (const batch of this.listRecords()) {
-        for (const job of batch.jobs) {
+      const globalLimit = Math.max(1, Math.min(12, this.options.concurrency ?? DEFAULT_CONCURRENCY));
+      const batches = this.listRecords();
+      let scheduled = true;
+      while (this.activeJobs.size < globalLimit && scheduled) {
+        scheduled = false;
+        for (const batch of batches) {
           if (this.activeJobs.size >= globalLimit) return;
-          if (job.status !== 'queued' || job.operation === 'agent') continue;
+          const job = batch.jobs.find((candidate) => {
+            if (candidate.status !== 'queued' || candidate.operation === 'agent') return false;
+            const key = `${batch.id}:${candidate.id}`;
+            if (this.activeJobs.has(key)) return false;
+            const offering = candidate.offering || batch.offering;
+            return this.activeProviderJobs(offering) < Math.max(1, Math.min(12, offering.concurrency || DEFAULT_CONCURRENCY));
+          });
+          if (!job) continue;
           const key = `${batch.id}:${job.id}`;
-          if (this.activeJobs.has(key)) continue;
-          const offering = job.offering || batch.offering;
-          if (this.activeProviderJobs(offering) >= Math.max(1, Math.min(12, offering.concurrency || DEFAULT_CONCURRENCY))) continue;
           this.activeJobs.add(key);
           this.trackBackground(this.run(key, batch.id, job.id));
+          scheduled = true;
         }
       }
     }));
@@ -707,8 +710,8 @@ export class BatchManager {
     }
   }
 
-  private async changed(): Promise<void> {
-    await this.options.onChanged?.();
+  private changed(change: BatchManagerChange): void {
+    this.options.onChanged?.(change);
   }
 }
 
