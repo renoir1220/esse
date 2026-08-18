@@ -803,7 +803,7 @@ function Settings(props: { state: DesktopState; busy: boolean; apply: (action: (
         <Field label="档位名称"><input value={draft.tierName} onChange={(event) => setDraft({ ...draft, tierName: event.target.value })} /></Field>
         <Field label="API 地址" wide><input value={draft.baseUrl} onChange={(event) => setDraft({ ...draft, baseUrl: event.target.value })} /></Field>
         <SelectField label="接口格式"><SelectMenu value={draft.adapterId} ariaLabel="选择接口格式" options={[{ value: 'tuzi-json-images', label: '兔子 JSON Images' }, { value: 'openai-images', label: 'OpenAI Images' }]} onChange={(value) => setDraft({ ...draft, adapterId: value as ProviderDraft['adapterId'] })} /></SelectField>
-        <Field label="并发数"><input type="number" min="1" max="12" value={draft.concurrency} onChange={(event) => setDraft({ ...draft, concurrency: Number(event.target.value) })} /></Field>
+        <Field label="并发数"><input type="number" min="1" step="1" value={draft.concurrency} onChange={(event) => setDraft({ ...draft, concurrency: Number(event.target.value) })} /></Field>
         <Field label="API Key" wide hint={draft.hasApiKey ? '留空保留现有密钥' : '只保存在当前系统用户的安全存储中'}><div className="secret-input"><input type="password" autoComplete="off" placeholder={draft.hasApiKey ? '•••••••• 已安全保存' : '粘贴 API Key'} value={draft.apiKey} onChange={(event) => setDraft({ ...draft, apiKey: event.target.value })} /><button type="button" onClick={() => void test()} disabled={Boolean(busyAction) || !draft.baseUrl || (!draft.hasApiKey && !draft.apiKey.trim())}>{busyAction === 'test' ? '测试中…' : '测试连接'}</button></div></Field>
       </div></section>
 
@@ -853,7 +853,12 @@ function providerDraftFromProfile(profile: ProviderProfile): ProviderDraft {
 function providerSavePayload(draft: ProviderDraft): SaveProviderInput {
   const baseUrl = draft.baseUrl.trim();
   try { new URL(baseUrl); } catch { throw new Error('请填写有效的 API 地址。'); }
-  return { ...(draft.id ? { id: draft.id } : {}), displayName: draft.displayName.trim(), tierName: draft.tierName.trim(), baseUrl, adapterId: draft.adapterId, concurrency: Math.max(1, Math.min(12, Math.trunc(draft.concurrency || 1))), ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}), offerings: draft.offerings.map((offering) => structuredClone(offering)) };
+  return { ...(draft.id ? { id: draft.id } : {}), displayName: draft.displayName.trim(), tierName: draft.tierName.trim(), baseUrl, adapterId: draft.adapterId, concurrency: requiredConcurrency(draft.concurrency), ...(draft.apiKey.trim() ? { apiKey: draft.apiKey.trim() } : {}), offerings: draft.offerings.map((offering) => structuredClone(offering)) };
+}
+
+function requiredConcurrency(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error('并发数必须是正整数。');
+  return value;
 }
 
 function adapterDisplayName(adapterId: ProviderDraft['adapterId']): string {

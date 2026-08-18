@@ -55,7 +55,7 @@ describe('Esse batch manager', () => {
       const prompt = (input as { prompt: string }).prompt;
       return new Promise<ReturnType<typeof generatedResult>>((resolve) => pending.set(prompt, resolve));
     });
-    const manager = managerFor(fixture, { ...fakeApi(), generate }, { concurrency: 2 });
+    const manager = managerFor(fixture, { ...fakeApi(2), generate });
     await manager.initialize();
 
     const accepted = await manager.create({
@@ -105,6 +105,25 @@ describe('Esse batch manager', () => {
     pending.splice(0).forEach((resolve, index) => resolve(generatedResult(`bounded-${index}`)));
     await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(4));
     pending.splice(0).forEach((resolve) => resolve(generatedResult('bounded-final')));
+  });
+
+  it('lets the configured Provider concurrency control execution without a hidden global cap', async () => {
+    const fixture = await fixtureDirectory();
+    const pending: Array<(value: ReturnType<typeof generatedResult>) => void> = [];
+    const generate = vi.fn(() => new Promise<ReturnType<typeof generatedResult>>((resolve) => pending.push(resolve)));
+    const manager = managerFor(fixture, { ...fakeApi(10), generate });
+    await manager.initialize();
+
+    const accepted = await manager.create({
+      title: 'Ten configured jobs',
+      jobs: Array.from({ length: 10 }, (_, index) => ({ prompt: `configured-${index + 1}` })),
+      requestKey: 'configured-provider-concurrency',
+    });
+
+    await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(10));
+    expect(manager.get(accepted.id)).toMatchObject({ running: 10, queued: 0 });
+    pending.splice(0).forEach((resolve, index) => resolve(generatedResult(`configured-${index}`)));
+    await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('completed'));
   });
 
   it('waits for background generation and persistence before reporting idle', async () => {
@@ -393,13 +412,12 @@ async function fixtureDirectory() {
 function managerFor(
   fixture: Awaited<ReturnType<typeof fixtureDirectory>>,
   api: ReturnType<typeof fakeApi>,
-  options: { concurrency?: number; canRun?: () => Promise<boolean>; onChanged?: (change: BatchManagerChange) => void } = {},
+  options: { canRun?: () => Promise<boolean>; onChanged?: (change: BatchManagerChange) => void } = {},
 ) {
   const manager = new BatchManager({
     store: fixture.batchStore,
     imageStore: fixture.imageStore,
     createApiClient: async () => api,
-    concurrency: options.concurrency,
     canRun: options.canRun,
     onChanged: options.onChanged,
   });
@@ -407,11 +425,11 @@ function managerFor(
   return manager;
 }
 
-function fakeApi() {
+function fakeApi(concurrency = 3) {
   return {
     offerings: async () => [{
       id: 'gpt-image-2', canonicalModelId: 'gpt-image-2', providerModelId: 'gpt-image-2', displayName: 'gpt-image-2',
-      providerName: 'Tuzi default', providerType: 'tuzi-json-images', tierName: '默认', concurrency: 3,
+      providerName: 'Tuzi default', providerType: 'tuzi-json-images', tierName: '默认', concurrency,
       priceMicros: 100_000, currency: 'CNY', price: { mode: 'per_request' as const, currency: 'CNY', amount: 0.1 }, configured: true,
       sizes: ['1024x1024'], supportsTextToImage: true, supportsImageToImage: true,
     }],

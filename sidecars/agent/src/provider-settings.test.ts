@@ -31,6 +31,10 @@ describe('Provider settings', () => {
       expect.objectContaining({ canonicalModelId: 'gemini-3-pro-image-preview-4k', providerModelId: 'gemini-3-pro-image-preview-4k' }),
     ]));
 
+    await expect(store.saveProvider({ ...draft, id: saved.id, concurrency: 24 })).resolves.toMatchObject({ concurrency: 24 });
+    await expect(store.saveProvider({ ...draft, id: saved.id, concurrency: 1.5 })).rejects.toThrow(/正整数/);
+    await expect(store.saveProvider({ ...draft, id: saved.id, concurrency: 0 })).rejects.toThrow(/正整数/);
+
     await store.deleteProvider(saved.id);
     expect(await store.listProfiles()).toEqual([]);
     await expect(store.getApiKey(saved.id)).rejects.toThrow(/没有 API Key/);

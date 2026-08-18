@@ -19,7 +19,7 @@ import {
 
 const MAX_BATCH_IMAGES = 50;
 const MAX_REFERENCE_IMAGES = 20;
-const DEFAULT_CONCURRENCY = 3;
+const DEFAULT_PROVIDER_CONCURRENCY = 3;
 
 type ApiClient = Pick<EsseApiClient, 'offerings' | 'generate' | 'edit'>;
 type ResolvedBatchImage =
@@ -32,7 +32,6 @@ export interface BatchManagerOptions {
   imageStore: ImageStore;
   createApiClient: () => Promise<ApiClient>;
   canRun?: () => Promise<boolean>;
-  concurrency?: number;
   getDefaultOfferingId?: () => Promise<string | undefined>;
   onChanged?: (change: BatchManagerChange) => void;
 }
@@ -565,19 +564,17 @@ export class BatchManager {
     this.trackBackground(new Promise<void>((resolve) => queueMicrotask(resolve)).then(async () => {
       this.scheduling = false;
       if (this.options.canRun && !await this.options.canRun()) return;
-      const globalLimit = Math.max(1, Math.min(12, this.options.concurrency ?? DEFAULT_CONCURRENCY));
       const batches = this.listRecords();
       let scheduled = true;
-      while (this.activeJobs.size < globalLimit && scheduled) {
+      while (scheduled) {
         scheduled = false;
         for (const batch of batches) {
-          if (this.activeJobs.size >= globalLimit) return;
           const job = batch.jobs.find((candidate) => {
             if (candidate.status !== 'queued' || candidate.operation === 'agent') return false;
             const key = `${batch.id}:${candidate.id}`;
             if (this.activeJobs.has(key)) return false;
             const offering = candidate.offering || batch.offering;
-            return this.activeProviderJobs(offering) < Math.max(1, Math.min(12, offering.concurrency || DEFAULT_CONCURRENCY));
+            return this.activeProviderJobs(offering) < (offering.concurrency || DEFAULT_PROVIDER_CONCURRENCY);
           });
           if (!job) continue;
           const key = `${batch.id}:${job.id}`;
@@ -684,7 +681,7 @@ export class BatchManager {
           providerName: '旧版模型',
           providerType: 'legacy',
           tierName: '导入记录',
-          concurrency: DEFAULT_CONCURRENCY,
+          concurrency: DEFAULT_PROVIDER_CONCURRENCY,
           priceMicros: 0,
           currency: 'CNY',
           price: { mode: 'unknown', currency: 'CNY' },

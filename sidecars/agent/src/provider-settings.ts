@@ -58,13 +58,14 @@ export class ProviderSettingsStore {
     const id = input.id?.trim() || randomUUID();
     const existing = settings.providers.find((entry) => entry.id === id);
     const offerings = input.offerings.map((offering) => normalizeOffering(offering, id));
+    const concurrency = normalizeConcurrency(input.concurrency);
     const stored: StoredProviderProfile = {
       id,
       displayName,
       tierName,
       baseUrl,
       adapterId: input.adapterId,
-      concurrency: Math.max(1, Math.min(12, Math.trunc(input.concurrency || 1))),
+      concurrency,
       offerings,
       createdAt: existing?.createdAt || now,
       updatedAt: now,
@@ -120,6 +121,11 @@ export class ProviderSettingsStore {
     this.writeQueue = task.then(() => undefined, () => undefined);
     await task;
   }
+}
+
+function normalizeConcurrency(value: number): number {
+  if (!Number.isSafeInteger(value) || value < 1) throw new Error('并发数必须是正整数。');
+  return value;
 }
 
 function normalizeOffering(value: OfferingConfig, profileId: string): OfferingConfig {
