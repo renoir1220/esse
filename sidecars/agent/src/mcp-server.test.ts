@@ -350,6 +350,11 @@ function fakeApi() {
       items: [{ b64_json: testPng('edited-original').toString('base64') }],
       reused: false,
     }),
+    resume: async () => ({
+      requestId: 'resume-1',
+      items: [{ b64_json: testPng('resumed-original').toString('base64') }],
+      reused: false,
+    }),
   };
 }
 

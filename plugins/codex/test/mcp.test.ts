@@ -18,6 +18,21 @@ import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
 
+function asyncTaskFetch(result: unknown): typeof fetch {
+  let sequence = 0;
+  const results = new Map<string, unknown>();
+  return async (input) => {
+    const url = String(input);
+    if (url.includes("/get-async?id=")) {
+      const id = new URL(url).searchParams.get("id") || "";
+      return new Response(JSON.stringify({ id, status: "completed", result: results.get(id) }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const id = `task-${++sequence}`;
+    results.set(id, result);
+    return new Response(JSON.stringify({ id, status: "submitted" }), { status: 202, headers: { "content-type": "application/json", "x-oneapi-request-id": `request-${sequence}` } });
+  };
+}
+
 test("local MCP exposes the installable plugin tools and widget over stdio-compatible transport", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-mcp-"));
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -26,7 +41,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const paths = resolveDataPaths({ ESSE_DATA_DIR: root }, process.platform);
     await ensureDataPaths(paths);
     const settings = new SettingsStore(paths.settingsFile, new MemorySecretStore());
-    const registry = new ProviderRegistry(settings, async () => new Response(JSON.stringify({ data: [{ b64_json: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=" }] }), { status: 200, headers: { "content-type": "application/json" } }));
+    const registry = new ProviderRegistry(settings, asyncTaskFetch({ data: [{ b64_json: onePixelPng }] }));
     const batches = new BatchManager(new BatchStore(paths.batchesDir), registry, paths);
     await batches.initialize();
     let nativeSaveSource: string | undefined;

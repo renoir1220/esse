@@ -50,7 +50,7 @@ test("persistent local batch respects profile concurrency and writes unique outp
       active -= 1;
       return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
     };
-    const registry = new ProviderRegistry(settings, fetchImpl);
+    const registry = new ProviderRegistry(settings, asyncTaskFetch(fetchImpl));
     const manager = new BatchManager(new BatchStore(paths.batchesDir), registry, paths);
     await manager.initialize();
     const perImagePrompts = Object.fromEntries(Array.from({ length: 5 }, (_, index) => [String(index + 1), `prompt-${index + 1}`]));
@@ -352,7 +352,7 @@ test("Provider failures remain terminal until an explicit retry", async () => {
     assert.equal(failedJob.errorOrigin, "transport");
     assert.equal(unknownCalls, 1);
     assert.deepEqual(failedJob.callHistory?.map((call) => [call.status, call.chargeState, call.errorOrigin]), [["failed", "unknown", "transport"]]);
-    assert.match(failedJob.callHistory?.[0]?.error || "", /请求链路/);
+    assert.match(failedJob.callHistory?.[0]?.error || "", /图片任务提交失败/);
     const manualRetry = await unknownManager.retry(unknown.id, [failedJob.id], true);
     assert.equal(onlyJob(manualRetry).attempt, 2);
     const failedAgain = await waitForBatch(unknownManager, unknown.id);
@@ -414,6 +414,78 @@ test("deleting a terminal batch waits for pending persistence and cannot resurre
     assert.equal(await store.get(created.id), undefined);
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(await store.get(created.id), undefined, "a delayed save must not recreate the deleted record");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("restart resumes an accepted Tuzi task by task ID without another generation submission", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-resume-provider-task-"));
+  try {
+    const { manager, store, settings, paths } = await createManager(root, async () => new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" }
+    }));
+    const created = await manager.create({ offeringId: "offer-default", prompt: "resume accepted task", count: 1 });
+    await waitForBatch(manager, created.id);
+
+    const record = (await store.loadAll()).find((batch) => batch.id === created.id)!;
+    const job = record.jobs[0]!;
+    const now = new Date().toISOString();
+    const providerTask = {
+      id: "task-resume-1",
+      status: "completed" as const,
+      requestId: "request-resume-1",
+      submittedAt: now,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now
+    };
+    Object.assign(job, {
+      status: "running",
+      progress: 95,
+      chargeState: "unknown",
+      startedAt: now,
+      finishedAt: undefined,
+      durationMs: undefined,
+      providerTask
+    });
+    job.callHistory = [{
+      id: "call-resume-1",
+      sequence: 1,
+      attempt: 1,
+      source: "provider",
+      offering: job.offering || record.offering,
+      status: "running",
+      chargeState: "unknown",
+      startedAt: now,
+      providerTask
+    }];
+    await store.save(record);
+
+    let submissions = 0;
+    let queries = 0;
+    const fetchImpl: typeof fetch = async (input) => {
+      const url = String(input);
+      if (url.includes("/get-async?id=task-resume-1")) {
+        queries += 1;
+        return new Response(JSON.stringify({ id: "task-resume-1", status: "completed", result: { data: [{ b64_json: onePixelPng }] } }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      }
+      submissions += 1;
+      throw new Error(`Unexpected Provider submission: ${url}`);
+    };
+    const restarted = new BatchManager(store, new ProviderRegistry(settings, fetchImpl), paths);
+    await restarted.initialize();
+    const completed = await waitForBatch(restarted, created.id);
+
+    assert.equal(completed.status, "completed");
+    assert.equal(submissions, 0);
+    assert.equal(queries, 1);
+    assert.equal(completed.jobs[0]?.providerTask?.id, "task-resume-1");
+    assert.equal(completed.jobs[0]?.callHistory?.length, 1);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -566,7 +638,7 @@ async function createManager(root: string, fetchImpl: typeof fetch) {
     }]
   });
   const store = new BatchStore(paths.batchesDir);
-  const registry = new ProviderRegistry(settings, fetchImpl);
+  const registry = new ProviderRegistry(settings, asyncTaskFetch(fetchImpl));
   const manager = new BatchManager(store, registry, paths);
   await manager.initialize();
   return { manager, store, registry, settings, paths };
@@ -587,4 +659,21 @@ async function waitForBatch(manager: BatchManager, id: string) {
 function onlyJob(batch: Awaited<ReturnType<typeof waitForBatch>>) {
   assert.equal(batch.jobs.length, 1);
   return batch.jobs[0]!;
+}
+
+function asyncTaskFetch(delegate: typeof fetch): typeof fetch {
+  const results = new Map<string, unknown>();
+  let sequence = 0;
+  return async (input, init) => {
+    const url = String(input);
+    if (url.includes("/get-async?id=")) {
+      const id = new URL(url).searchParams.get("id") || "";
+      return new Response(JSON.stringify({ id, status: "completed", result: results.get(id) }), { status: 200, headers: { "content-type": "application/json" } });
+    }
+    const response = await delegate(input, init);
+    if (!url.includes("/async/v1/images/generations") || !response.ok) return response;
+    const id = `task-${++sequence}`;
+    results.set(id, await response.json());
+    return new Response(JSON.stringify({ id, status: "submitted" }), { status: 202, headers: { "content-type": "application/json", "x-oneapi-request-id": `request-${sequence}` } });
+  };
 }

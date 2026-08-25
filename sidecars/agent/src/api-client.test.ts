@@ -9,6 +9,7 @@ import type { OfferingConfig, OfferingSummary, ProviderProfile } from './types';
 const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
+  vi.useRealTimers();
   for (const directory of temporaryDirectories.splice(0)) await rm(directory, { recursive: true, force: true });
 });
 
@@ -18,15 +19,26 @@ describe('Esse Provider client', () => {
   });
 
   it('sends the locally stored Provider key and requests original image data', async () => {
+    vi.useFakeTimers();
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
-      expect(String(url)).toBe('https://provider.example/v1/images/generations');
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer local-provider-key');
-      expect(JSON.parse(String(init?.body))).toMatchObject({ model: 'gpt-image-2', response_format: 'b64_json' });
-      return new Response(JSON.stringify({ data: [{ b64_json: 'aW1hZ2U=' }] }), { status: 200, headers: { 'x-request-id': 'request-1' } });
+      if (String(url).endsWith('/async/v1/images/generations')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ model: 'gpt-image-2', response_format: 'b64_json' });
+        return new Response(JSON.stringify({ id: 'task-1', status: 'queued' }), { status: 202, headers: { 'x-oneapi-request-id': 'request-1' } });
+      }
+      expect(String(url)).toBe('https://provider.example/get-async?id=task-1');
+      return new Response(JSON.stringify({ id: 'task-1', status: 'completed', result: { data: [{ b64_json: 'aW1hZ2U=' }] } }), { status: 200 });
     }) as unknown as typeof fetch;
     const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
-    const result = await client.generate({ prompt: 'test', model: 'provider-1:gpt-image-2' });
+    const updates: string[] = [];
+    const pending = client.generate({ prompt: 'test', model: 'provider-1:gpt-image-2' }, 'stable-key', {
+      onTask: (task) => { updates.push(`${task.status}:${task.progress ?? ''}`); },
+    });
+    await vi.advanceTimersByTimeAsync(1_000);
+    const result = await pending;
+    vi.useRealTimers();
     expect(result).toMatchObject({ requestId: 'request-1', items: [{ b64_json: 'aW1hZ2U=' }] });
+    expect(updates).toEqual(['queued:', 'completed:']);
   });
 
   it('returns locally configured offerings without contacting another Esse service', async () => {
@@ -106,7 +118,7 @@ describe('Esse Provider client', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('does not blame Esse or the upstream service when the local wait deadline expires', async () => {
+  it('does not blame Esse or the upstream service when asynchronous submission times out', async () => {
     const fetchMock = vi.fn(async () => {
       throw new DOMException('The operation was aborted due to timeout', 'TimeoutError');
     }) as unknown as typeof fetch;
@@ -114,8 +126,8 @@ describe('Esse Provider client', () => {
 
     const error = await client.generate({ prompt: 'slow queue', model: 'provider-1:gpt-image-2' }).catch((cause) => cause);
     expect(error).toBeInstanceOf(EsseApiError);
-    expect((error as EsseApiError).details).toMatchObject({ code: 'request_timeout', chargeState: 'unknown', origin: 'transport' });
-    expect((error as EsseApiError).message).toContain('15 分钟内未返回');
+    expect((error as EsseApiError).details).toMatchObject({ code: 'submit_timeout', chargeState: 'unknown', origin: 'transport' });
+    expect((error as EsseApiError).message).toContain('是否已被上游接收及扣费状态未知');
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 });

@@ -126,6 +126,19 @@ export interface JobBackup {
 
 export type ErrorOrigin = 'upstream' | 'esse' | 'transport';
 
+export type ProviderTaskStatus = 'not_start' | 'submitted' | 'queued' | 'in_progress' | 'completed' | 'failure' | 'expired';
+
+export interface ProviderTaskState {
+  id: string;
+  status: ProviderTaskStatus;
+  progress?: number;
+  requestId?: string;
+  submittedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+}
+
 export interface JobCallRecord {
   id: string;
   sequence?: number;
@@ -138,6 +151,7 @@ export interface JobCallRecord {
   finishedAt?: string;
   durationMs?: number;
   requestId?: string;
+  providerTask?: ProviderTaskState;
   error?: string;
   errorOrigin?: ErrorOrigin;
 }
@@ -160,6 +174,7 @@ export interface BatchJob {
   error?: string;
   errorOrigin?: ErrorOrigin;
   requestId?: string;
+  providerTask?: ProviderTaskState;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;

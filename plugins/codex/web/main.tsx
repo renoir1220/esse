@@ -1272,7 +1272,7 @@ function TaskDetailDialog({ asset, metadata, referencePaths, previews, onClose }
         <div className="call-history-summary"><span>{calls.length} 次调用</span><span>{succeededCalls} 次成功</span><span>累计 {formatDuration(totalDuration)}</span></div>
         {calls.length ? <div className="call-history-list">{[...calls].reverse().map((call) => <article className={`call-history-item is-${call.status}`} key={call.id}>
           <header><span className="call-status-dot" /><strong>第 {call.sequence} 次 · {callStatusLabel(call.status)}</strong><time dateTime={call.startedAt}>{formatCallTime(call.startedAt)}</time></header>
-          <div className="call-history-meta"><span>{call.source === "agent" ? "当前 Agent" : `${call.offering.providerName} · ${call.offering.tierName}`}</span><span>{call.offering.displayName}</span><span>{call.status === "running" ? "进行中" : formatDuration(call.durationMs || 0)}</span>{call.providerRequestId && <code title={call.providerRequestId}>{call.providerRequestId}</code>}</div>
+          <div className="call-history-meta"><span>{call.source === "agent" ? "当前 Agent" : `${call.offering.providerName} · ${call.offering.tierName}`}</span><span>{call.offering.displayName}</span><span>{call.status === "running" ? "进行中" : formatDuration(call.durationMs || 0)}</span>{call.providerTask && <><span>{providerTaskLabel(call.providerTask.status)}</span><span>排队 {formatProviderStageDuration(call.providerTask.submittedAt, call.providerTask.startedAt || call.providerTask.completedAt)}</span>{call.providerTask.startedAt && <span>生成 {formatProviderStageDuration(call.providerTask.startedAt, call.providerTask.completedAt)}</span>}<code title={call.providerTask.id}>{call.providerTask.id}</code></>}{call.providerRequestId && <code title={call.providerRequestId}>{call.providerRequestId}</code>}</div>
           {call.error && <p><span className="error-origin-badge">{errorOriginLabel(call.errorOrigin, call.source, call.offering.providerName)}</span>{call.error}</p>}
         </article>)}</div> : <div className="call-history-empty">任务尚未发起模型调用</div>}
       </section>}
@@ -1295,7 +1295,7 @@ function JobPlaceholder({ job }: { job: JobSnapshot }) {
 function ProcessingPreview({ job, previews }: { job: JobSnapshot; previews: Array<string | undefined> }) {
   const modifying = Boolean(job.generationInputPath || job.generationInputPaths?.length);
   const cells = previews.length ? previews : [undefined];
-  return <div className="processing-preview"><div className={`reference-grid count-${Math.min(4, cells.length)}`}>{cells.map((preview, index) => <span className={`reference-cell ${preview ? "" : "is-loading"}`} key={index}>{preview && <img src={preview} alt={`参考图 ${index + 1}`} />}</span>)}</div><div className="processing-mask"><span className="spinner processing-spinner" /><strong>{modifying ? "修改中" : job.status === "queued" ? "等待生成" : "生成中"}</strong>{job.status === "running" && <span>{Math.max(15, job.progress)}%</span>}</div></div>;
+  return <div className="processing-preview"><div className={`reference-grid count-${Math.min(4, cells.length)}`}>{cells.map((preview, index) => <span className={`reference-cell ${preview ? "" : "is-loading"}`} key={index}>{preview && <img src={preview} alt={`参考图 ${index + 1}`} />}</span>)}</div><div className="processing-mask"><span className="spinner processing-spinner" /><strong>{jobStageLabel(job, modifying)}</strong>{job.status === "running" && job.providerTask?.status === "in_progress" && job.providerTask.progress !== undefined && <span>{Math.round(job.providerTask.progress)}%</span>}</div></div>;
 }
 
 function EmptyBatches({ state, onOpenSettings, onNotice }: { state: WorkbenchState; onOpenSettings: () => void; onNotice: (message?: string) => void }) {
@@ -1471,10 +1471,31 @@ async function fetchPreviewBatch(batchId: string, requests: PreviewRequest[]): P
 
 function jobStatusLabel(job: JobSnapshot): string {
   if (job.status === "succeeded") return "完成";
-  if (job.status === "running") return "生成中";
+  if (job.status === "running") return jobStageLabel(job);
   if (job.status === "queued") return "排队";
   if (job.status === "failed") return job.retryable ? "可重试" : "失败";
   return "已取消";
+}
+
+function jobStageLabel(job: JobSnapshot, modifying = false): string {
+  if (job.status === "queued") return "等待生成";
+  if (job.status !== "running") return jobStatusLabel(job);
+  if (!job.providerTask) return modifying || job.inputPath || job.inputPaths?.length ? "读取参考图" : "提交上游";
+  return providerTaskLabel(job.providerTask.status);
+}
+
+function providerTaskLabel(status: NonNullable<JobSnapshot["providerTask"]>["status"]): string {
+  if (status === "not_start" || status === "submitted" || status === "queued") return "上游排队";
+  if (status === "in_progress") return "正式生成";
+  if (status === "completed") return "结果保存中";
+  if (status === "failure") return "上游失败";
+  return "结果已过期";
+}
+
+function formatProviderStageDuration(start: string, end?: string): string {
+  const started = Date.parse(start);
+  const finished = end ? Date.parse(end) : Date.now();
+  return Number.isFinite(started) && Number.isFinite(finished) ? formatDuration(Math.max(0, finished - started)) : "—";
 }
 
 function errorOriginLabel(origin: JobSnapshot["errorOrigin"], source: "provider" | "agent", providerName?: string): string {

@@ -49,7 +49,7 @@ export function providerError(response: Response, body: unknown): ProviderReques
   const status = response.status;
   const retryable = status === 429 || status >= 500;
   const chargeState: ChargeState = status === 429 || (status >= 400 && status < 500) ? "not_charged" : "unknown";
-  const requestId = response.headers.get("x-request-id") || nestedString(body, ["request_id", "requestId"]);
+  const requestId = response.headers.get("x-oneapi-request-id") || response.headers.get("x-request-id") || nestedString(body, ["request_id", "requestId"]);
   const rawMessage = nestedString(body, ["error.message", "message", "error"]);
   const message = rawMessage ? sanitize(rawMessage) : `HTTP ${status}`;
   return new ProviderRequestError(message, { status, retryable, chargeState, requestId: requestId || undefined, origin: "upstream" });
@@ -101,7 +101,7 @@ export function extractImageResult(body: unknown): GenerateResult {
 }
 
 export function requestId(response: Response, body: unknown): string | undefined {
-  return response.headers.get("x-request-id") || nestedString(body, ["request_id", "requestId"]) || undefined;
+  return response.headers.get("x-oneapi-request-id") || response.headers.get("x-request-id") || nestedString(body, ["request_id", "requestId"]) || undefined;
 }
 
 function nestedString(value: unknown, paths: string[]): string | undefined {

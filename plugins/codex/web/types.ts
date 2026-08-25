@@ -73,6 +73,7 @@ export interface JobSnapshot {
   error?: string;
   errorOrigin?: "upstream" | "esse" | "transport";
   providerRequestId?: string;
+  providerTask?: ProviderTaskSnapshot;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -96,6 +97,18 @@ export interface JobCallSnapshot {
   error?: string;
   errorOrigin?: "upstream" | "esse" | "transport";
   providerRequestId?: string;
+  providerTask?: ProviderTaskSnapshot;
+}
+
+export interface ProviderTaskSnapshot {
+  id: string;
+  status: "not_start" | "submitted" | "queued" | "in_progress" | "completed" | "failure" | "expired";
+  progress?: number;
+  requestId?: string;
+  submittedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
 }
 
 export interface JobBackupSnapshot {

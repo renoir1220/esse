@@ -13,6 +13,7 @@ import {
   type ErrorOrigin,
   type ModifyBatchInput,
   type OfferingSummary,
+  type ProviderTaskState,
   type SavedImage,
   WORKBUDDY_AGENT_OFFERING,
 } from './types';
@@ -21,7 +22,7 @@ const MAX_BATCH_IMAGES = 50;
 const MAX_REFERENCE_IMAGES = 20;
 const DEFAULT_PROVIDER_CONCURRENCY = 3;
 
-type ApiClient = Pick<EsseApiClient, 'offerings' | 'generate' | 'edit'>;
+type ApiClient = Pick<EsseApiClient, 'offerings' | 'generate' | 'edit' | 'resume'>;
 type ResolvedBatchImage =
   | { kind: 'result'; job: BatchJob; imageId: string }
   | { kind: 'backup'; job: BatchJob; imageId: string }
@@ -60,7 +61,14 @@ export class BatchManager {
       const batch = normalizeBatch(raw);
       let changed = false;
       for (const job of batch.jobs) {
-        if (job.status === 'running') {
+        if (job.status === 'running' && job.operation !== 'agent' && job.providerTask) {
+          job.status = 'queued';
+          job.error = undefined;
+          job.errorOrigin = undefined;
+          job.finishedAt = undefined;
+          job.durationMs = undefined;
+          changed = true;
+        } else if (job.status === 'running') {
           const finished = Date.now();
           const started = job.startedAt ? new Date(job.startedAt).getTime() : finished;
           job.status = 'failed';
@@ -272,6 +280,7 @@ export class BatchManager {
       job.error = undefined;
       job.errorOrigin = undefined;
       job.requestId = undefined;
+      job.providerTask = undefined;
       job.startedAt = undefined;
       job.finishedAt = undefined;
       job.durationMs = undefined;
@@ -320,6 +329,7 @@ export class BatchManager {
       job.error = undefined;
       job.errorOrigin = undefined;
       job.requestId = undefined;
+      job.providerTask = undefined;
       job.startedAt = undefined;
       job.finishedAt = undefined;
       job.durationMs = undefined;
@@ -509,11 +519,13 @@ export class BatchManager {
       return;
     }
     const offering = job.offering || batch.offering;
-    beginJob(job, offering, 'provider');
+    const resuming = Boolean(job.providerTask);
+    if (resuming) resumeJob(job, offering);
+    else beginJob(job, offering, 'provider');
     batch.updatedAt = new Date().toISOString();
     await this.options.store.save(batch);
     this.changed({ type: 'upsert', batch: snapshot(batch) });
-    let providerSubmitted = false;
+    let providerSubmitted = resuming;
     let changedImageId: string | undefined;
     try {
       const client = await this.options.createApiClient();
@@ -524,14 +536,21 @@ export class BatchManager {
         quality: job.generationOptions?.quality,
         n: 1,
       };
+      const onTask = async (task: ProviderTaskState) => {
+        providerSubmitted = true;
+        updateProviderTask(job, task);
+        batch.updatedAt = new Date().toISOString();
+        await this.options.store.save(batch);
+        this.changed({ type: 'upsert', batch: snapshot(batch) });
+      };
       let result: ApiGenerateResult;
-      if (job.referenceImageIds.length) {
+      if (job.providerTask) {
+        result = await client.resume(input, job.providerTask, { onTask });
+      } else if (job.referenceImageIds.length) {
         const sourcePaths = await Promise.all(job.referenceImageIds.map((id) => this.options.imageStore.pathForId(id)));
-        providerSubmitted = true;
-        result = await client.edit(input, sourcePaths, job.requestKey);
+        result = await client.edit(input, sourcePaths, job.requestKey, { onTask });
       } else {
-        providerSubmitted = true;
-        result = await client.generate(input, job.requestKey);
+        result = await client.generate(input, job.requestKey, { onTask });
       }
       const [saved] = await this.options.imageStore.saveBatch({
         requestId: result.requestId,
@@ -747,7 +766,7 @@ function makeJob(input: {
 function beginJob(job: BatchJob, offering: OfferingSummary, source: 'provider' | 'agent'): void {
   const now = new Date().toISOString();
   job.status = 'running';
-  job.progress = 20;
+  job.progress = source === 'provider' ? 5 : 20;
   job.attempt += 1;
   job.retryable = false;
   job.chargeState = 'unknown';
@@ -765,6 +784,43 @@ function beginJob(job: BatchJob, offering: OfferingSummary, source: 'provider' |
     chargeState: 'unknown',
     startedAt: now,
   });
+}
+
+function resumeJob(job: BatchJob, offering: OfferingSummary): void {
+  job.status = 'running';
+  job.retryable = false;
+  job.chargeState = 'unknown';
+  job.finishedAt = undefined;
+  job.durationMs = undefined;
+  job.error = undefined;
+  job.errorOrigin = undefined;
+  const call = job.callHistory.at(-1);
+  if (!call || call.status !== 'running') {
+    job.callHistory.push({
+      id: randomUUID(),
+      sequence: job.callHistory.length + 1,
+      attempt: job.attempt,
+      source: 'provider',
+      offering: structuredClone(offering),
+      status: 'running',
+      chargeState: 'unknown',
+      startedAt: job.startedAt || new Date().toISOString(),
+      providerTask: job.providerTask ? structuredClone(job.providerTask) : undefined,
+    });
+  }
+}
+
+function updateProviderTask(job: BatchJob, task: ProviderTaskState): void {
+  job.providerTask = structuredClone(task);
+  if (task.requestId) job.requestId = task.requestId;
+  if (task.status === 'completed') job.progress = 95;
+  else if (task.status === 'in_progress' && task.progress !== undefined) job.progress = Math.min(94, Math.max(1, task.progress));
+  else if (['not_start', 'submitted', 'queued'].includes(task.status)) job.progress = 5;
+  const call = job.callHistory.at(-1);
+  if (call?.status === 'running') {
+    call.providerTask = structuredClone(task);
+    if (task.requestId) call.requestId = task.requestId;
+  }
 }
 
 function finishSucceeded(job: BatchJob, result: ApiGenerateResult, imageId: string): void {
@@ -801,7 +857,7 @@ function finishFailed(
   job.errorOrigin = errorOrigin;
   job.finishedAt = now;
   job.durationMs = Math.max(0, Date.now() - started);
-  if (error instanceof EsseApiError) job.requestId = error.details.requestId;
+  if (error instanceof EsseApiError && error.details.requestId) job.requestId = error.details.requestId;
   const call = job.callHistory.at(-1);
   if (call) Object.assign(call, { status: 'failed', chargeState, requestId: job.requestId, error: message, errorOrigin, finishedAt: now, durationMs: job.durationMs });
 }
