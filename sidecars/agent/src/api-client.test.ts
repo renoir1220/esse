@@ -20,6 +20,7 @@ describe('Esse Provider client', () => {
 
   it('sends the locally stored Provider key and requests original image data', async () => {
     vi.useFakeTimers();
+    let queries = 0;
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer local-provider-key');
       if (String(url).endsWith('/async/v1/images/generations')) {
@@ -27,6 +28,8 @@ describe('Esse Provider client', () => {
         return new Response(JSON.stringify({ id: 'task-1', status: 'queued' }), { status: 202, headers: { 'x-oneapi-request-id': 'request-1' } });
       }
       expect(String(url)).toBe('https://provider.example/get-async?id=task-1');
+      queries += 1;
+      if (queries === 1) return new Response(JSON.stringify({ error: { message: 'system cpu overloaded' } }), { status: 503 });
       return new Response(JSON.stringify({ id: 'task-1', status: 'completed', result: { data: [{ b64_json: 'aW1hZ2U=' }] } }), { status: 200 });
     }) as unknown as typeof fetch;
     const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
@@ -34,7 +37,7 @@ describe('Esse Provider client', () => {
     const pending = client.generate({ prompt: 'test', model: 'provider-1:gpt-image-2' }, 'stable-key', {
       onTask: (task) => { updates.push(`${task.status}:${task.progress ?? ''}`); },
     });
-    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.advanceTimersByTimeAsync(3_000);
     const result = await pending;
     vi.useRealTimers();
     expect(result).toMatchObject({ requestId: 'request-1', items: [{ b64_json: 'aW1hZ2U=' }] });

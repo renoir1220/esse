@@ -8,6 +8,7 @@ const image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AA
 test("Tuzi adapter submits one async image task and unwraps its completed result", async () => {
   const urls: string[] = [];
   const updates: ProviderTaskState[] = [];
+  let queries = 0;
   const adapter = new TuziJsonImagesAdapter({
     baseUrl: "https://provider.example",
     apiKey: "local-key",
@@ -18,6 +19,8 @@ test("Tuzi adapter submits one async image task and unwraps its completed result
         assert.deepEqual((JSON.parse(String(init?.body)) as { image?: string[] }).image, ["data:image/png;base64,reference"]);
         return new Response(JSON.stringify({ id: "task-1", status: "submitted" }), { status: 202, headers: { "x-oneapi-request-id": "request-1" } });
       }
+      queries += 1;
+      if (queries === 1) return new Response(JSON.stringify({ error: { message: "system cpu overloaded" } }), { status: 503 });
       return new Response(JSON.stringify({ id: "task-1", status: "completed", result: { data: [{ b64_json: image }] } }), { status: 200 });
     }
   });
@@ -27,7 +30,11 @@ test("Tuzi adapter submits one async image task and unwraps its completed result
     onProviderTask: (task) => { updates.push(structuredClone(task)); }
   });
 
-  assert.deepEqual(urls, ["https://provider.example/async/v1/images/generations", "https://provider.example/get-async?id=task-1"]);
+  assert.deepEqual(urls, [
+    "https://provider.example/async/v1/images/generations",
+    "https://provider.example/get-async?id=task-1",
+    "https://provider.example/get-async?id=task-1"
+  ]);
   assert.deepEqual(updates.map((task) => task.status), ["submitted", "completed"]);
   assert.equal(result.providerRequestId, "request-1");
   assert.equal(result.b64Json, image);

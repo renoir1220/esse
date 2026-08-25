@@ -101,7 +101,7 @@ The initial import deliberately excludes the private commercial server, user acc
 - Tuzi generation now uses the Provider's asynchronous submission and task-query contract. The initial submission has a short bounded wait; accepted tasks persist their task ID, request ID, status, progress, and stage timestamps while Esse performs independent bounded status queries within the existing 15-minute overall task deadline.
 - Both UIs distinguish local reference preparation or submission, upstream queueing, formal generation, and result saving. Task details show measured queue and generation durations together with the upstream task and request IDs.
 - An accepted task is resumed by its existing task ID after the Plugin or Sidecar restarts, including the narrow case where the Provider completed before the result was saved locally. Restart recovery never submits a second generation request.
-- A Provider-declared failure or expiry is surfaced as soon as the next task query observes it. Temporary task-query transport failures are queried again without resubmitting; an unresolved overall deadline remains an unknown-result, unknown-charge outcome requiring user review.
+- A Provider-declared failure or expiry is surfaced as soon as the next task query observes it. Temporary task-query transport failures, rate limits, and upstream overload responses are queried again without resubmitting; an unresolved overall deadline remains an unknown-result, unknown-charge outcome requiring user review.
 - Errors before durable Provider acceptance are treated as not charged when Esse can prove no submission occurred. Ambiguous submission transport failures remain unknown, and Tuzi's `X-Oneapi-Request-Id` is retained for support diagnostics.
 
 ## Deferred

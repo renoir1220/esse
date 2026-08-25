@@ -80,6 +80,11 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       }
       if (!response.ok) {
         const error = providerError(response, parsed);
+        if (isTransientTaskQueryStatus(response.status)) {
+          if (Date.now() >= deadline) throw taskTimeout(task, totalTimeout);
+          delay = Math.min(Math.max(delay * 2, 1_000), 10_000);
+          continue;
+        }
         throw new ProviderRequestError(error.message, { ...error.details, retryable: true, chargeState: "unknown", requestId: task.requestId });
       }
       const record = asRecord(parsed);
@@ -115,6 +120,10 @@ function taskTimeout(task: ProviderTaskState, timeoutMs: number): ProviderReques
   return new ProviderRequestError(`图片任务在 ${Math.round(timeoutMs / 60_000)} 分钟期限内没有完成；最后确认状态为 ${task.status}，结果与扣费状态未知。`, {
     retryable: true, chargeState: "unknown", requestId: task.requestId, origin: "transport"
   });
+}
+
+function isTransientTaskQueryStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
 function taskStatus(value: unknown): ProviderTaskStatus | undefined {
