@@ -171,7 +171,16 @@ export class EsseApiClient {
         delay = Math.min(Math.max(delay * 2, 1_000), 10_000);
         continue;
       }
-      if (!response.ok) throw providerTaskQueryError(response, body, profile, task);
+      if (!response.ok) {
+        const queryError = providerTaskQueryError(response, body, profile, task);
+        if (isTransientTaskQueryStatus(response.status)) {
+          lastError = queryError;
+          if (Date.now() >= deadline) throw providerTaskTimeout(task, queryError);
+          delay = Math.min(Math.max(delay * 2, 1_000), 10_000);
+          continue;
+        }
+        throw queryError;
+      }
       const record = asRecord(body);
       const status = providerTaskStatus(record.status);
       if (!status) throw new EsseApiError('图片服务返回了无法识别的异步任务状态。', {
@@ -292,6 +301,10 @@ function providerTaskTimeout(task: ProviderTaskState, cause?: unknown): EsseApiE
   return new EsseApiError(`图片任务在 ${IMAGE_REQUEST_TIMEOUT_MS / 60_000} 分钟期限内没有完成；最后确认状态为 ${task.status}，结果与扣费状态未知。`, {
     code: 'provider_task_timeout', requestId: task.requestId, chargeState: 'unknown', origin: 'transport',
   }, cause ? { cause } : undefined);
+}
+
+function isTransientTaskQueryStatus(status: number): boolean {
+  return status === 408 || status === 425 || status === 429 || status >= 500;
 }
 
 function extractItems(body: unknown): ApiImageItem[] {
