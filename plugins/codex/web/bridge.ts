@@ -271,6 +271,7 @@ async function previewCall(name: string, args: Record<string, unknown>): Promise
         job.progress = 15;
         job.chargeState = "unknown";
         job.durationMs = undefined;
+        job.providerTask = undefined;
       }
       batch.running = batch.jobs.filter((job) => job.status === "running").length;
       batch.succeeded = batch.jobs.filter((job) => job.status === "succeeded").length;

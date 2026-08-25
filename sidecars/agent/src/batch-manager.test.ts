@@ -2,10 +2,11 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { EsseApiError } from './api-client';
+import { EsseApiError, type ProviderTaskHooks } from './api-client';
 import { BatchManager, type BatchManagerChange } from './batch-manager';
 import { BatchStore } from './batch-store';
 import { ImageStore } from './image-store';
+import type { ProviderTaskState } from './types';
 
 const temporaryDirectories: string[] = [];
 const managers: BatchManager[] = [];
@@ -167,6 +168,33 @@ describe('Esse batch manager', () => {
     await restarted.initialize();
     await vi.waitFor(() => expect(restarted.get(accepted.id).status).toBe('completed'));
     expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('resumes an accepted Tuzi task by task ID after Esse restarts without submitting again', async () => {
+    const fixture = await fixtureDirectory();
+    const first = managerFor(fixture, fakeApi(), { canRun: async () => false });
+    await first.initialize();
+    const accepted = await first.create({ prompt: 'resume accepted task', requestKey: 'resume-accepted-provider-task' });
+    const [record] = await fixture.batchStore.loadAll();
+    const job = record.jobs[0];
+    const now = new Date().toISOString();
+    const providerTask = { id: 'task-resume-1', status: 'in_progress' as const, progress: 10, requestId: 'request-resume-1', submittedAt: now, startedAt: now, updatedAt: now };
+    Object.assign(job, { status: 'running', progress: 10, chargeState: 'unknown', startedAt: now, providerTask });
+    job.callHistory = [{ id: 'call-resume-1', sequence: 1, attempt: 1, source: 'provider', offering: job.offering || record.offering, status: 'running', chargeState: 'unknown', startedAt: now, providerTask }];
+    await fixture.batchStore.save(record);
+
+    const generate = vi.fn(fakeApi().generate);
+    const resume = vi.fn(async (_input?: unknown, task?: ProviderTaskState, hooks?: ProviderTaskHooks) => {
+      await hooks?.onTask?.({ ...task!, status: 'completed', progress: undefined, completedAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+      return generatedResult('resumed-task');
+    });
+    const restarted = managerFor(fixture, { ...fakeApi(), generate, resume });
+    await restarted.initialize();
+
+    await vi.waitFor(() => expect(restarted.get(accepted.id).status).toBe('completed'));
+    expect(generate).not.toHaveBeenCalled();
+    expect(resume).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'task-resume-1' }), expect.anything());
+    expect(restarted.get(accepted.id).jobs[0].callHistory).toHaveLength(1);
   });
 
   it('keeps an unknown-charge failure terminal unless the user explicitly confirms a manual retry', async () => {
@@ -435,6 +463,7 @@ function fakeApi(concurrency = 3) {
     }],
     generate: async (_input?: unknown, requestKey = 'generated') => generatedResult(requestKey.replace(/:/g, '-')),
     edit: async (_input?: unknown, _paths?: string[], requestKey = 'edited') => generatedResult(requestKey.replace(/:/g, '-')),
+    resume: async (_input?: unknown, task?: ProviderTaskState, _hooks?: ProviderTaskHooks) => generatedResult(task?.id || 'resumed'),
   };
 }
 

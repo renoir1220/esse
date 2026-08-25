@@ -96,6 +96,14 @@ The initial import deliberately excludes the private commercial server, user acc
 - Provider execution has a default global bound of three jobs and schedules one eligible job per batch per pass. Reference files within one job are encoded sequentially, keeping image preparation bounded without changing prompts, references, task states, or Provider payloads.
 - Provider and transport errors finish the affected job after the first failed call. Esse retains explicit user-initiated retry, including the existing unknown-charge confirmation rule, but performs no automatic retry or shared network recovery.
 
+## 2026-08-25 — durable Tuzi asynchronous image tasks
+
+- Tuzi generation now uses the Provider's asynchronous submission and task-query contract. The initial submission has a short bounded wait; accepted tasks persist their task ID, request ID, status, progress, and stage timestamps while Esse performs independent bounded status queries within the existing 15-minute overall task deadline.
+- Both UIs distinguish local reference preparation or submission, upstream queueing, formal generation, and result saving. Task details show measured queue and generation durations together with the upstream task and request IDs.
+- An accepted task is resumed by its existing task ID after the Plugin or Sidecar restarts, including the narrow case where the Provider completed before the result was saved locally. Restart recovery never submits a second generation request.
+- A Provider-declared failure or expiry is surfaced as soon as the next task query observes it. Temporary task-query transport failures are queried again without resubmitting; an unresolved overall deadline remains an unknown-result, unknown-charge outcome requiring user review.
+- Errors before durable Provider acceptance are treated as not charged when Esse can prove no submission occurred. Ambiguous submission transport failures remain unknown, and Tuzi's `X-Oneapi-Request-Id` is retained for support diagnostics.
+
 ## Deferred
 
 - shared domain/provider/UI packages;

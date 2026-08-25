@@ -8,6 +8,18 @@ export type JobCallStatus = "running" | "succeeded" | "failed" | "canceled";
 export type BatchStatus = "queued" | "running" | "completed" | "partial" | "failed" | "canceled";
 export type ChargeState = "not_charged" | "charged" | "unknown";
 export type ErrorOrigin = "upstream" | "esse" | "transport";
+export type ProviderTaskStatus = "not_start" | "submitted" | "queued" | "in_progress" | "completed" | "failure" | "expired";
+
+export interface ProviderTaskState {
+  id: string;
+  status: ProviderTaskStatus;
+  progress?: number;
+  requestId?: string;
+  submittedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+  updatedAt: string;
+}
 
 export interface PriceConfig {
   mode: PriceMode;
@@ -83,6 +95,7 @@ export interface JobRecord {
   error?: string;
   errorOrigin?: ErrorOrigin;
   providerRequestId?: string;
+  providerTask?: ProviderTaskState;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;
@@ -104,6 +117,7 @@ export interface JobCallRecord {
   error?: string;
   errorOrigin?: ErrorOrigin;
   providerRequestId?: string;
+  providerTask?: ProviderTaskState;
 }
 
 export interface JobBackup {
@@ -180,6 +194,8 @@ export interface GenerateRequest {
   size?: string;
   quality?: string;
   responseFormat: "url" | "b64_json";
+  providerTask?: ProviderTaskState;
+  onProviderTask?: (task: ProviderTaskState) => void | Promise<void>;
 }
 
 export interface GenerateResult {

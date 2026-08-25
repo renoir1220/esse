@@ -4,7 +4,7 @@ import { mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import type { DataPaths } from "../paths.js";
 import { imageFilesToDataUrls } from "../files/image-files.js";
 import { backupImageVersion, importGeneratedImage, saveGeneratedImage } from "../files/output-files.js";
-import type { BatchActivation, BatchRecord, BatchSnapshot, BatchStatus, GenerationOptions, JobBackup, JobCallRecord, JobCallStatus, JobRecord, OfferingSnapshot, ProviderRequestError } from "../types.js";
+import type { BatchActivation, BatchRecord, BatchSnapshot, BatchStatus, GenerationOptions, JobBackup, JobCallRecord, JobCallStatus, JobRecord, OfferingSnapshot, ProviderRequestError, ProviderTaskState } from "../types.js";
 import { ProviderRequestError as ProviderError } from "../types.js";
 import type { BatchStore } from "../storage/batch-store.js";
 import type { ProviderRegistry, ResolvedOffering } from "../providers/registry.js";
@@ -79,6 +79,7 @@ export class BatchManager {
   }
 
   async initialize(): Promise<void> {
+    const resumable: Array<{ batch: BatchRecord; job: JobRecord }> = [];
     for (const batch of await this.store.loadAll()) {
       let changed = false;
       for (const job of batch.jobs) {
@@ -88,7 +89,11 @@ export class BatchManager {
           job.name = chineseName;
           changed = true;
         }
-        if (job.status === "running") {
+        if (job.status === "running" && (job.offering || batch.offering).adapterId !== "agent-generation" && job.providerTask) {
+          Object.assign(job, { status: "queued", error: undefined, errorOrigin: undefined, finishedAt: undefined, durationMs: undefined });
+          resumable.push({ batch, job });
+          changed = true;
+        } else if (job.status === "running") {
           const agentGenerated = (job.offering || batch.offering).adapterId === "agent-generation";
           const finished = Date.now();
           const started = job.startedAt ? new Date(job.startedAt).getTime() : finished;
@@ -134,6 +139,18 @@ export class BatchManager {
       }
       this.batches.set(batch.id, batch);
       if (batch.requestKey) this.requestKeys.set(batch.requestKey, batch.id);
+    }
+    for (const { batch, job } of resumable) {
+      try {
+        const resolved = await this.registry.resolveOffering((job.offering || batch.offering).id);
+        this.schedule(batch, job, resolved);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Unable to restore the Provider task.";
+        Object.assign(job, { status: "failed", progress: 100, retryable: true, chargeState: "unknown", error: message, errorOrigin: "esse", finishedAt: new Date().toISOString() });
+        finishActiveCall(job, "failed", { chargeState: "unknown", error: message, errorOrigin: "esse", finishedAt: job.finishedAt });
+        batch.updatedAt = new Date().toISOString();
+        await this.store.save(batch);
+      }
     }
   }
 
@@ -347,6 +364,7 @@ export class BatchManager {
           error: undefined,
           errorOrigin: undefined,
           providerRequestId: undefined,
+          providerTask: undefined,
           startedAt: undefined,
           finishedAt: undefined,
           durationMs: undefined
@@ -526,6 +544,7 @@ export class BatchManager {
         error: undefined,
         errorOrigin: undefined,
         providerRequestId: undefined,
+        providerTask: undefined,
         startedAt: undefined,
         finishedAt: undefined,
         durationMs: undefined,
@@ -795,15 +814,24 @@ export class BatchManager {
 
   private async runJob(batch: BatchRecord, job: JobRecord, resolved: ResolvedOffering): Promise<void> {
     const started = Date.now();
-    const startedAt = new Date(started).toISOString();
-    const call = beginCall(job, resolved.snapshot, startedAt);
-    Object.assign(job, { status: "running", progress: 15, chargeState: "unknown", startedAt, error: undefined, errorOrigin: undefined });
+    const startedAt = job.providerTask && job.startedAt ? job.startedAt : new Date(started).toISOString();
+    const call = job.providerTask ? activeCall(job) || beginCall(job, resolved.snapshot, startedAt) : beginCall(job, resolved.snapshot, startedAt);
+    Object.assign(job, {
+      status: "running",
+      progress: job.providerTask ? job.progress : 5,
+      chargeState: "unknown",
+      startedAt,
+      finishedAt: undefined,
+      durationMs: undefined,
+      error: undefined,
+      errorOrigin: undefined
+    });
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
     try {
       const adapter = await this.registry.adapterFor(resolved.profile);
       const generationInputs = generationInputsFor(job);
-      const images = await imageFilesToDataUrls(generationInputs);
+      const images = job.providerTask ? [] : await imageFilesToDataUrls(generationInputs);
       const runtime = job.generationOptions || batch.generationOptions || {};
       const result = await adapter.generate({
         model: resolved.offering.providerModelId,
@@ -813,7 +841,13 @@ export class BatchManager {
         quality: runtime.quality,
         // This configured relay returns portable image bytes in JSON. Request them directly
         // instead of relying on a provider-hosted URL that may be private or short-lived.
-        responseFormat: "b64_json"
+        responseFormat: "b64_json",
+        providerTask: job.providerTask,
+        onProviderTask: async (task) => {
+          updateProviderTask(job, call, task);
+          batch.updatedAt = new Date().toISOString();
+          await this.persist(batch);
+        }
       });
       const previousOutputs = job.generationInputPaths?.length ? job.generationInputPaths : job.generationInputPath ? [job.generationInputPath] : [];
       job.outputPath = await saveGeneratedImage({
@@ -843,26 +877,29 @@ export class BatchManager {
       const providerError = error instanceof ProviderError ? error as ProviderRequestError : undefined;
       const failureMessage = error instanceof Error ? error.message : "Unknown local image generation error";
       const errorOrigin = providerError?.details.origin ?? "esse";
+      const chargeState = providerError?.details.chargeState ?? (job.providerTask ? "unknown" : "not_charged");
       Object.assign(job, {
         status: "failed",
         progress: 100,
         retryable: providerError?.details.retryable ?? false,
-        chargeState: providerError?.details.chargeState ?? "unknown",
+        chargeState,
         error: failureMessage,
         errorOrigin,
-        providerRequestId: providerError?.details.requestId
+        providerRequestId: providerError?.details.requestId ?? job.providerRequestId
       });
       Object.assign(call, {
         status: "failed",
-        chargeState: providerError?.details.chargeState ?? "unknown",
+        chargeState,
         error: failureMessage,
         errorOrigin,
-        providerRequestId: providerError?.details.requestId
+        providerRequestId: providerError?.details.requestId ?? call.providerRequestId
       });
     } finally {
       const finished = Date.now();
-      Object.assign(call, { finishedAt: new Date(finished).toISOString(), durationMs: Math.max(0, finished - started) });
-      Object.assign(job, { finishedAt: new Date(finished).toISOString(), durationMs: finished - started });
+      const originalStarted = Date.parse(startedAt);
+      const durationMs = Math.max(0, finished - (Number.isFinite(originalStarted) ? originalStarted : started));
+      Object.assign(call, { finishedAt: new Date(finished).toISOString(), durationMs });
+      Object.assign(job, { finishedAt: new Date(finished).toISOString(), durationMs });
       batch.updatedAt = new Date().toISOString();
       await this.persist(batch);
     }
@@ -1111,6 +1148,18 @@ function activeCall(job: JobRecord): JobCallRecord | undefined {
   return [...(job.callHistory || [])].reverse().find((call) => call.status === "running");
 }
 
+function updateProviderTask(job: JobRecord, call: JobCallRecord, task: ProviderTaskState): void {
+  job.providerTask = structuredClone(task);
+  call.providerTask = structuredClone(task);
+  if (task.requestId) {
+    job.providerRequestId = task.requestId;
+    call.providerRequestId = task.requestId;
+  }
+  if (task.status === "completed") job.progress = 95;
+  else if (task.status === "in_progress" && task.progress !== undefined) job.progress = Math.min(94, Math.max(1, task.progress));
+  else if (["not_start", "submitted", "queued"].includes(task.status)) job.progress = 5;
+}
+
 function finishActiveCall(job: JobRecord, status: JobCallStatus, patch: Partial<JobCallRecord>): void {
   const call = activeCall(job);
   if (call) finishCall(call, status, patch);
@@ -1137,7 +1186,8 @@ function migrateLegacyCallHistory(job: JobRecord, offering: OfferingSnapshot): b
     finishedAt: job.finishedAt,
     durationMs: job.durationMs,
     error: job.error,
-    providerRequestId: job.providerRequestId
+    providerRequestId: job.providerRequestId,
+    providerTask: job.providerTask ? structuredClone(job.providerTask) : undefined
   };
   job.callHistory = [call];
   return true;
