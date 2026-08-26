@@ -19,6 +19,13 @@ describe('desktop control styling', () => {
     expect(selectMenu).toMatch(/aria-selected=/);
   });
 
+  it('keeps an open menu stable while its own list scrolls', () => {
+    expect(selectMenu).toMatch(/focus\(\{ preventScroll: true \}\)/);
+    expect(selectMenu).toMatch(/menuRef\.current\?\.contains\(target\)/);
+    expect(css).toMatch(/\.select-menu-list[^}]*overscroll-behavior:\s*contain/);
+    expect(renderer).toMatch(/querySelector\('\.select-menu-list'\)\?\.contains\(event\.target\)/);
+  });
+
   it('keeps composite inputs to a single visible focus ring', () => {
     expect(css).toMatch(/\.library-search:focus-within[^}]*\{[^}]*box-shadow:\s*var\(--focus-ring\)/);
     expect(css).toMatch(/\.library-search input:focus\s*\{[^}]*box-shadow:\s*none/);
