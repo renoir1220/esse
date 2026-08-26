@@ -44,7 +44,7 @@ input:focus-visible, textarea:focus-visible { border-color: var(--focus); box-sh
 .select-menu-value.is-placeholder { color: var(--muted); font-weight: 400; }
 .select-menu-caret { transition: transform 110ms ease; }
 .select-menu.is-open .select-menu-caret { transform: rotate(180deg); }
-.select-menu-list { position: fixed; z-index: 300; width: max-content; max-height: min(280px, calc(100vh - 24px)); display: grid; gap: 2px; overflow: auto; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.98); box-shadow: 0 14px 38px rgba(16,20,16,.14), 0 3px 10px rgba(16,20,16,.06); backdrop-filter: blur(18px); }
+.select-menu-list { position: fixed; z-index: 300; width: max-content; max-height: min(280px, calc(100vh - 24px)); display: grid; gap: 2px; overflow: auto; overscroll-behavior: contain; padding: 5px; border: 1px solid var(--border); border-radius: 10px; background: rgba(255,255,255,.98); box-shadow: 0 14px 38px rgba(16,20,16,.14), 0 3px 10px rgba(16,20,16,.06); backdrop-filter: blur(18px); }
 .select-menu-option { width: 100%; min-width: 0; min-height: 35px; display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: center; gap: 7px; padding: 6px 8px; border: 0; border-radius: 7px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
 .select-menu-option:hover:not(:disabled), .select-menu-option:focus-visible, .select-menu-option.is-selected { outline: 0; background: var(--surface-2); box-shadow: none; }
 .select-menu-option:disabled { color: var(--muted); opacity: .55; cursor: default; }

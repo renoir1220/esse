@@ -90,7 +90,7 @@ export function SelectMenu(props: {
 
   const closeMenu = (restoreFocus = false) => {
     setOpen(false);
-    if (restoreFocus) window.requestAnimationFrame(() => triggerRef.current?.focus());
+    if (restoreFocus) window.requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
   };
 
   useEffect(() => {
@@ -101,7 +101,7 @@ export function SelectMenu(props: {
         : edgeEnabledOptionIndex(props.options, 'first')
     );
     requestedFocusIndex.current = undefined;
-    const frame = window.requestAnimationFrame(() => optionRefs.current[focusIndex]?.focus());
+    const frame = window.requestAnimationFrame(() => optionRefs.current[focusIndex]?.focus({ preventScroll: true }));
     return () => window.cancelAnimationFrame(frame);
   }, [open]);
 
@@ -111,7 +111,10 @@ export function SelectMenu(props: {
       const target = event.target as Node;
       if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) closeMenu();
     };
-    const onViewportChange = () => closeMenu();
+    const onViewportChange = (event: Event) => {
+      if (event.target instanceof Node && menuRef.current?.contains(event.target)) return;
+      closeMenu();
+    };
     document.addEventListener('pointerdown', onPointerDown);
     window.addEventListener('resize', onViewportChange);
     window.addEventListener('scroll', onViewportChange, true);
@@ -152,7 +155,7 @@ export function SelectMenu(props: {
     if (event.key === 'End') nextIndex = edgeEnabledOptionIndex(props.options, 'last');
     if (nextIndex < 0) return;
     event.preventDefault();
-    optionRefs.current[nextIndex]?.focus();
+    optionRefs.current[nextIndex]?.focus({ preventScroll: true });
   };
 
   return <div
