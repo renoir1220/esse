@@ -35,6 +35,33 @@ describe('Esse MCP server', () => {
     expect(response.status).toBe(401);
   });
 
+  it('reads the current Provider offering registry for every capability query', async () => {
+    const api = fakeApi();
+    const [initial] = await api.offerings();
+    let current = [initial];
+    const fixture = await createFixture({ ...api, offerings: async () => structuredClone(current) });
+    const server = await startDesktopMcpServer({
+      pairingToken: 'correct-pairing-token',
+      port: 0,
+      batchManager: fixture.batchManager,
+      imageStore: fixture.imageStore,
+    });
+    runningServers.push(server);
+    const client = new Client({ name: 'provider-registry-test', version: '1.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint), {
+      requestInit: { headers: { authorization: 'Bearer correct-pairing-token' } },
+    }));
+
+    const first = firstJson(await client.callTool({ name: 'list_image_offerings', arguments: {} }));
+    const firstProviderOfferings = (first.offerings as Array<Record<string, unknown>>).filter((offering) => offering.providerType !== 'agent-generation');
+    expect(firstProviderOfferings.map((offering) => offering.providerModelId)).toEqual(['gpt-image-2']);
+    current = [{ ...initial, id: 'new-provider:model', providerModelId: 'new-provider-model', canonicalModelId: 'new-provider-model', displayName: 'New Provider Model' }];
+    const second = firstJson(await client.callTool({ name: 'list_image_offerings', arguments: {} }));
+    const secondProviderOfferings = (second.offerings as Array<Record<string, unknown>>).filter((offering) => offering.providerType !== 'agent-generation');
+    expect(secondProviderOfferings.map((offering) => offering.providerModelId)).toEqual(['new-provider-model']);
+    await client.close();
+  });
+
   it('exposes the durable batch surface and returns before background generation finishes', async () => {
     let completeGeneration!: (value: Awaited<ReturnType<ReturnType<typeof fakeApi>['generate']>>) => void;
     const pendingGeneration = new Promise<Awaited<ReturnType<ReturnType<typeof fakeApi>['generate']>>>((resolve) => { completeGeneration = resolve; });
