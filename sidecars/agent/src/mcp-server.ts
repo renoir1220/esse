@@ -9,7 +9,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { z } from 'zod';
 import type { Express, NextFunction, Request, Response } from 'express';
 import type { BatchManager } from './batch-manager';
-import { DESKTOP_BATCH_SKILL } from './desktop-skill';
+import { buildDesktopBatchSkill } from './desktop-skill';
 import type { ImageStore } from './image-store';
 import type { BatchJobInput, BatchSnapshot, OfferingSummary } from './types';
 
@@ -26,6 +26,8 @@ interface DesktopMcpServerOptions {
   port?: number;
   batchManager: McpBatchManager;
   imageStore: Pick<ImageStore, 'get' | 'getMany' | 'importFile' | 'pathForId' | 'resolveMediaRequest'>;
+  providerConfigPath?: string;
+  settingsConfigPath?: string;
   createImagePreview?: (filePath: string, maxDimension: number) => Promise<{ data: string; mimeType: string } | undefined>;
   onOpenRequested?: (input: { tab: 'batches' | 'settings'; batchId?: string }) => void | Promise<void>;
 }
@@ -91,17 +93,18 @@ export async function startDesktopMcpServer(options: DesktopMcpServerOptions): P
 }
 
 function createServer(options: DesktopMcpServerOptions): McpServer {
+  const desktopSkill = buildDesktopBatchSkill(options.providerConfigPath, options.settingsConfigPath);
   const server = new McpServer(
     { name: 'esse', version: '0.3.0' },
     {
-      instructions: DESKTOP_BATCH_SKILL,
+      instructions: desktopSkill,
     },
   );
 
   server.registerPrompt('batch-generate-images', {
     title: 'Use Esse for a durable image batch',
     description: 'Provider-neutral Esse workflow: submit fully specified image work without extra capability warnings, then stop after background acceptance.',
-  }, async () => ({ messages: [{ role: 'user', content: { type: 'text', text: DESKTOP_BATCH_SKILL } }] }));
+  }, async () => ({ messages: [{ role: 'user', content: { type: 'text', text: desktopSkill } }] }));
 
   server.registerTool('open_esse', {
     title: 'Open Esse',
