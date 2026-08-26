@@ -179,7 +179,12 @@ function App() {
       if (shouldDismissOverlay(event.target, '.header-more')) setBatchMenuOpen(false);
       if (shouldDismissOverlay(event.target, '.image-context-menu')) setImageMenu(undefined);
     };
-    const closeTransientOverlays = () => { setBatchPickerOpen(false); setBatchMenuOpen(false); setImageMenu(undefined); };
+    const closeTransientOverlays = (event?: Event) => {
+      if (event?.target instanceof Node && document.querySelector('.select-menu-list')?.contains(event.target)) return;
+      setBatchPickerOpen(false);
+      setBatchMenuOpen(false);
+      setImageMenu(undefined);
+    };
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== 'Escape') return;
       if (batchPickerOpen || batchMenuOpen || imageMenu) {
