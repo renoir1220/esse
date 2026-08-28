@@ -90,7 +90,11 @@ test("each child task keeps its own prompt and zero-to-many reference images", a
     }));
     const requests: Array<{ prompt?: string; image?: unknown[] }> = [];
     const { manager } = await createManager(root, async (_input, init) => {
-      requests.push(JSON.parse(String(init?.body || "{}")) as { prompt?: string; image?: unknown[] });
+      if (init?.body instanceof FormData) {
+        requests.push({ prompt: String(init.body.get("prompt") || ""), image: init.body.getAll("image") });
+      } else {
+        requests.push(JSON.parse(String(init?.body || "{}")) as { prompt?: string; image?: unknown[] });
+      }
       return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
     });
     const created = await manager.create({
@@ -234,7 +238,8 @@ test("in-place modification keeps the batch, refreshes the main image, and creat
   try {
     const requestedModels: string[] = [];
     const { manager } = await createManager(root, async (_input, init) => {
-      requestedModels.push(String((JSON.parse(String(init?.body || "{}")) as { model?: string }).model || ""));
+      const body = init?.body instanceof FormData ? init.body.get("model") : (JSON.parse(String(init?.body || "{}")) as { model?: string }).model;
+      requestedModels.push(String(body || ""));
       return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
     });
     const created = await manager.create({ offeringId: "offer-default", prompt: "original", count: 1, requestKey: "edit-source" });
@@ -671,7 +676,7 @@ function asyncTaskFetch(delegate: typeof fetch): typeof fetch {
       return new Response(JSON.stringify({ id, status: "completed", result: results.get(id) }), { status: 200, headers: { "content-type": "application/json" } });
     }
     const response = await delegate(input, init);
-    if (!url.includes("/async/v1/images/generations") || !response.ok) return response;
+    if ((!url.includes("/async/v1/images/generations") && !url.includes("/async/v1/images/edits")) || !response.ok) return response;
     const id = `task-${++sequence}`;
     results.set(id, await response.json());
     return new Response(JSON.stringify({ id, status: "submitted" }), { status: 202, headers: { "content-type": "application/json", "x-oneapi-request-id": `request-${sequence}` } });

@@ -15,8 +15,10 @@ test("Tuzi adapter submits one async image task and unwraps its completed result
     fetchImpl: async (input, init) => {
       const url = String(input);
       urls.push(url);
-      if (url.endsWith("/async/v1/images/generations")) {
-        assert.deepEqual((JSON.parse(String(init?.body)) as { image?: string[] }).image, ["data:image/png;base64,reference"]);
+      if (url.endsWith("/async/v1/images/edits")) {
+        const form = init?.body as FormData;
+        assert.equal(form.get("model"), "gpt-image-2");
+        assert.equal(form.getAll("image").length, 1);
         return new Response(JSON.stringify({ id: "task-1", status: "submitted" }), { status: 202, headers: { "x-oneapi-request-id": "request-1" } });
       }
       queries += 1;
@@ -31,7 +33,7 @@ test("Tuzi adapter submits one async image task and unwraps its completed result
   });
 
   assert.deepEqual(urls, [
-    "https://provider.example/async/v1/images/generations",
+    "https://provider.example/async/v1/images/edits",
     "https://provider.example/get-async?id=task-1",
     "https://provider.example/get-async?id=task-1"
   ]);

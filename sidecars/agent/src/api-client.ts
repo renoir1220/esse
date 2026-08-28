@@ -101,20 +101,40 @@ export class EsseApiClient {
     if (!task) {
       let response: Response;
       try {
-        response = await this.fetchImpl(`${profile.baseUrl}/async/v1/images/generations`, {
-          method: 'POST',
-          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            model,
-            prompt: input.prompt,
-            n: input.n ?? 1,
-            response_format: 'b64_json',
-            ...(images.length ? { image: images } : {}),
-            ...(input.size ? { size: input.size } : {}),
-            ...(input.quality ? { quality: input.quality } : {}),
-          }),
-          signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
-        });
+        if (images.length) {
+          const form = new FormData();
+          form.set('model', model);
+          form.set('prompt', input.prompt);
+          form.set('n', String(input.n ?? 1));
+          form.set('response_format', 'b64_json');
+          if (input.size) form.set('size', input.size);
+          if (input.quality) form.set('quality', input.quality);
+          for (const [index, image] of images.entries()) {
+            const match = /^data:([^;,]+);base64,(.+)$/s.exec(image);
+            if (!match?.[1] || !match[2]) throw new Error('Invalid local reference image.');
+            form.append('image', new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
+          }
+          response = await this.fetchImpl(`${profile.baseUrl}/async/v1/images/edits`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${apiKey}` },
+            body: form,
+            signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
+          });
+        } else {
+          response = await this.fetchImpl(`${profile.baseUrl}/async/v1/images/generations`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+            body: JSON.stringify({
+              model,
+              prompt: input.prompt,
+              n: input.n ?? 1,
+              response_format: 'b64_json',
+              ...(input.size ? { size: input.size } : {}),
+              ...(input.quality ? { quality: input.quality } : {}),
+            }),
+            signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
+          });
+        }
       } catch (error) {
         const diagnostic = networkErrorDiagnostic(error);
         throw new EsseApiError(`图片任务提交失败${diagnostic ? `（诊断码：${diagnostic}）` : ''}；是否已被上游接收及扣费状态未知。`, {
