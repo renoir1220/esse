@@ -34,6 +34,14 @@ Esse is the durable owner of batch state, original files, retries, and history. 
 13. Delete only explicitly authorized exact image IDs with `delete_esse_images`. Deleting a current image also deletes its preserved versions. Do not delete queued/running images or interpret image deletion as permission to delete a batch.
 14. Combine distinct terminal batches only with `merge_image_batches`, one exact target and exact source IDs, and a stable `requestKey`. Preserve source batches unless the user explicitly requests `deleteSourceBatches: true`. Do not use merge for append work.
 
+## Provider settings requested by the user
+
+Esse does not expose a dedicated Provider-configuration MCP tool. When the user explicitly asks to inspect or change a Provider, use the local filesystem tools to read the `providers.json` file under Esse's user-data directory. On Windows this is `%LOCALAPPDATA%\esse-community\providers.json` for Esse Community or `%LOCALAPPDATA%\esse-agent-sidecar\providers.json` for the private Esse edition; on macOS it is `~/Library/Application Support/<Esse user-data directory>/providers.json`. The exact active path is included in the Esse MCP instructions and in the setup prompt copied by Esse.
+
+`providers.json` is version 1 JSON. Preserve the root `version`, all other Providers, stable Provider IDs, stable offering IDs, unknown fields, and ISO `updatedAt` timestamps. Provider records contain `displayName`, `tierName`, `baseUrl`, `adapterId` (`tuzi-json-images` or `openai-images`), `concurrency`, and `offerings`; each offering needs `canonicalModelId`, `providerModelId`, `displayName`, `price`, text/image support flags, `sizes`, and `qualities`. A Provider must keep at least one offering. The default offering ID is stored separately in the sibling `settings.json` as `defaultOfferingId`.
+
+API Keys are not in `providers.json`; they are held in the operating system secure store. Never read, edit, or echo `provider-credentials.json`, and never ask the user to paste an API Key into chat. A new or keyless Provider must be completed by the user in Esse settings. Before an external edit, make a backup and validate the JSON; change only the requested fields and do not re-enable models the user disabled. After editing `providers.json` or `settings.json`, tell the user to restart Esse so the UI and background scheduler reload the configuration. The Agent may restart Esse only when the user explicitly authorizes it and local process control is available. Do not edit configuration while a Provider request is running.
+
 ## Guardrails
 
 - Do ordinary work without a pricing preamble or progress narration. Do not mention Provider, model, balance, unit price, total price, micros, tool choice, batch ID, or queued-job details unless the user explicitly asks. Price and progress remain visible in Esse.

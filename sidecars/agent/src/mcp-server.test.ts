@@ -87,6 +87,9 @@ describe('Esse MCP server', () => {
     expect(serverInstructions).toContain('language the user is currently using');
     expect(serverInstructions).toContain('default to Simplified Chinese');
     expect(serverInstructions).toContain('end the current task immediately');
+    expect(serverInstructions).toContain('providers.json');
+    expect(serverInstructions).toContain('Provider 配置 MCP 写接口');
+    expect(serverInstructions).toContain('外部编辑后必须提醒用户重启 Esse');
     const tools = await client.listTools();
     expect(tools.tools.map((tool) => tool.name)).toEqual(expect.arrayContaining([
       'open_esse',
@@ -137,6 +140,10 @@ describe('Esse MCP server', () => {
     expect(desktopSkillText).toContain('not an image-generation model or model architecture');
     expect(desktopSkillText).toContain('generic warning about text, numbers, charts, infographics');
     expect(desktopSkillText).toContain('end the current task immediately');
+    expect(desktopSkillText).toContain('providers.json');
+    expect(desktopSkillText).toContain('settings.json');
+    expect(desktopSkillText).toContain('API Key 不在 providers.json 中');
+    expect(desktopSkillText).toContain('外部编辑后必须提醒用户重启 Esse');
     expect(desktopSkillText).toContain('For a Chinese request, submit Chinese image prompts');
     expect(desktopSkillText).toContain('default to Simplified Chinese');
     expect(desktopSkillText).toContain('Do not mention Provider, model, balance, unit price, total price, micros');
