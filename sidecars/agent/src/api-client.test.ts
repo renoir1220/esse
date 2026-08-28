@@ -44,6 +44,32 @@ describe('Esse Provider client', () => {
     expect(updates).toEqual(['queued:', 'completed:']);
   });
 
+  it('uses the Tuzi async edits contract for reference images', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-api-tuzi-edit-test-'));
+    temporaryDirectories.push(directory);
+    const sourcePath = path.join(directory, 'source.png');
+    await writeFile(sourcePath, 'reference-image');
+    let queries = 0;
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer local-provider-key');
+      if (String(url).endsWith('/async/v1/images/edits')) {
+        const form = init?.body as FormData;
+        expect(form.get('model')).toBe('gpt-image-2');
+        expect(form.get('quality')).toBe('4K');
+        expect(form.getAll('image')).toHaveLength(1);
+        expect(new Headers(init?.headers).get('content-type')).toBeNull();
+        return new Response(JSON.stringify({ id: 'task-edit-1', status: 'queued' }), { status: 202, headers: { 'x-oneapi-request-id': 'request-edit-1' } });
+      }
+      expect(String(url)).toBe('https://provider.example/get-async?id=task-edit-1');
+      queries += 1;
+      return new Response(JSON.stringify({ id: 'task-edit-1', status: 'completed', result: { data: [{ b64_json: 'ZWRpdGVk' }] } }), { status: 200 });
+    }) as unknown as typeof fetch;
+    const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
+    const pending = client.edit({ prompt: 'add a scarf', model: 'provider-1:gpt-image-2', quality: '4K' }, [sourcePath]);
+    await expect(pending).resolves.toMatchObject({ requestId: 'request-edit-1', items: [{ b64_json: 'ZWRpdGVk' }] });
+    expect(queries).toBe(1);
+  });
+
   it('returns locally configured offerings without contacting another Esse service', async () => {
     const client = new EsseApiClient(fakeSettings('tuzi-json-images'));
     await expect(client.offerings()).resolves.toEqual([expect.objectContaining({

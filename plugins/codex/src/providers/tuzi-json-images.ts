@@ -12,23 +12,24 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
     const fetchImpl = this.options.fetchImpl ?? fetch;
     let task = request.providerTask;
     if (!task) {
-      const body: Record<string, unknown> = {
-        model: request.model,
-        prompt: request.prompt,
-        n: 1,
-        response_format: request.responseFormat
-      };
-      if (request.images.length) body.image = request.images;
-      if (request.size) body.size = request.size;
-      if (request.quality) body.quality = request.quality;
       let response: Response;
       try {
-        response = await fetchImpl(`${this.options.baseUrl}/async/v1/images/generations`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
-          body: JSON.stringify(body),
-          signal: combinedSignal(Math.min(this.options.timeoutMs ?? IMAGE_REQUEST_TIMEOUT_MS, SUBMIT_TIMEOUT_MS), signal)
-        });
+        const submitSignal = combinedSignal(Math.min(this.options.timeoutMs ?? IMAGE_REQUEST_TIMEOUT_MS, SUBMIT_TIMEOUT_MS), signal);
+        response = request.images.length
+          ? await this.edit(request, fetchImpl, submitSignal)
+          : await fetchImpl(`${this.options.baseUrl}/async/v1/images/generations`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
+            body: JSON.stringify({
+              model: request.model,
+              prompt: request.prompt,
+              n: 1,
+              response_format: request.responseFormat,
+              ...(request.size ? { size: request.size } : {}),
+              ...(request.quality ? { quality: request.quality } : {})
+            }),
+            signal: submitSignal
+          });
       } catch {
         throw new ProviderRequestError("图片任务提交失败；是否已被上游接收及扣费状态未知。", {
           retryable: true, chargeState: "unknown", origin: "transport"
@@ -53,6 +54,27 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       await request.onProviderTask?.(task);
     }
     return this.poll(task, request.onProviderTask, signal);
+  }
+
+  private async edit(request: GenerateRequest, fetchImpl: FetchLike, signal: AbortSignal): Promise<Response> {
+    const form = new FormData();
+    form.append("model", request.model);
+    form.append("prompt", request.prompt);
+    form.append("n", "1");
+    if (request.size) form.append("size", request.size);
+    if (request.quality) form.append("quality", request.quality);
+    form.append("response_format", request.responseFormat);
+    for (const [index, image] of request.images.entries()) {
+      const match = /^data:([^;,]+);base64,(.+)$/s.exec(image);
+      if (!match?.[1] || !match[2]) throw new Error("Invalid base64 image input.");
+      form.append("image", new Blob([Buffer.from(match[2], "base64")], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
+    }
+    return fetchImpl(`${this.options.baseUrl}/async/v1/images/edits`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${this.options.apiKey}` },
+      body: form,
+      signal
+    });
   }
 
   private async poll(initialTask: ProviderTaskState, onTask: GenerateRequest["onProviderTask"], signal?: AbortSignal): Promise<GenerateResult> {
@@ -186,4 +208,10 @@ function firstString(...values: unknown[]): string | undefined {
 
 function sanitize(value: string): string {
   return value.replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]").slice(0, 800);
+}
+
+function extensionForMime(mime: string): string {
+  if (mime.includes("jpeg")) return "jpg";
+  if (mime.includes("webp")) return "webp";
+  return "png";
 }
