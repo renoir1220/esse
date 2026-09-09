@@ -420,7 +420,7 @@ function BatchWorkspace(props: {
   const offering = props.offerings.find((item) => item.id === offeringId) || batch.offering;
   const assets = useMemo(() => galleryAssets(batch, props.imagesById), [batch, props.imagesById]);
   const selectable = useMemo(() => selectableAssets(assets), [assets]);
-  const targetIds = props.selectedImageIds.size ? [...props.selectedImageIds] : selectable.length === 1 && selectable[0].imageId ? [selectable[0].imageId] : [];
+  const targetIds = [...props.selectedImageIds].filter((id) => selectable.some((asset) => asset.imageId === id));
   const detailAsset = detailAssetId ? assets.find((asset) => asset.id === detailAssetId) : undefined;
   const active = batch.queued + batch.running > 0;
   const retrySelection = retryAllFailedSelection(batch);
@@ -468,7 +468,7 @@ function BatchWorkspace(props: {
           event.preventDefault();
           event.currentTarget.form?.requestSubmit();
         }
-      }} placeholder={selectable.length > 1 && !targetIds.length ? '双击选择想要编辑的图片' : '描述你想如何修改图片'} maxLength={20_000} />
+      }} placeholder={selectable.length && !targetIds.length ? '双击选择想要编辑的图片' : '描述你想如何修改图片'} maxLength={20_000} />
       <div className="modify-toolbar">
         <SelectMenu
           className="model-select-control"
