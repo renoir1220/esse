@@ -22,7 +22,7 @@ export class OpenAiImagesAdapter implements ProviderAdapter {
   }
 
   private create(request: GenerateRequest, signal: AbortSignal): Promise<Response> {
-    return (this.options.fetchImpl ?? fetch)(`${this.options.baseUrl}/v1/images/generations`, {
+    return (this.options.fetchImpl ?? fetch)(`${apiBase(this.options.baseUrl)}/v1/images/generations`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({
@@ -49,13 +49,17 @@ export class OpenAiImagesAdapter implements ProviderAdapter {
       const { blob, extension } = await imageToBlob(image, this.options.fetchImpl ?? fetch, signal);
       form.append("image", blob, `input-${randomUUID()}.${extension}`);
     }
-    return (this.options.fetchImpl ?? fetch)(`${this.options.baseUrl}/v1/images/edits`, {
+    return (this.options.fetchImpl ?? fetch)(`${apiBase(this.options.baseUrl)}/v1/images/edits`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.options.apiKey}` },
       body: form,
       signal
     });
   }
+}
+
+function apiBase(value: string): string {
+  return value.trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
 }
 
 async function imageToBlob(value: string, fetchImpl: FetchLike, signal: AbortSignal): Promise<{ blob: Blob; extension: string }> {

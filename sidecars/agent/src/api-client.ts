@@ -235,8 +235,9 @@ export class EsseApiClient {
   }
 
   private openAiRequest(baseUrl: string, apiKey: string, model: string, input: GenerateInput, images: string[]): Promise<Response> {
+    const apiBase = baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '');
     if (!images.length) {
-      return this.fetchImpl(`${baseUrl}/v1/images/generations`, {
+      return this.fetchImpl(`${apiBase}/v1/images/generations`, {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
         body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, response_format: 'b64_json', size: input.size, quality: input.quality }),
@@ -255,7 +256,7 @@ export class EsseApiClient {
       if (!match?.[1] || !match[2]) throw new Error('Invalid local reference image.');
       form.append('image', new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
     }
-    return this.fetchImpl(`${baseUrl}/v1/images/edits`, {
+    return this.fetchImpl(`${apiBase}/v1/images/edits`, {
       method: 'POST',
       headers: { authorization: `Bearer ${apiKey}` },
       body: form,

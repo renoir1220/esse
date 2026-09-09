@@ -63,7 +63,7 @@ export class ProviderRegistry {
   async testProfile(input: { baseUrl: string; profileId?: string; apiKey?: string }): Promise<{ models: string[]; requestId?: string }> {
     const apiKey = input.apiKey?.trim() || (input.profileId ? await this.settings.getApiKey(input.profileId) : undefined);
     if (!apiKey) throw new Error("Enter an API key before testing the provider.");
-    const response = await this.fetchImpl(`${input.baseUrl.replace(/\/$/, "")}/v1/models`, {
+    const response = await this.fetchImpl(`${apiRoot(input.baseUrl)}/v1/models`, {
       headers: { authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(30_000)
     });
@@ -76,6 +76,10 @@ export class ProviderRegistry {
       .sort();
     return { models, requestId: response.headers.get("x-request-id") || undefined };
   }
+}
+
+function apiRoot(value: string): string {
+  return value.trim().replace(/\/+$/, '').replace(/\/v1$/i, '');
 }
 
 function snapshotFor(profile: ProviderProfile, offering: OfferingConfig): OfferingSnapshot {

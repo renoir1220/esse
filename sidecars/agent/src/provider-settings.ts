@@ -90,7 +90,7 @@ export class ProviderSettingsStore {
   async testProvider(input: { baseUrl: string; profileId?: string; apiKey?: string }, fetchImpl: typeof fetch = fetch): Promise<{ models: string[]; requestId?: string }> {
     const apiKey = input.apiKey?.trim() || (input.profileId ? await this.credentials.get(input.profileId) : undefined);
     if (!apiKey) throw new Error('请输入 API Key 后再测试连接。');
-    const response = await fetchImpl(`${normalizeBaseUrl(input.baseUrl)}/v1/models`, {
+    const response = await fetchImpl(`${apiRoot(input.baseUrl)}/v1/models`, {
       headers: { authorization: `Bearer ${apiKey}` },
       signal: AbortSignal.timeout(30_000),
     });
@@ -171,6 +171,10 @@ function normalizeBaseUrl(value: string): string {
   const local = url.hostname === '127.0.0.1' || url.hostname === 'localhost';
   if (url.protocol !== 'https:' && !(local && url.protocol === 'http:')) throw new Error('Provider API 地址必须使用 HTTPS；本机 localhost 可使用 HTTP。');
   return url.toString().replace(/\/+$/, '');
+}
+
+function apiRoot(value: string): string {
+  return normalizeBaseUrl(value).replace(/\/v1$/i, '');
 }
 
 async function parseJsonResponse(response: Response): Promise<unknown> {
