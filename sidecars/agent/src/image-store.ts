@@ -75,6 +75,7 @@ export class ImageStore {
     model: string;
     items: Array<{ url?: string; b64_json?: string; revised_prompt?: string }>;
     trustedBaseUrl?: string;
+    signal?: AbortSignal;
   }): Promise<SavedImage[]> {
     const task = this.writeQueue.then(() => this.saveBatchOnce(input));
     this.writeQueue = task.then(() => undefined, () => undefined);
@@ -87,7 +88,9 @@ export class ImageStore {
     model: string;
     items: Array<{ url?: string; b64_json?: string; revised_prompt?: string }>;
     trustedBaseUrl?: string;
+    signal?: AbortSignal;
   }): Promise<SavedImage[]> {
+    input.signal?.throwIfAborted();
     const library = await this.readLibrary();
     const existing = library.images.filter((image) => image.requestId === input.requestId);
     if (existing.length) {
@@ -110,7 +113,8 @@ export class ImageStore {
     for (const [index, item] of input.items.entries()) {
       const bytes = item.b64_json
         ? decodeImageBase64(item.b64_json)
-        : Buffer.from(await downloadRemoteImage({ initialUrl: item.url ?? '', trustedBaseUrl: input.trustedBaseUrl, maxBytes: MAX_IMAGE_BYTES }));
+        : Buffer.from(await downloadRemoteImage({ initialUrl: item.url ?? '', trustedBaseUrl: input.trustedBaseUrl, maxBytes: MAX_IMAGE_BYTES, signal: input.signal }));
+      input.signal?.throwIfAborted();
       if (!bytes.length || bytes.length > MAX_IMAGE_BYTES) throw new Error('Generated image has an invalid size.');
       const format = detectImageFormat(bytes);
       if (!format) throw new Error('Provider output is not a recognized image file.');

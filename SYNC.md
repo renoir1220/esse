@@ -107,7 +107,8 @@ The initial import deliberately excludes the private commercial server, user acc
 ## 2026-09-09 — Tuzi video image tasks and manual retrieval
 
 - The Tuzi adapter routes the configured Gemini image preview and GPT-Image 2 offerings through `POST /v1/videos`, sends one or more reference images as `image`/`image[]`, polls `GET /v1/videos/{taskId}`, and maps the completed `video_url` (which currently points to a PNG) into Esse's image result contract.
-- The Agent Sidecar batch workspace exposes `取回图片` when failed jobs retain a resumable queued or in-progress Provider task. The action requeues those jobs without resubmitting them, persists the same task ID, and keeps a visible spinner for at least one second while background retrieval proceeds.
+- The Agent Sidecar batch workspace exposes `取回图片` when failed jobs retain a resumable Provider task, including completed tasks whose image download failed. Each click queries the original task once, never resubmits generation, and bounds retrieval plus downloading to one minute. The batch button keeps its spinner and original selection count visible for at least one second, even as individual job states change.
+- New tasks for other Tuzi models and persisted legacy tasks retain the legacy query protocol. Video `failed` responses are treated as terminal failures; pending or unsuccessful manual retrieval preserves the original task ID for another explicit attempt.
 
 ## Deferred
 

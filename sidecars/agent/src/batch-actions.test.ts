@@ -23,7 +23,9 @@ describe('Batch actions', () => {
     timedOut.providerTask = { id: 'task-1', status: 'in_progress', submittedAt: '2026-07-22T00:00:00.000Z', updatedAt: '2026-07-22T00:01:00.000Z' };
     const providerFailure = job('provider-failure', 'failed', true, 'unknown');
     providerFailure.providerTask = { id: 'task-2', status: 'failure', submittedAt: '2026-07-22T00:00:00.000Z', updatedAt: '2026-07-22T00:01:00.000Z' };
-    expect(retrieveTimedOutSelection({ jobs: [timedOut, providerFailure] })).toEqual(['timed-out']);
+    const downloadFailed = job('download-failed', 'failed', true, 'unknown');
+    downloadFailed.providerTask = { ...timedOut.providerTask, id: 'download-task', status: 'completed' };
+    expect(retrieveTimedOutSelection({ jobs: [timedOut, providerFailure, downloadFailed] })).toEqual(['timed-out', 'download-failed']);
   });
 });
 

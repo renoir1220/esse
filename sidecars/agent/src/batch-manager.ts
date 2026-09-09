@@ -4,6 +4,7 @@ import path from 'node:path';
 import { EsseApiError, type ApiGenerateResult, type EsseApiClient } from './api-client';
 import type { BatchStore } from './batch-store';
 import type { ImageStore } from './image-store';
+import { retrieveTimedOutSelection } from './batch-actions';
 import {
   type AppendBatchInput,
   type BatchJob,
@@ -46,6 +47,7 @@ export class BatchManager {
   private readonly batches = new Map<string, BatchRecord>();
   private readonly createKeys = new Map<string, string>();
   private readonly activeJobs = new Set<string>();
+  private readonly retrievalSignals = new Map<string, AbortSignal>();
   private readonly backgroundTasks = new Set<Promise<void>>();
   private readonly agentCompletionChains = new Map<string, Promise<BatchSnapshot>>();
   private backgroundError: unknown;
@@ -345,11 +347,13 @@ export class BatchManager {
 
   async retrieveTimedOut(batchId: string): Promise<BatchSnapshot> {
     const batch = this.requiredBatch(batchId);
-    const jobs = batch.jobs.filter((job) => job.status === 'failed' && job.operation !== 'agent'
-      && job.chargeState === 'unknown' && job.providerTask
-      && ['not_start', 'submitted', 'queued', 'in_progress'].includes(job.providerTask.status));
+    const selected = new Set(retrieveTimedOutSelection(batch));
+    const jobs = batch.jobs.filter((job) => selected.has(job.id));
+    const deadline = Date.now() + 60_000;
+    const signal = AbortSignal.timeout(60_000);
     const now = new Date().toISOString();
     for (const job of jobs) {
+      this.retrievalSignals.set(`${batchId}:${job.id}`, signal);
       job.status = 'queued';
       job.progress = job.providerTask?.progress ?? 0;
       job.retryable = false;
@@ -364,7 +368,6 @@ export class BatchManager {
       await this.options.store.save(batch);
       this.changed({ type: 'upsert', batch: snapshot(batch) });
       this.schedule();
-      const deadline = Date.now() + 60_000;
       while (Date.now() < deadline) {
         const current = this.requiredBatch(batchId);
         if (jobs.every((job) => {
@@ -372,6 +375,16 @@ export class BatchManager {
           return latest && latest.status !== 'queued' && latest.status !== 'running';
         })) break;
         await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      const unfinished = jobs.filter((job) => job.status === 'queued' || job.status === 'running');
+      if (unfinished.length) {
+        for (const job of unfinished) {
+          finishFailed(job, new Error('本次取回在 1 分钟内没有完成，可以稍后再次取回。'), 'unknown', true, 'transport');
+          if (!this.activeJobs.has(`${batchId}:${job.id}`)) this.retrievalSignals.delete(`${batchId}:${job.id}`);
+        }
+        batch.updatedAt = new Date().toISOString();
+        await this.options.store.save(batch);
+        this.changed({ type: 'upsert', batch: snapshot(batch) });
       }
     }
     return snapshot(batch);
@@ -561,7 +574,9 @@ export class BatchManager {
     this.changed({ type: 'upsert', batch: snapshot(batch) });
     let providerSubmitted = resuming;
     let changedImageId: string | undefined;
+    const retrievalSignal = this.retrievalSignals.get(jobKey);
     try {
+      retrievalSignal?.throwIfAborted();
       const client = await this.options.createApiClient();
       const input = {
         prompt: job.prompt,
@@ -571,6 +586,7 @@ export class BatchManager {
         n: 1,
       };
       const onTask = async (task: ProviderTaskState) => {
+        retrievalSignal?.throwIfAborted();
         providerSubmitted = true;
         updateProviderTask(job, task);
         batch.updatedAt = new Date().toISOString();
@@ -579,7 +595,7 @@ export class BatchManager {
       };
       let result: ApiGenerateResult;
       if (job.providerTask) {
-        result = await client.resume(input, job.providerTask, { onTask });
+        result = await client.resume(input, job.providerTask, { onTask, ...(retrievalSignal ? { singleQuery: true, signal: retrievalSignal } : {}) });
       } else if (job.referenceImageIds.length) {
         const sourcePaths = await Promise.all(job.referenceImageIds.map((id) => this.options.imageStore.pathForId(id)));
         result = await client.edit(input, sourcePaths, job.requestKey, { onTask });
@@ -592,7 +608,9 @@ export class BatchManager {
         model: offering.id,
         items: result.items,
         trustedBaseUrl: result.trustedBaseUrl,
+        signal: retrievalSignal,
       });
+      retrievalSignal?.throwIfAborted();
       if (!saved) throw new Error('Provider returned no image that Esse could save.');
       finishSucceeded(job, result, saved.id);
       changedImageId = saved.id;
@@ -601,11 +619,12 @@ export class BatchManager {
       const retryable = error instanceof EsseApiError && (error.details.chargeState === 'unknown'
         || (error.details.chargeState === 'not_charged'
           && (error.details.status === 429 || (error.details.status !== undefined && error.details.status >= 500))));
-      finishFailed(job, error, chargeState, retryable);
+      finishFailed(job, retrievalSignal?.aborted ? new Error('本次取回在 1 分钟内没有完成，可以稍后再次取回。') : error, chargeState, retryable);
     } finally {
       batch.updatedAt = new Date().toISOString();
       await this.options.store.save(batch);
       this.activeJobs.delete(jobKey);
+      this.retrievalSignals.delete(jobKey);
       this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: changedImageId ? [changedImageId] : undefined });
       this.schedule();
     }

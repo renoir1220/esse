@@ -23,6 +23,10 @@ function asyncTaskFetch(result: unknown): typeof fetch {
   const results = new Map<string, unknown>();
   return async (input) => {
     const url = String(input);
+    if (url.includes('/v1/videos/')) {
+      const id = url.slice(url.lastIndexOf('/') + 1);
+      return Response.json({ id, status: 'completed', video_url: `data:image/png;base64,${onePixelPng}` });
+    }
     if (url.includes("/get-async?id=")) {
       const id = new URL(url).searchParams.get("id") || "";
       return new Response(JSON.stringify({ id, status: "completed", result: results.get(id) }), { status: 200, headers: { "content-type": "application/json" } });

@@ -41,7 +41,7 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       const now = new Date().toISOString();
       task = {
         id,
-        protocol: "tuzi-video",
+        protocol: isVideoModel(request.model) ? "tuzi-video" : "tuzi-images",
         status: taskStatus(record.status) || "queued",
         progress: taskProgress(record.progress),
         requestId: requestId(response, parsed),
@@ -150,6 +150,7 @@ function taskStatus(value: unknown): ProviderTaskStatus | undefined {
   if (typeof value !== "string") return undefined;
   const clean = value.trim().toLowerCase();
   if (clean === "succeeded") return "completed";
+  if (clean === "failed") return "failure";
   return ["not_start", "submitted", "queued", "in_progress", "completed", "failure", "expired"].includes(clean)
     ? clean as ProviderTaskStatus
     : undefined;

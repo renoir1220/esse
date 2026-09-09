@@ -129,7 +129,8 @@ function App() {
   const [state, setState] = useState<DesktopState>(emptyState);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
-  const [retrieveBusy, setRetrieveBusy] = useState(false);
+  const [retrieval, setRetrieval] = useState<{ batchId: string; count: number }>();
+  const retrieveBusy = Boolean(retrieval);
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<Tab>('batches');
   const [activeBatchId, setActiveBatchId] = useState<string>();
@@ -325,6 +326,7 @@ function App() {
           defaultOfferingId={state.defaultOfferingId}
           busy={busy}
           retrieveBusy={retrieveBusy}
+          retrievingCount={retrieval?.batchId === activeBatch.id ? retrieval.count : 0}
           onOpenImage={openImageSoon}
           onToggleSelected={toggleSelected}
           onImageContextMenu={(event, imageId) => {
@@ -347,21 +349,21 @@ function App() {
             includesUnknownCharge ? '失败任务已重新排队；部分上次调用的扣费状态未知' : '失败任务已重新排队',
           )}
           onRetrieveTimedOut={async () => {
+            if (retrieval) return false;
             const started = Date.now();
-            setRetrieveBusy(true);
+            setRetrieval({ batchId: activeBatch.id, count: retrieveTimedOutSelection(activeBatch).length });
             setError(undefined);
             try {
               const next = await window.esse.retrieveTimedOut(activeBatch.id);
               setState(next);
-              setActiveBatchId(next.activeBatchId || activeBatchId || next.batches[0]?.id);
-              setNotice('已重新获取超时任务');
+              setNotice('本次取回已结束，请查看各任务结果');
               return true;
             } catch (cause) {
               setError(cleanError(cause));
               return false;
             } finally {
               await new Promise((resolve) => window.setTimeout(resolve, Math.max(0, 1000 - (Date.now() - started))));
-              setRetrieveBusy(false);
+              setRetrieval(undefined);
             }
           }}
         /> : <EmptyState title="还没有图片批次" copy="请从 Agent 向 Esse 提交第一个图片任务。" />
@@ -401,6 +403,7 @@ function BatchWorkspace(props: {
   defaultOfferingId?: string;
   busy: boolean;
   retrieveBusy: boolean;
+  retrievingCount: number;
   onOpenImage: (id: string) => void;
   onToggleSelected: (id: string) => void;
   onImageContextMenu: (event: React.MouseEvent, id: string) => void;
@@ -427,7 +430,7 @@ function BatchWorkspace(props: {
 
   return <div className="batch-page">
     <div className="section-heading">
-      <div><strong>{statusLabel(batch)}</strong>{batch.failed ? <button type="button" className="retry-all-button" title={retrySelection.jobIds.length ? '重新排队失败任务' : 'Agent 任务需由当前 Agent 重新发起'} disabled={props.busy || props.retrieveBusy || !retrySelection.jobIds.length} onClick={() => void props.onRetryAll(retrySelection.jobIds, retrySelection.includesUnknownCharge)}><ArrowClockwise size={13} weight="bold" />重试失败任务</button> : null}{timedOutJobIds.length ? <button type="button" className="retry-all-button" title="重新查询当前批次中超时的 Provider 任务" disabled={props.busy || props.retrieveBusy} onClick={() => void props.onRetrieveTimedOut()}>{props.retrieveBusy ? <span className="spinner" /> : <ArrowClockwise size={13} weight="bold" />} {props.retrieveBusy ? '正在取回' : '取回图片'}（{timedOutJobIds.length}）</button> : null}</div>
+      <div><strong>{statusLabel(batch)}</strong>{batch.failed ? <button type="button" className="retry-all-button" title={retrySelection.jobIds.length ? '重新排队失败任务' : 'Agent 任务需由当前 Agent 重新发起'} disabled={props.busy || props.retrieveBusy || !retrySelection.jobIds.length} onClick={() => void props.onRetryAll(retrySelection.jobIds, retrySelection.includesUnknownCharge)}><ArrowClockwise size={13} weight="bold" />重试失败任务</button> : null}{timedOutJobIds.length || props.retrievingCount ? <button type="button" className="retry-all-button" title="重新查询当前批次中超时的 Provider 任务" disabled={props.busy || props.retrieveBusy} onClick={() => void props.onRetrieveTimedOut()}>{props.retrievingCount ? <span className="spinner" /> : <ArrowClockwise size={13} weight="bold" />} {props.retrievingCount ? '正在取回' : '取回图片'}（{props.retrievingCount || timedOutJobIds.length}）</button> : null}</div>
     </div>
     <section className={`batch-workspace ${assets.length === 1 ? 'is-single' : ''}`}>
       <div className="image-grid">

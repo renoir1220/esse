@@ -673,12 +673,16 @@ function asyncTaskFetch(delegate: typeof fetch): typeof fetch {
   let sequence = 0;
   return async (input, init) => {
     const url = String(input);
+    if (url.includes('/get-async?id=')) {
+      const id = new URL(url).searchParams.get('id') || '';
+      return Response.json({ id, status: 'completed', result: results.get(id) });
+    }
     if (url.includes("/v1/videos/") && !url.endsWith("/v1/videos")) {
       const id = url.slice(url.lastIndexOf("/") + 1);
       return new Response(JSON.stringify({ id, status: "completed", video_url: `data:image/png;base64,${onePixelPng}` }), { status: 200, headers: { "content-type": "application/json" } });
     }
     const response = await delegate(input, init);
-    if (!url.endsWith("/v1/videos") || !response.ok) return response;
+    if ((!url.endsWith("/v1/videos") && !url.includes('/async/v1/images/')) || !response.ok) return response;
     const id = `task-${++sequence}`;
     results.set(id, await response.json());
     return new Response(JSON.stringify({ id, status: "submitted" }), { status: 202, headers: { "content-type": "application/json", "x-oneapi-request-id": `request-${sequence}` } });

@@ -5,6 +5,18 @@ import type { ProviderTaskState } from "../src/types.js";
 
 const image = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
 
+test("other Tuzi models keep the legacy submit and query protocol", async () => {
+  const urls: string[] = [];
+  const adapter = new TuziJsonImagesAdapter({ baseUrl: "https://provider.example", apiKey: "local-key", fetchImpl: async (input) => {
+    const url = String(input); urls.push(url);
+    return Response.json(url.endsWith("/async/v1/images/generations")
+      ? { id: "legacy", status: "submitted" }
+      : { status: "completed", result: { data: [{ b64_json: image }] } });
+  } });
+  await adapter.generate({ model: "nano-banana-2", prompt: "test", images: [], responseFormat: "b64_json" });
+  assert.deepEqual(urls, ["https://provider.example/async/v1/images/generations", "https://provider.example/get-async?id=legacy"]);
+});
+
 test("Tuzi adapter submits one async image task and unwraps its completed result", async () => {
   const urls: string[] = [];
   const updates: ProviderTaskState[] = [];

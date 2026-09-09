@@ -222,6 +222,7 @@ describe('Esse batch manager', () => {
     manager.resume();
     await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('completed'));
     expect(resume).toHaveBeenCalledTimes(1);
+    expect(resume).toHaveBeenCalledWith(expect.anything(), expect.anything(), expect.objectContaining({ singleQuery: true, signal: expect.any(AbortSignal) }));
   });
 
   it('keeps an unknown-charge failure terminal unless the user explicitly confirms a manual retry', async () => {
@@ -247,6 +248,27 @@ describe('Esse batch manager', () => {
     await vi.waitFor(() => expect(generate).toHaveBeenCalledTimes(2));
     await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('failed'));
     expect(manager.get(accepted.id).jobs[0].callHistory).toHaveLength(2);
+  });
+
+  it('ends manual retrieval after one minute even when work cannot start', async () => {
+    const fixture = await fixtureDirectory();
+    const first = managerFor(fixture, fakeApi(), { canRun: async () => false });
+    await first.initialize();
+    const accepted = await first.create({ prompt: 'blocked retrieval', requestKey: 'blocked-retrieval' });
+    const [record] = await fixture.batchStore.loadAll();
+    Object.assign(record.jobs[0], { status: 'failed', chargeState: 'unknown', providerTask: { id: 'pending-task', protocol: 'tuzi-video', status: 'queued', submittedAt: '2020-01-01T00:00:00Z', updatedAt: '2020-01-01T00:00:00Z' } });
+    await fixture.batchStore.save(record);
+    const manager = managerFor(fixture, fakeApi(), { canRun: async () => false });
+    await manager.initialize();
+    vi.useFakeTimers();
+    try {
+      const result = manager.retrieveTimedOut(accepted.id);
+      await vi.waitFor(() => expect(manager.get(accepted.id).jobs[0].status).toBe('queued'));
+      await vi.advanceTimersByTimeAsync(60_100);
+      // Filesystem persistence can finish after the clock advance.
+      await vi.waitFor(async () => { await vi.advanceTimersByTimeAsync(100); expect(manager.get(accepted.id).jobs[0].status).toBe('failed'); });
+      await expect(result).resolves.toMatchObject({ jobs: [expect.objectContaining({ status: 'failed', chargeState: 'unknown', providerTask: expect.objectContaining({ id: 'pending-task' }), error: expect.stringContaining('1 分钟') })] });
+    } finally { vi.useRealTimers(); }
   });
 
   it('allows manual retry for a Provider failure that is not eligible for automatic retry', async () => {

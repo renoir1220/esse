@@ -40,15 +40,17 @@ export async function downloadRemoteImage(options: {
   fetchImpl?: typeof fetch;
   resolveHostname?: RemoteHostnameResolver;
   requestPinned?: PinnedImageRequester;
+  signal?: AbortSignal;
 }): Promise<Uint8Array> {
   const trustedOrigin = parseTrustedOrigin(options.trustedBaseUrl);
   const fetchImpl = options.fetchImpl ?? fetch;
   const resolveHostname = options.resolveHostname ?? ((hostname) => resolveHostnameWithTrustedDoh(hostname));
   const requestPinned = options.requestPinned ?? requestPinnedImage;
-  const signal = AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
+  const signal = options.signal ? AbortSignal.any([options.signal, AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS)]) : AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS);
   let current = parseRemoteUrl(options.initialUrl);
 
   for (let redirects = 0; redirects <= MAX_REDIRECTS; redirects += 1) {
+    signal.throwIfAborted();
     const response = current.origin === trustedOrigin
       ? await requestTrustedOrigin(current, fetchImpl, options.maxBytes, signal)
       : await requestCrossOrigin(current, resolveHostname, requestPinned, options.maxBytes, signal);
