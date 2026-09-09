@@ -371,7 +371,7 @@ export class BatchManager {
           const latest = current.jobs.find((candidate) => candidate.id === job.id);
           return latest && latest.status !== 'queued' && latest.status !== 'running';
         })) break;
-        await wait(100);
+        await new Promise((resolve) => setTimeout(resolve, 100));
       }
     }
     return snapshot(batch);
