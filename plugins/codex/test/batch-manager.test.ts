@@ -440,6 +440,7 @@ test("restart resumes an accepted Tuzi task by task ID without another generatio
     const now = new Date().toISOString();
     const providerTask = {
       id: "task-resume-1",
+      protocol: "tuzi-video" as const,
       status: "completed" as const,
       requestId: "request-resume-1",
       submittedAt: now,

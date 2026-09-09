@@ -56,7 +56,7 @@ test("Tuzi adapter resumes a persisted task without submitting another generatio
 
   await adapter.generate({
     model: "gpt-image-2", prompt: "resume", images: [], responseFormat: "b64_json",
-    providerTask: { id: "task-resume", status: "in_progress", progress: 10, submittedAt: now, startedAt: now, updatedAt: now }
+    providerTask: { id: "task-resume", protocol: "tuzi-video", status: "in_progress", progress: 10, submittedAt: now, startedAt: now, updatedAt: now }
   });
 
   assert.deepEqual(urls, ["https://provider.example/v1/videos/task-resume"]);

@@ -44,6 +44,7 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       const now = new Date().toISOString();
       task = {
         id,
+        protocol: "tuzi-video",
         status: taskStatus(record.status) || "queued",
         progress: taskProgress(record.progress),
         requestId: requestId(response, parsed),
@@ -67,7 +68,10 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       let response: Response;
       let parsed: unknown;
       try {
-        response = await fetchImpl(`${this.options.baseUrl}/v1/videos/${encodeURIComponent(task.id)}`, {
+        const queryUrl = task.protocol === "tuzi-video"
+          ? `${this.options.baseUrl}/v1/videos/${encodeURIComponent(task.id)}`
+          : `${this.options.baseUrl}/get-async?id=${encodeURIComponent(task.id)}`;
+        response = await fetchImpl(queryUrl, {
           headers: { authorization: `Bearer ${this.options.apiKey}` },
           signal: combinedSignal(Math.min(POLL_TIMEOUT_MS, Math.max(1, deadline - Date.now())), signal)
         });
@@ -103,7 +107,10 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
         ...(["completed", "failure", "expired"].includes(status) ? { completedAt: now } : {})
       };
       await onTask?.(task);
-      if (status === "completed") return { ...extractImageResult({ url: record.video_url }), providerRequestId: task.requestId || task.id };
+      if (status === "completed") {
+        const result = task.protocol === "tuzi-video" ? { url: record.video_url } : asyncResult(record.result);
+        return { ...extractImageResult(result), providerRequestId: task.requestId || task.id };
+      }
       if (status === "failure") throw new ProviderRequestError(taskFailureMessage(record), {
         retryable: true, chargeState: "unknown", requestId: task.requestId, origin: "upstream"
       });

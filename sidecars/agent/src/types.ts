@@ -130,6 +130,7 @@ export type ProviderTaskStatus = 'not_start' | 'submitted' | 'queued' | 'in_prog
 
 export interface ProviderTaskState {
   id: string;
+  protocol?: 'tuzi-images' | 'tuzi-video';
   status: ProviderTaskStatus;
   progress?: number;
   requestId?: string;

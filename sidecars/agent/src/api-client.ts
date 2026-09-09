@@ -133,6 +133,7 @@ export class EsseApiClient {
       const now = new Date().toISOString();
       task = {
         id,
+        protocol: 'tuzi-video',
         status: providerTaskStatus(record.status) || 'queued',
         progress: providerProgress(record.progress),
         requestId: requestId(response, body),
@@ -160,7 +161,10 @@ export class EsseApiClient {
       let response: Response;
       let body: unknown;
       try {
-        response = await this.fetchImpl(`${profile.baseUrl}/v1/videos/${encodeURIComponent(task.id)}`, {
+        const queryUrl = task.protocol === 'tuzi-video'
+          ? `${profile.baseUrl}/v1/videos/${encodeURIComponent(task.id)}`
+          : `${profile.baseUrl}/get-async?id=${encodeURIComponent(task.id)}`;
+        response = await this.fetchImpl(queryUrl, {
           headers: { authorization: `Bearer ${apiKey}` },
           signal: AbortSignal.timeout(TUZI_POLL_TIMEOUT_MS),
         });
@@ -198,7 +202,7 @@ export class EsseApiClient {
       };
       await onTask?.(task);
       if (status === 'completed') {
-        const items = extractItems({ url: record.video_url });
+        const items = extractItems(task.protocol === 'tuzi-video' ? { url: record.video_url } : asyncResult(record.result));
         if (!items.length) throw new EsseApiError('Provider 没有返回可用图片。', {
           code: 'empty_provider_result', requestId: task.requestId, chargeState: 'unknown', origin: 'esse',
         });
