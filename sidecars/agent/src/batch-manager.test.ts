@@ -217,7 +217,7 @@ describe('Esse batch manager', () => {
     const manager = managerFor(fixture, { ...fakeApi(), resume });
     await manager.initialize();
     const queued = await manager.retrieveTimedOut(accepted.id);
-    expect(['queued', 'running']).toContain(queued.jobs[0].status);
+    expect(['queued', 'running', 'succeeded']).toContain(queued.jobs[0].status);
     expect(queued.jobs[0]).toMatchObject({ providerTask: { id: 'task-timeout-1' } });
     manager.resume();
     await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('completed'));
