@@ -364,6 +364,15 @@ export class BatchManager {
       await this.options.store.save(batch);
       this.changed({ type: 'upsert', batch: snapshot(batch) });
       this.schedule();
+      const deadline = Date.now() + 60_000;
+      while (Date.now() < deadline) {
+        const current = this.requiredBatch(batchId);
+        if (jobs.every((job) => {
+          const latest = current.jobs.find((candidate) => candidate.id === job.id);
+          return latest && latest.status !== 'queued' && latest.status !== 'running';
+        })) break;
+        await wait(100);
+      }
     }
     return snapshot(batch);
   }
