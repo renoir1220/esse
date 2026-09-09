@@ -23,14 +23,14 @@ describe('Esse Provider client', () => {
     let queries = 0;
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer local-provider-key');
-      if (String(url).endsWith('/async/v1/images/generations')) {
-        expect(JSON.parse(String(init?.body))).toMatchObject({ model: 'gpt-image-2', response_format: 'b64_json' });
+      if (String(url).endsWith('/v1/videos')) {
+        expect(JSON.parse(String(init?.body))).toMatchObject({ model: 'gpt-image-2', response_format: 'url' });
         return new Response(JSON.stringify({ id: 'task-1', status: 'queued' }), { status: 202, headers: { 'x-oneapi-request-id': 'request-1' } });
       }
-      expect(String(url)).toBe('https://provider.example/get-async?id=task-1');
+      expect(String(url)).toBe('https://provider.example/v1/videos/task-1');
       queries += 1;
       if (queries === 1) return new Response(JSON.stringify({ error: { message: 'system cpu overloaded' } }), { status: 503 });
-      return new Response(JSON.stringify({ id: 'task-1', status: 'completed', result: { data: [{ b64_json: 'aW1hZ2U=' }] } }), { status: 200 });
+      return new Response(JSON.stringify({ id: 'task-1', status: 'completed', video_url: 'https://cdn.example/image.png' }), { status: 200 });
     }) as unknown as typeof fetch;
     const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
     const updates: string[] = [];
@@ -40,7 +40,7 @@ describe('Esse Provider client', () => {
     await vi.advanceTimersByTimeAsync(3_000);
     const result = await pending;
     vi.useRealTimers();
-    expect(result).toMatchObject({ requestId: 'request-1', items: [{ b64_json: 'aW1hZ2U=' }] });
+    expect(result).toMatchObject({ requestId: 'request-1', items: [{ url: 'https://cdn.example/image.png' }] });
     expect(updates).toEqual(['queued:', 'completed:']);
   });
 
@@ -52,21 +52,20 @@ describe('Esse Provider client', () => {
     let queries = 0;
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer local-provider-key');
-      if (String(url).endsWith('/async/v1/images/edits')) {
-        const form = init?.body as FormData;
-        expect(form.get('model')).toBe('gpt-image-2');
-        expect(form.get('quality')).toBe('4K');
-        expect(form.getAll('image')).toHaveLength(1);
-        expect(new Headers(init?.headers).get('content-type')).toBeNull();
+      if (String(url).endsWith('/v1/videos')) {
+        const body = JSON.parse(String(init?.body));
+        expect(body.model).toBe('gpt-image-2');
+        expect(body.quality).toBe('4K');
+        expect(body.image).toMatch(/^data:image\/png;base64,/);
         return new Response(JSON.stringify({ id: 'task-edit-1', status: 'queued' }), { status: 202, headers: { 'x-oneapi-request-id': 'request-edit-1' } });
       }
-      expect(String(url)).toBe('https://provider.example/get-async?id=task-edit-1');
+      expect(String(url)).toBe('https://provider.example/v1/videos/task-edit-1');
       queries += 1;
-      return new Response(JSON.stringify({ id: 'task-edit-1', status: 'completed', result: { data: [{ b64_json: 'ZWRpdGVk' }] } }), { status: 200 });
+      return new Response(JSON.stringify({ id: 'task-edit-1', status: 'completed', video_url: 'https://cdn.example/edited.png' }), { status: 200 });
     }) as unknown as typeof fetch;
     const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
     const pending = client.edit({ prompt: 'add a scarf', model: 'provider-1:gpt-image-2', quality: '4K' }, [sourcePath]);
-    await expect(pending).resolves.toMatchObject({ requestId: 'request-edit-1', items: [{ b64_json: 'ZWRpdGVk' }] });
+    await expect(pending).resolves.toMatchObject({ requestId: 'request-edit-1', items: [{ url: 'https://cdn.example/edited.png' }] });
     expect(queries).toBe(1);
   });
 

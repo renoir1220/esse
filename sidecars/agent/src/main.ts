@@ -452,6 +452,10 @@ function registerIpc(): void {
     await batchManager.retry(requiredId(batchId, 'batch'), jobIds, allowUnknownCharge === true);
     return loadState();
   });
+  ipcMain.handle('batches:retrieve-timed-out', async (_event, batchId: unknown) => {
+    await batchManager.retrieveTimedOut(requiredId(batchId, 'batch'));
+    return loadState();
+  });
   ipcMain.handle('batches:delete-images', async (_event, batchId: unknown, imageIds: unknown) => {
     if (!Array.isArray(imageIds) || !imageIds.every((id) => typeof id === 'string')) throw new Error('Invalid image IDs.');
     await batchManager.deleteImages(requiredId(batchId, 'batch'), imageIds);

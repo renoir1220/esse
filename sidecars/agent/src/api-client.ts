@@ -101,40 +101,20 @@ export class EsseApiClient {
     if (!task) {
       let response: Response;
       try {
-        if (images.length) {
-          const form = new FormData();
-          form.set('model', model);
-          form.set('prompt', input.prompt);
-          form.set('n', String(input.n ?? 1));
-          form.set('response_format', 'b64_json');
-          if (input.size) form.set('size', input.size);
-          if (input.quality) form.set('quality', input.quality);
-          for (const [index, image] of images.entries()) {
-            const match = /^data:([^;,]+);base64,(.+)$/s.exec(image);
-            if (!match?.[1] || !match[2]) throw new Error('Invalid local reference image.');
-            form.append('image', new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
-          }
-          response = await this.fetchImpl(`${profile.baseUrl}/async/v1/images/edits`, {
-            method: 'POST',
-            headers: { authorization: `Bearer ${apiKey}` },
-            body: form,
-            signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
-          });
-        } else {
-          response = await this.fetchImpl(`${profile.baseUrl}/async/v1/images/generations`, {
-            method: 'POST',
-            headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-            body: JSON.stringify({
-              model,
-              prompt: input.prompt,
-              n: input.n ?? 1,
-              response_format: 'b64_json',
-              ...(input.size ? { size: input.size } : {}),
-              ...(input.quality ? { quality: input.quality } : {}),
-            }),
-            signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
-          });
-        }
+        response = await this.fetchImpl(`${profile.baseUrl}/v1/videos`, {
+          method: 'POST',
+          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+          body: JSON.stringify({
+            model,
+            prompt: input.prompt,
+            n: input.n ?? 1,
+            quality: input.quality,
+            response_format: 'url',
+            ...(input.size ? { size: input.size } : {}),
+            ...(images.length ? { image: images.length === 1 ? images[0] : images } : {}),
+          }),
+          signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
+        });
       } catch (error) {
         const diagnostic = networkErrorDiagnostic(error);
         throw new EsseApiError(`图片任务提交失败${diagnostic ? `（诊断码：${diagnostic}）` : ''}；是否已被上游接收及扣费状态未知。`, {
@@ -180,7 +160,7 @@ export class EsseApiClient {
       let response: Response;
       let body: unknown;
       try {
-        response = await this.fetchImpl(`${profile.baseUrl}/get-async?id=${encodeURIComponent(task.id)}`, {
+        response = await this.fetchImpl(`${profile.baseUrl}/v1/videos/${encodeURIComponent(task.id)}`, {
           headers: { authorization: `Bearer ${apiKey}` },
           signal: AbortSignal.timeout(TUZI_POLL_TIMEOUT_MS),
         });
@@ -218,8 +198,7 @@ export class EsseApiClient {
       };
       await onTask?.(task);
       if (status === 'completed') {
-        const result = asyncResult(record.result);
-        const items = extractItems(result);
+        const items = extractItems({ url: record.video_url });
         if (!items.length) throw new EsseApiError('Provider 没有返回可用图片。', {
           code: 'empty_provider_result', requestId: task.requestId, chargeState: 'unknown', origin: 'esse',
         });
@@ -332,7 +311,7 @@ function extractItems(body: unknown): ApiImageItem[] {
   const candidates = Array.isArray(record.data) ? record.data : [record.result || record.output || record];
   return candidates.flatMap((candidate) => {
     const value = asRecord(candidate);
-    const url = firstString(value.url, value.image_url, value.output_url);
+    const url = firstString(value.url, value.image_url, value.output_url, value.video_url);
     const b64 = firstString(value.b64_json, value.base64);
     return url || b64 ? [{ ...(url ? { url } : {}), ...(b64 ? { b64_json: b64 } : {}), ...(typeof value.revised_prompt === 'string' ? { revised_prompt: value.revised_prompt } : {}) }] : [];
   });
@@ -346,6 +325,7 @@ function requestId(response: Response, body: unknown): string | undefined {
 function providerTaskStatus(value: unknown): ProviderTaskStatus | undefined {
   if (typeof value !== 'string') return undefined;
   const clean = value.trim().toLowerCase();
+  if (clean === 'succeeded') return 'completed';
   return ['not_start', 'submitted', 'queued', 'in_progress', 'completed', 'failure', 'expired'].includes(clean)
     ? clean as ProviderTaskStatus
     : undefined;

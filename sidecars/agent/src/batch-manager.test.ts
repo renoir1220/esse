@@ -197,6 +197,33 @@ describe('Esse batch manager', () => {
     expect(restarted.get(accepted.id).jobs[0].callHistory).toHaveLength(1);
   });
 
+  it('retrieves timed-out Provider tasks without submitting duplicates', async () => {
+    const fixture = await fixtureDirectory();
+    const first = managerFor(fixture, fakeApi(), { canRun: async () => false });
+    await first.initialize();
+    const accepted = await first.create({ prompt: 'retrieve timed out', requestKey: 'retrieve-timed-out' });
+    const [record] = await fixture.batchStore.loadAll();
+    const job = record.jobs[0];
+    const now = new Date().toISOString();
+    job.status = 'failed';
+    job.chargeState = 'unknown';
+    job.retryable = true;
+    job.providerTask = { id: 'task-timeout-1', status: 'in_progress', progress: 30, submittedAt: now, updatedAt: now };
+    await fixture.batchStore.save(record);
+    const resume = vi.fn(async (_input?: unknown, task?: ProviderTaskState, hooks?: ProviderTaskHooks) => {
+      await hooks?.onTask?.({ ...task!, status: 'completed', progress: 100, updatedAt: new Date().toISOString() });
+      return generatedResult('retrieved');
+    });
+    const manager = managerFor(fixture, { ...fakeApi(), resume });
+    await manager.initialize();
+    const queued = await manager.retrieveTimedOut(accepted.id);
+    expect(['queued', 'running']).toContain(queued.jobs[0].status);
+    expect(queued.jobs[0]).toMatchObject({ providerTask: { id: 'task-timeout-1' } });
+    manager.resume();
+    await vi.waitFor(() => expect(manager.get(accepted.id).status).toBe('completed'));
+    expect(resume).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps an unknown-charge failure terminal unless the user explicitly confirms a manual retry', async () => {
     const fixture = await fixtureDirectory();
     const generate = vi.fn(async () => {

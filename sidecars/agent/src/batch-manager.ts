@@ -343,6 +343,31 @@ export class BatchManager {
     return snapshot(batch);
   }
 
+  async retrieveTimedOut(batchId: string): Promise<BatchSnapshot> {
+    const batch = this.requiredBatch(batchId);
+    const jobs = batch.jobs.filter((job) => job.status === 'failed' && job.operation !== 'agent'
+      && job.chargeState === 'unknown' && job.providerTask
+      && ['not_start', 'submitted', 'queued', 'in_progress'].includes(job.providerTask.status));
+    const now = new Date().toISOString();
+    for (const job of jobs) {
+      job.status = 'queued';
+      job.progress = job.providerTask?.progress ?? 0;
+      job.retryable = false;
+      job.error = undefined;
+      job.errorOrigin = undefined;
+      job.finishedAt = undefined;
+      job.durationMs = undefined;
+      job.chargeState = 'unknown';
+    }
+    if (jobs.length) {
+      batch.updatedAt = now;
+      await this.options.store.save(batch);
+      this.changed({ type: 'upsert', batch: snapshot(batch) });
+      this.schedule();
+    }
+    return snapshot(batch);
+  }
+
   async deleteImages(batchId: string, imageIds: string[]): Promise<BatchSnapshot> {
     const batch = this.requiredBatch(batchId);
     const ids = unique(imageIds);

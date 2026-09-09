@@ -12,6 +12,7 @@ const bridge: EsseDesktopBridge = {
   activateBatch: (batchId: string) => ipcRenderer.invoke('batches:activate', batchId),
   cancelQueued: (batchId: string) => ipcRenderer.invoke('batches:cancel-queued', batchId),
   retryJobs: (batchId: string, jobIds: string[], allowUnknownCharge = false) => ipcRenderer.invoke('batches:retry', batchId, jobIds, allowUnknownCharge),
+  retrieveTimedOut: (batchId: string) => ipcRenderer.invoke('batches:retrieve-timed-out', batchId),
   deleteImages: (batchId: string, imageIds: string[]) => ipcRenderer.invoke('batches:delete-images', batchId, imageIds),
   deleteBatch: (batchId: string) => ipcRenderer.invoke('batches:delete', batchId),
   setDefaultOffering: (offeringId: string) => ipcRenderer.invoke('settings:set-default-offering', offeringId),

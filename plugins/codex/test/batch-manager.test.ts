@@ -64,7 +64,7 @@ test("persistent local batch respects profile concurrency and writes unique outp
     assert.equal(new Set(completed.jobs.map((job) => job.outputPath)).size, 5);
     assert.equal((await readdir(completed.outputDirectory)).length, 5);
     assert.equal(completed.estimatedCost, 0.175);
-    assert.deepEqual(responseFormats, Array(5).fill("b64_json"));
+    assert.deepEqual(responseFormats, Array(5).fill("url"));
     for (const job of completed.jobs) {
       assert.equal(job.callHistory?.length, 1);
       assert.equal(job.callHistory?.[0]?.source, "provider");
@@ -88,12 +88,12 @@ test("each child task keeps its own prompt and zero-to-many reference images", a
       await writeFile(filePath, Buffer.from(onePixelPng, "base64"));
       return filePath;
     }));
-    const requests: Array<{ prompt?: string; image?: unknown[] }> = [];
+    const requests: Array<{ prompt?: string; image?: unknown | unknown[] }> = [];
     const { manager } = await createManager(root, async (_input, init) => {
       if (init?.body instanceof FormData) {
         requests.push({ prompt: String(init.body.get("prompt") || ""), image: init.body.getAll("image") });
       } else {
-        requests.push(JSON.parse(String(init?.body || "{}")) as { prompt?: string; image?: unknown[] });
+        requests.push(JSON.parse(String(init?.body || "{}")) as { prompt?: string; image?: unknown | unknown[] });
       }
       return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
     });
@@ -111,7 +111,8 @@ test("each child task keeps its own prompt and zero-to-many reference images", a
     assert.deepEqual(completed.jobs[1]?.inputPaths, referencePaths);
     assert.deepEqual(completed.jobs[1]?.referenceImagePaths, referencePaths);
     assert.equal(requests.find((request) => request.prompt === "text-only child")?.image, undefined);
-    assert.equal(requests.find((request) => request.prompt === "four-reference child")?.image?.length, 4);
+    const references = requests.find((request) => request.prompt === "four-reference child")?.image;
+    assert.equal(Array.isArray(references) ? references.length : 0, 4);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -472,9 +473,9 @@ test("restart resumes an accepted Tuzi task by task ID without another generatio
     let queries = 0;
     const fetchImpl: typeof fetch = async (input) => {
       const url = String(input);
-      if (url.includes("/get-async?id=task-resume-1")) {
+      if (url.endsWith("/v1/videos/task-resume-1")) {
         queries += 1;
-        return new Response(JSON.stringify({ id: "task-resume-1", status: "completed", result: { data: [{ b64_json: onePixelPng }] } }), {
+        return new Response(JSON.stringify({ id: "task-resume-1", status: "completed", video_url: `data:image/png;base64,${onePixelPng}` }), {
           status: 200,
           headers: { "content-type": "application/json" }
         });
@@ -671,12 +672,12 @@ function asyncTaskFetch(delegate: typeof fetch): typeof fetch {
   let sequence = 0;
   return async (input, init) => {
     const url = String(input);
-    if (url.includes("/get-async?id=")) {
-      const id = new URL(url).searchParams.get("id") || "";
-      return new Response(JSON.stringify({ id, status: "completed", result: results.get(id) }), { status: 200, headers: { "content-type": "application/json" } });
+    if (url.includes("/v1/videos/") && !url.endsWith("/v1/videos")) {
+      const id = url.slice(url.lastIndexOf("/") + 1);
+      return new Response(JSON.stringify({ id, status: "completed", video_url: `data:image/png;base64,${onePixelPng}` }), { status: 200, headers: { "content-type": "application/json" } });
     }
     const response = await delegate(input, init);
-    if ((!url.includes("/async/v1/images/generations") && !url.includes("/async/v1/images/edits")) || !response.ok) return response;
+    if (!url.endsWith("/v1/videos") || !response.ok) return response;
     const id = `task-${++sequence}`;
     results.set(id, await response.json());
     return new Response(JSON.stringify({ id, status: "submitted" }), { status: 202, headers: { "content-type": "application/json", "x-oneapi-request-id": `request-${sequence}` } });

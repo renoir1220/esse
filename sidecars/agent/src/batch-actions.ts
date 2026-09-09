@@ -12,3 +12,10 @@ export function retryAllFailedSelection(batch: Pick<BatchSnapshot, 'jobs'>): Ret
     includesUnknownCharge: retryable.some((job) => job.chargeState === 'unknown'),
   };
 }
+
+export function retrieveTimedOutSelection(batch: Pick<BatchSnapshot, 'jobs'>): string[] {
+  return batch.jobs
+    .filter((job) => job.status === 'failed' && job.operation !== 'agent' && job.chargeState === 'unknown' && Boolean(job.providerTask)
+      && ['not_start', 'submitted', 'queued', 'in_progress'].includes(job.providerTask?.status || ''))
+    .map((job) => job.id);
+}

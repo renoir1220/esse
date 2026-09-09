@@ -29,6 +29,7 @@ import {
 } from '@phosphor-icons/react';
 import './index.css';
 import { retryAllFailedSelection } from './batch-actions';
+import { retrieveTimedOutSelection } from './batch-actions';
 import { batchLibraryProgress, batchLibraryState, filterAndGroupBatches, type BatchLibraryState } from './batch-library';
 import { errorOriginLabel } from './error-display';
 import { galleryAssets, selectableAssets, type GalleryAsset } from './gallery-assets';
@@ -128,6 +129,7 @@ function App() {
   const [state, setState] = useState<DesktopState>(emptyState);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
+  const [retrieveBusy, setRetrieveBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<Tab>('batches');
   const [activeBatchId, setActiveBatchId] = useState<string>();
@@ -322,6 +324,7 @@ function App() {
           offerings={state.offerings.filter((offering) => offering.configured)}
           defaultOfferingId={state.defaultOfferingId}
           busy={busy}
+          retrieveBusy={retrieveBusy}
           onOpenImage={openImageSoon}
           onToggleSelected={toggleSelected}
           onImageContextMenu={(event, imageId) => {
@@ -343,6 +346,24 @@ function App() {
             () => window.esse.retryJobs(activeBatch.id, jobIds, includesUnknownCharge),
             includesUnknownCharge ? '失败任务已重新排队；部分上次调用的扣费状态未知' : '失败任务已重新排队',
           )}
+          onRetrieveTimedOut={async () => {
+            const started = Date.now();
+            setRetrieveBusy(true);
+            setError(undefined);
+            try {
+              const next = await window.esse.retrieveTimedOut(activeBatch.id);
+              setState(next);
+              setActiveBatchId(next.activeBatchId || activeBatchId || next.batches[0]?.id);
+              setNotice('已重新获取超时任务');
+              return true;
+            } catch (cause) {
+              setError(cleanError(cause));
+              return false;
+            } finally {
+              await new Promise((resolve) => window.setTimeout(resolve, Math.max(0, 1000 - (Date.now() - started))));
+              setRetrieveBusy(false);
+            }
+          }}
         /> : <EmptyState title="还没有图片批次" copy="请从 Agent 向 Esse 提交第一个图片任务。" />
       ) : null}
 
@@ -379,6 +400,7 @@ function BatchWorkspace(props: {
   offerings: OfferingSummary[];
   defaultOfferingId?: string;
   busy: boolean;
+  retrieveBusy: boolean;
   onOpenImage: (id: string) => void;
   onToggleSelected: (id: string) => void;
   onImageContextMenu: (event: React.MouseEvent, id: string) => void;
@@ -386,6 +408,7 @@ function BatchWorkspace(props: {
   onCancel: () => Promise<boolean>;
   onRetry: (asset: GalleryAsset) => Promise<boolean>;
   onRetryAll: (jobIds: string[], includesUnknownCharge: boolean) => Promise<boolean>;
+  onRetrieveTimedOut: () => Promise<boolean>;
 }) {
   const { batch } = props;
   const [prompt, setPrompt] = useState('');
@@ -398,12 +421,13 @@ function BatchWorkspace(props: {
   const detailAsset = detailAssetId ? assets.find((asset) => asset.id === detailAssetId) : undefined;
   const active = batch.queued + batch.running > 0;
   const retrySelection = retryAllFailedSelection(batch);
+  const timedOutJobIds = retrieveTimedOutSelection(batch);
 
   useEffect(() => { setOfferingId(batch.offering.id); setDetailAssetId(undefined); }, [batch.id, batch.offering.id]);
 
   return <div className="batch-page">
     <div className="section-heading">
-      <div><strong>{statusLabel(batch)}</strong>{batch.failed ? <button type="button" className="retry-all-button" title={retrySelection.jobIds.length ? '重新排队失败任务' : 'Agent 任务需由当前 Agent 重新发起'} disabled={props.busy || !retrySelection.jobIds.length} onClick={() => void props.onRetryAll(retrySelection.jobIds, retrySelection.includesUnknownCharge)}><ArrowClockwise size={13} weight="bold" />重试失败任务</button> : null}</div>
+      <div><strong>{statusLabel(batch)}</strong>{batch.failed ? <button type="button" className="retry-all-button" title={retrySelection.jobIds.length ? '重新排队失败任务' : 'Agent 任务需由当前 Agent 重新发起'} disabled={props.busy || props.retrieveBusy || !retrySelection.jobIds.length} onClick={() => void props.onRetryAll(retrySelection.jobIds, retrySelection.includesUnknownCharge)}><ArrowClockwise size={13} weight="bold" />重试失败任务</button> : null}{timedOutJobIds.length ? <button type="button" className="retry-all-button" title="重新查询当前批次中超时的 Provider 任务" disabled={props.busy || props.retrieveBusy} onClick={() => void props.onRetrieveTimedOut()}>{props.retrieveBusy ? <span className="spinner" /> : <ArrowClockwise size={13} weight="bold" />} {props.retrieveBusy ? '正在取回' : '取回图片'}（{timedOutJobIds.length}）</button> : null}</div>
     </div>
     <section className={`batch-workspace ${assets.length === 1 ? 'is-single' : ''}`}>
       <div className="image-grid">

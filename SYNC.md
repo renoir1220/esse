@@ -104,6 +104,11 @@ The initial import deliberately excludes the private commercial server, user acc
 - A Provider-declared failure or expiry is surfaced as soon as the next task query observes it. Temporary task-query transport failures, rate limits, and upstream overload responses are queried again without resubmitting; an unresolved overall deadline remains an unknown-result, unknown-charge outcome requiring user review.
 - Errors before durable Provider acceptance are treated as not charged when Esse can prove no submission occurred. Ambiguous submission transport failures remain unknown, and Tuzi's `X-Oneapi-Request-Id` is retained for support diagnostics.
 
+## 2026-09-09 — Tuzi video image tasks and manual retrieval
+
+- The Tuzi adapter routes the configured Gemini image preview and GPT-Image 2 offerings through `POST /v1/videos`, sends one or more reference images as `image`/`image[]`, polls `GET /v1/videos/{taskId}`, and maps the completed `video_url` (which currently points to a PNG) into Esse's image result contract.
+- The Agent Sidecar batch workspace exposes `取回图片` when failed jobs retain a resumable queued or in-progress Provider task. The action requeues those jobs without resubmitting them, persists the same task ID, and keeps a visible spinner for at least one second while background retrieval proceeds.
+
 ## Deferred
 
 - shared domain/provider/UI packages;
