@@ -101,20 +101,18 @@ export class EsseApiClient {
     if (!task) {
       let response: Response;
       try {
-        response = await this.fetchImpl(`${profile.baseUrl}/v1/videos`, {
-          method: 'POST',
-          headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-          body: JSON.stringify({
-            model,
-            prompt: input.prompt,
-            n: input.n ?? 1,
-            quality: input.quality,
-            response_format: 'url',
-            ...(input.size ? { size: input.size } : {}),
-            ...(images.length ? { image: images.length === 1 ? images[0] : images } : {}),
-          }),
-          signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
-        });
+        response = isVideoModel(model)
+          ? await this.fetchImpl(`${profile.baseUrl}/v1/videos`, {
+            method: 'POST',
+            headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, quality: input.quality, response_format: 'url', ...(input.size ? { size: input.size } : {}), ...(images.length ? { image: images.length === 1 ? images[0] : images } : {}) }),
+            signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
+          })
+          : images.length ? await this.tuziLegacyEdit(profile.baseUrl, apiKey, model, input, images) : await this.fetchImpl(`${profile.baseUrl}/async/v1/images/generations`, {
+            method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
+            body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, response_format: 'b64_json', ...(input.size ? { size: input.size } : {}), ...(input.quality ? { quality: input.quality } : {}) }),
+            signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
+          });
       } catch (error) {
         const diagnostic = networkErrorDiagnostic(error);
         throw new EsseApiError(`图片任务提交失败${diagnostic ? `（诊断码：${diagnostic}）` : ''}；是否已被上游接收及扣费状态未知。`, {
@@ -143,6 +141,17 @@ export class EsseApiClient {
       await hooks.onTask?.(task);
     }
     return this.pollTuziTask(profile, apiKey, task, hooks.onTask);
+  }
+
+  private async tuziLegacyEdit(baseUrl: string, apiKey: string, model: string, input: GenerateInput, images: string[]): Promise<Response> {
+    const form = new FormData(); form.set('model', model); form.set('prompt', input.prompt); form.set('n', String(input.n ?? 1)); form.set('response_format', 'b64_json');
+    if (input.size) form.set('size', input.size); if (input.quality) form.set('quality', input.quality);
+    for (const [index, image] of images.entries()) {
+      const match = /^data:([^;,]+);base64,(.+)$/s.exec(image);
+      if (!match?.[1] || !match[2]) throw new Error('Invalid local reference image.');
+      form.append('image', new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
+    }
+    return this.fetchImpl(`${baseUrl}/async/v1/images/edits`, { method: 'POST', headers: { authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS) });
   }
 
   private async pollTuziTask(
@@ -304,6 +313,10 @@ function providerTaskTimeout(task: ProviderTaskState, cause?: unknown): EsseApiE
   return new EsseApiError(`图片任务在 ${IMAGE_REQUEST_TIMEOUT_MS / 60_000} 分钟期限内没有完成；最后确认状态为 ${task.status}，结果与扣费状态未知。`, {
     code: 'provider_task_timeout', requestId: task.requestId, chargeState: 'unknown', origin: 'transport',
   }, cause ? { cause } : undefined);
+}
+
+function isVideoModel(model: string): boolean {
+  return model === 'gpt-image-2' || model.startsWith('gemini-3.1-flash-image-preview');
 }
 
 function isTransientTaskQueryStatus(status: number): boolean {

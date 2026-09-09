@@ -15,20 +15,17 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       let response: Response;
       try {
         const submitSignal = combinedSignal(Math.min(this.options.timeoutMs ?? IMAGE_REQUEST_TIMEOUT_MS, SUBMIT_TIMEOUT_MS), signal);
-        response = await fetchImpl(`${this.options.baseUrl}/v1/videos`, {
-          method: "POST",
-          headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
-          body: JSON.stringify({
-            model: request.model,
-            prompt: request.prompt,
-            n: 1,
-            quality: request.quality,
-            response_format: "url",
-            ...(request.size ? { size: request.size } : {}),
-            ...(request.images.length ? { image: request.images.length === 1 ? request.images[0] : request.images } : {})
-          }),
-          signal: submitSignal
-        });
+        response = isVideoModel(request.model)
+          ? await fetchImpl(`${this.options.baseUrl}/v1/videos`, {
+            method: "POST",
+            headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
+            body: JSON.stringify({ model: request.model, prompt: request.prompt, n: 1, quality: request.quality, response_format: "url", ...(request.size ? { size: request.size } : {}), ...(request.images.length ? { image: request.images.length === 1 ? request.images[0] : request.images } : {}) }),
+            signal: submitSignal
+          })
+          : request.images.length ? await this.edit(request, fetchImpl, submitSignal) : await fetchImpl(`${this.options.baseUrl}/async/v1/images/generations`, {
+            method: "POST", headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
+            body: JSON.stringify({ model: request.model, prompt: request.prompt, n: 1, response_format: request.responseFormat, ...(request.size ? { size: request.size } : {}), ...(request.quality ? { quality: request.quality } : {}) }), signal: submitSignal
+          });
       } catch {
         throw new ProviderRequestError("图片任务提交失败；是否已被上游接收及扣费状态未知。", {
           retryable: true, chargeState: "unknown", origin: "transport"
@@ -54,6 +51,18 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       await request.onProviderTask?.(task);
     }
     return this.poll(task, request.onProviderTask, signal);
+  }
+
+  private async edit(request: GenerateRequest, fetchImpl: FetchLike, signal: AbortSignal): Promise<Response> {
+    const form = new FormData();
+    form.append("model", request.model); form.append("prompt", request.prompt); form.append("n", "1"); form.append("response_format", request.responseFormat);
+    if (request.size) form.append("size", request.size); if (request.quality) form.append("quality", request.quality);
+    for (const [index, image] of request.images.entries()) {
+      const match = /^data:([^;,]+);base64,(.+)$/s.exec(image);
+      if (!match?.[1] || !match[2]) throw new Error("Invalid base64 image input.");
+      form.append("image", new Blob([Buffer.from(match[2], "base64")], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
+    }
+    return fetchImpl(`${this.options.baseUrl}/async/v1/images/edits`, { method: "POST", headers: { authorization: `Bearer ${this.options.apiKey}` }, body: form, signal });
   }
 
   private async poll(initialTask: ProviderTaskState, onTask: GenerateRequest["onProviderTask"], signal?: AbortSignal): Promise<GenerateResult> {
@@ -127,6 +136,10 @@ function taskTimeout(task: ProviderTaskState, timeoutMs: number): ProviderReques
   return new ProviderRequestError(`图片任务在 ${Math.round(timeoutMs / 60_000)} 分钟期限内没有完成；最后确认状态为 ${task.status}，结果与扣费状态未知。`, {
     retryable: true, chargeState: "unknown", requestId: task.requestId, origin: "transport"
   });
+}
+
+function isVideoModel(model: string): boolean {
+  return model === "gpt-image-2" || model.startsWith("gemini-3.1-flash-image-preview");
 }
 
 function isTransientTaskQueryStatus(status: number): boolean {
