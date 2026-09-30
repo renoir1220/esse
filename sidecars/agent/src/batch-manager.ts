@@ -492,6 +492,24 @@ export class BatchManager {
     if (replay) {
       assertMatchingFingerprint(target.mergeFingerprints?.[input.requestKey], fingerprint);
       await this.cleanupMergedSources(target);
+      const sources = unique(input.sourceBatchIds).map((id) => this.batches.get(id)).filter((batch): batch is BatchRecord => Boolean(batch));
+      if (sources.length) {
+        if (sources.some((source) => source.id === target.id || !isTerminal(source))) throw new Error('Only terminal source batches can be moved.');
+        const moved: BatchRecord = { ...target, createAliases: { ...target.createAliases }, mergeFingerprints: { ...target.mergeFingerprints, [input.requestKey]: fingerprint }, mergeCleanup: sources.map((source) => ({ id: source.id, title: source.title })) };
+        for (const source of sources) {
+          Object.assign(moved.createAliases!, source.createAliases);
+          if (source.requestKey) moved.createAliases![source.requestKey] = source.requestFingerprint ?? null;
+        }
+        await this.options.store.save(moved);
+        this.batches.set(target.id, moved);
+        for (const source of sources) this.batches.delete(source.id);
+        for (const key of Object.keys(moved.createAliases!)) this.createKeys.set(key, target.id);
+        this.activeBatchId = moved.id;
+        for (const source of sources) this.changed({ type: 'delete', batchId: source.id, activeBatchId: moved.id });
+        await this.cleanupMergedSources(moved);
+        this.changed({ type: 'upsert', batch: snapshot(moved) });
+        return snapshot(moved);
+      }
       return snapshot(target);
     }
     await this.cleanupMergedSources(target);

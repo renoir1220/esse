@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -608,6 +609,32 @@ test("merging batches moves managed images and always removes source batches", a
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("legacy keep-source merge fingerprints replay as moves without cloning again", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-legacy-merge-"));
+  try {
+    const response = async () => Response.json({ data: [{ b64_json: onePixelPng }] });
+    const { manager, store } = await createManager(root, response);
+    const target = await waitForBatch(manager, (await manager.create({ offeringId: "offer-default", prompt: "target", requestKey: "legacy-target" })).id);
+    const sourceInput = { offeringId: "offer-default", prompt: "source", requestKey: "legacy-source" };
+    const source = await waitForBatch(manager, (await manager.create(sourceInput)).id);
+    const sourceRecord = (await store.loadAll()).find((batch) => batch.id === source.id)!;
+    const input = { targetBatchId: target.id, sourceBatchIds: [source.id], requestKey: "legacy-merge", deleteSourceBatches: false };
+    await manager.mergeBatches(input);
+    const moved = (await store.loadAll())[0]!;
+    const normalized = { deleteSourceBatches: false, sourceBatchIds: [source.id], targetBatchId: target.id };
+    moved.mergeFingerprints = { [input.requestKey]: createHash("sha256").update(JSON.stringify(normalized)).digest("hex") };
+    delete moved.createAliases;
+    await store.save(moved);
+    await store.save(sourceRecord);
+    const restarted = (await createManager(root, response)).manager;
+    const replay = await restarted.mergeBatches(input);
+    assert.equal(replay.jobs.length, 2);
+    assert.throws(() => restarted.get(source.id));
+    assert.equal((await restarted.create(sourceInput)).id, target.id);
+    assert.equal((await store.loadAll()).length, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("batch library pages all records by most recent activity", async () => {

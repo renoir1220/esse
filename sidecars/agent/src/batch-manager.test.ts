@@ -17,6 +17,32 @@ afterEach(async () => {
 });
 
 describe('Esse batch manager', () => {
+  it('upgrades legacy keep-source merge replays without cloning again', async () => {
+    const fixture = await fixtureDirectory();
+    const api = fakeApi();
+    const manager = managerFor(fixture, api);
+    await manager.initialize();
+    const target = await manager.create({ prompt: 'target', requestKey: 'legacy-target' });
+    const sourceInput = { prompt: 'source', requestKey: 'legacy-source' };
+    const source = await manager.create(sourceInput);
+    await manager.waitForIdle();
+    const records = await fixture.batchStore.loadAll();
+    const sourceRecord = records.find((batch) => batch.id === source.id)!;
+    const input = { targetBatchId: target.id, sourceBatchIds: [source.id], requestKey: 'legacy-merge', deleteSourceBatches: false };
+    await manager.merge(input);
+    const moved = (await fixture.batchStore.loadAll())[0];
+    delete moved.mergeFingerprints;
+    delete moved.createAliases;
+    await fixture.batchStore.save(moved);
+    await fixture.batchStore.save(sourceRecord);
+    const restarted = managerFor(fixture, api);
+    await restarted.initialize();
+    expect(restarted.list()).toHaveLength(2);
+    expect((await restarted.merge(input)).jobs).toHaveLength(2);
+    expect(restarted.list()).toHaveLength(1);
+    expect((await restarted.create(sourceInput)).id).toBe(target.id);
+    expect((await fixture.batchStore.loadAll()).map((batch) => batch.id)).toEqual([target.id]);
+  });
   it('moves completed jobs, backups, images and history, remaps create keys and supports deletion after restart', async () => {
     const fixture = await fixtureDirectory();
     const api = fakeApi();

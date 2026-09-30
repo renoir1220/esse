@@ -636,8 +636,26 @@ export class BatchManager {
     const target = this.requireBatch(options.targetBatchId);
     const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined, deleteSourceBatches: undefined }) : undefined;
     if (options.requestKey && target.mergeKeys?.[options.requestKey]) {
-      assertMatchingFingerprint(target.mergeFingerprints?.[options.requestKey], fingerprint, options.requestKey);
+      const stored = target.mergeFingerprints?.[options.requestKey];
+      const legacy = [false, true].some((deleteSourceBatches) => stored === requestFingerprint({ ...options, requestKey: undefined, deleteSourceBatches }));
+      if (!legacy) assertMatchingFingerprint(stored, fingerprint, options.requestKey);
       await this.cleanupMergedSources(target);
+      const sources = [...new Set(options.sourceBatchIds)].map((id) => this.batches.get(id)).filter((batch): batch is BatchRecord => Boolean(batch));
+      if (sources.length) {
+        if (sources.some((source) => source.id === target.id || source.jobs.some((job) => job.status === "queued" || job.status === "running"))) throw new Error("Only terminal source batches can be moved.");
+        const moved = { ...target, createAliases: { ...target.createAliases }, mergeFingerprints: { ...target.mergeFingerprints, [options.requestKey]: fingerprint! }, mergeCleanup: sources.map((source) => ({ id: source.id, outputDirectory: source.outputDirectory, managedPaths: [...new Set(source.jobs.flatMap(allJobPaths).map((filePath) => path.resolve(filePath)).filter((filePath) => isInside(source.outputDirectory, filePath)))] })) };
+        for (const source of sources) {
+          Object.assign(moved.createAliases, source.createAliases);
+          if (source.requestKey) moved.createAliases[source.requestKey] = source.requestFingerprint ?? null;
+        }
+        await this.persist(moved);
+        this.batches.set(target.id, moved);
+        for (const source of sources) this.batches.delete(source.id);
+        for (const key of Object.keys(moved.createAliases)) this.requestKeys.set(key, target.id);
+        await this.cleanupMergedSources(moved);
+        this.activate(moved.id);
+        return snapshot(moved);
+      }
       this.activate(target.id);
       return snapshot(target);
     }
