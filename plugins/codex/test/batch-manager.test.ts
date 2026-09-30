@@ -69,7 +69,7 @@ test("persistent local batch respects profile concurrency and writes unique outp
     let peak = 0;
     const responseFormats: unknown[] = [];
     const fetchImpl: typeof fetch = async (_input, init) => {
-      responseFormats.push((JSON.parse(String(init?.body || "{}")) as { response_format?: unknown }).response_format);
+      responseFormats.push((await requestPayload(init)).response_format);
       active += 1;
       peak = Math.max(peak, active);
       await new Promise((resolve) => setTimeout(resolve, 25));
@@ -90,7 +90,7 @@ test("persistent local batch respects profile concurrency and writes unique outp
     assert.equal(new Set(completed.jobs.map((job) => job.outputPath)).size, 5);
     assert.equal((await readdir(completed.outputDirectory)).length, 5);
     assert.equal(completed.estimatedCost, 0.175);
-    assert.deepEqual(responseFormats, Array(5).fill("url"));
+    assert.deepEqual(responseFormats, Array(5).fill(undefined));
     for (const job of completed.jobs) {
       assert.equal(job.callHistory?.length, 1);
       assert.equal(job.callHistory?.[0]?.source, "provider");
@@ -117,7 +117,8 @@ test("each child task keeps its own prompt and zero-to-many reference images", a
     const requests: Array<{ prompt?: string; image?: unknown | unknown[] }> = [];
     const { manager } = await createManager(root, async (_input, init) => {
       if (init?.body instanceof FormData) {
-        requests.push({ prompt: String(init.body.get("prompt") || ""), image: init.body.getAll("image") });
+        const references = init.body.getAll("input_reference");
+        requests.push({ prompt: String(init.body.get("prompt") || ""), image: references.length ? references : undefined });
       } else {
         requests.push(JSON.parse(String(init?.body || "{}")) as { prompt?: string; image?: unknown | unknown[] });
       }
@@ -149,7 +150,7 @@ test("new jobs append directly to an active batch with their own model and idemp
   try {
     const requests: Array<{ model?: string; prompt?: string; size?: string }> = [];
     const { manager, store, registry, paths } = await createManager(root, async (_input, init) => {
-      requests.push(JSON.parse(String(init?.body || "{}")) as { model?: string; prompt?: string; size?: string });
+      requests.push(await requestPayload(init));
       await new Promise((resolve) => setTimeout(resolve, 20));
       return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
     });
@@ -531,7 +532,7 @@ test("generation size and quality survive restart and are reused by manual retry
     const payloads: Array<Record<string, unknown>> = [];
     const fetchImpl: typeof fetch = async (_input, init) => {
       if (failTransport) throw new Error("connection dropped");
-      payloads.push(JSON.parse(String(init?.body || "{}")) as Record<string, unknown>);
+      payloads.push(await requestPayload(init));
       return new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } });
     };
     const { manager, store, registry, paths } = await createManager(root, fetchImpl);
@@ -749,4 +750,8 @@ function asyncTaskFetch(delegate: typeof fetch): typeof fetch {
     results.set(id, await response.json());
     return new Response(JSON.stringify({ id, status: "submitted" }), { status: 202, headers: { "content-type": "application/json", "x-oneapi-request-id": `request-${sequence}` } });
   };
+}
+
+async function requestPayload(init?: RequestInit): Promise<Record<string, unknown>> {
+  return init?.body instanceof FormData ? Object.fromEntries(init.body.entries()) : JSON.parse(String(init?.body || "{}"));
 }

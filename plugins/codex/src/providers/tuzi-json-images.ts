@@ -12,17 +12,19 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
     const fetchImpl = this.options.fetchImpl ?? fetch;
     let task = request.providerTask;
     if (!task) {
+      const protocol = submissionProtocol(request.model);
       let response: Response;
       try {
-        const submitSignal = combinedSignal(Math.min(this.options.timeoutMs ?? IMAGE_REQUEST_TIMEOUT_MS, SUBMIT_TIMEOUT_MS), signal);
-        response = isVideoModel(request.model)
-          ? await fetchImpl(`${this.options.baseUrl}/v1/videos`, {
+        const submitSignal = combinedSignal(protocol === "sync" ? this.options.timeoutMs ?? IMAGE_REQUEST_TIMEOUT_MS : Math.min(this.options.timeoutMs ?? IMAGE_REQUEST_TIMEOUT_MS, SUBMIT_TIMEOUT_MS), signal);
+        response = protocol === "video"
+          ? await this.video(request, fetchImpl, submitSignal)
+          : protocol === "sync" ? await fetchImpl(`${apiBase(this.options.baseUrl)}/v1/images/generations`, {
             method: "POST",
             headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
-            body: JSON.stringify({ model: request.model, prompt: request.prompt, n: 1, quality: request.quality, response_format: "url", ...(request.size ? { size: request.size } : {}), ...(request.images.length ? { image: request.images.length === 1 ? request.images[0] : request.images } : {}) }),
+            body: JSON.stringify({ model: request.model, prompt: request.prompt, n: 1, response_format: "url", ...(ratioSize(request.size, "x") ? { size: ratioSize(request.size, "x") } : {}), ...(request.quality ? { quality: request.quality.toLowerCase() } : {}), ...(request.images.length ? { image: request.images.length === 1 ? request.images[0] : request.images } : {}) }),
             signal: submitSignal
           })
-          : request.images.length ? await this.edit(request, fetchImpl, submitSignal) : await fetchImpl(`${this.options.baseUrl}/async/v1/images/generations`, {
+          : request.images.length ? await this.edit(request, fetchImpl, submitSignal) : await fetchImpl(`${apiBase(this.options.baseUrl)}/async/v1/images/generations`, {
             method: "POST", headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
             body: JSON.stringify({ model: request.model, prompt: request.prompt, n: 1, response_format: request.responseFormat, ...(request.size ? { size: request.size } : {}), ...(request.quality ? { quality: request.quality } : {}) }), signal: submitSignal
           });
@@ -33,6 +35,7 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       }
       const parsed = await parseResponse(response);
       if (!response.ok) throw providerError(response, parsed);
+      if (protocol === "sync") return { ...extractImageResult(parsed), providerRequestId: requestId(response, parsed) };
       const record = asRecord(parsed);
       const id = firstString(record.id, record.task_id, record.taskId);
       if (!id) throw new ProviderRequestError("图片服务接受了异步请求，但没有返回任务 ID。", {
@@ -41,7 +44,7 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       const now = new Date().toISOString();
       task = {
         id,
-        protocol: isVideoModel(request.model) ? "tuzi-video" : "tuzi-images",
+        protocol: protocol === "video" ? "tuzi-video" : "tuzi-images",
         status: taskStatus(record.status) || "queued",
         progress: taskProgress(record.progress),
         requestId: requestId(response, parsed),
@@ -53,6 +56,22 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
     return this.poll(task, request.onProviderTask, signal);
   }
 
+  private async video(request: GenerateRequest, fetchImpl: FetchLike, signal: AbortSignal): Promise<Response> {
+    const form = new FormData();
+    form.set("model", request.model);
+    form.set("prompt", request.prompt);
+    const size = request.model === "gpt-image-2" ? request.size : ratioSize(request.size, ":");
+    if (size && size !== "auto") form.set("size", size);
+    if (request.model === "gpt-image-2" && request.quality) form.set("quality", request.quality);
+    for (const [index, image] of request.images.entries()) {
+      const match = /^data:([^;,]+);base64,(.+)$/s.exec(image);
+      if (match?.[1] && match[2]) form.append("input_reference", new Blob([Buffer.from(match[2], "base64")], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
+      else if (/^https?:\/\//i.test(image)) form.append("input_reference", image);
+      else throw new Error("Invalid reference image input.");
+    }
+    return fetchImpl(`${apiBase(this.options.baseUrl)}/v1/videos`, { method: "POST", headers: { authorization: `Bearer ${this.options.apiKey}` }, body: form, signal });
+  }
+
   private async edit(request: GenerateRequest, fetchImpl: FetchLike, signal: AbortSignal): Promise<Response> {
     const form = new FormData();
     form.append("model", request.model); form.append("prompt", request.prompt); form.append("n", "1"); form.append("response_format", request.responseFormat);
@@ -62,7 +81,7 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       if (!match?.[1] || !match[2]) throw new Error("Invalid base64 image input.");
       form.append("image", new Blob([Buffer.from(match[2], "base64")], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
     }
-    return fetchImpl(`${this.options.baseUrl}/async/v1/images/edits`, { method: "POST", headers: { authorization: `Bearer ${this.options.apiKey}` }, body: form, signal });
+    return fetchImpl(`${apiBase(this.options.baseUrl)}/async/v1/images/edits`, { method: "POST", headers: { authorization: `Bearer ${this.options.apiKey}` }, body: form, signal });
   }
 
   private async poll(initialTask: ProviderTaskState, onTask: GenerateRequest["onProviderTask"], signal?: AbortSignal): Promise<GenerateResult> {
@@ -78,8 +97,8 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
       let parsed: unknown;
       try {
         const queryUrl = task.protocol === "tuzi-video"
-          ? `${this.options.baseUrl}/v1/videos/${encodeURIComponent(task.id)}`
-          : `${this.options.baseUrl}/get-async?id=${encodeURIComponent(task.id)}`;
+          ? `${apiBase(this.options.baseUrl)}/v1/videos/${encodeURIComponent(task.id)}`
+          : `${apiBase(this.options.baseUrl)}/get-async?id=${encodeURIComponent(task.id)}`;
         response = await fetchImpl(queryUrl, {
           headers: { authorization: `Bearer ${this.options.apiKey}` },
           signal: combinedSignal(Math.min(POLL_TIMEOUT_MS, Math.max(1, deadline - Date.now())), signal)
@@ -138,8 +157,30 @@ function taskTimeout(task: ProviderTaskState, timeoutMs: number): ProviderReques
   });
 }
 
-function isVideoModel(model: string): boolean {
-  return model === "gpt-image-2" || model.startsWith("gemini-3.1-flash-image-preview");
+function submissionProtocol(model: string): "sync" | "video" | "legacy" {
+  if (model === "gpt-image-2" || /^gemini-3-pro-image-preview(?:-(?:2k|4k))?-async$/.test(model)) return "video";
+  if (model === "gemini-3.1-flash-image-preview"
+    || /^gemini-3-pro-image-preview(?:-(?:hd|2k|4k))?$/.test(model)
+    || /^nano-banana-2(?:-(?:hd|2k|4k))?$/.test(model)
+    || /^gemini-2\.5-flash-image(?:-preview)?$/.test(model)) return "sync";
+  return "legacy";
+}
+
+function apiBase(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, "").replace(/\/v1$/i, "");
+}
+
+function ratioSize(size: string | undefined, separator: string): string | undefined {
+  if (!size || size === "auto") return undefined;
+  const match = /^(\d+)[x:](\d+)$/i.exec(size);
+  if (!match) return size;
+  let width = Number(match[1]); let height = Number(match[2]);
+  if (width > 32 || height > 32) {
+    const gcd = (a: number, b: number): number => b ? gcd(b, a % b) : a;
+    const divisor = gcd(width, height);
+    if (divisor) { width /= divisor; height /= divisor; }
+  }
+  return `${width}${separator}${height}`;
 }
 
 function isTransientTaskQueryStatus(status: number): boolean {
@@ -151,6 +192,7 @@ function taskStatus(value: unknown): ProviderTaskStatus | undefined {
   const clean = value.trim().toLowerCase();
   if (clean === "succeeded") return "completed";
   if (clean === "failed") return "failure";
+  if (clean === "processing") return "in_progress";
   return ["not_start", "submitted", "queued", "in_progress", "completed", "failure", "expired"].includes(clean)
     ? clean as ProviderTaskStatus
     : undefined;

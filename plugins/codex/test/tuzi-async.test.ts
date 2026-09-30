@@ -13,7 +13,7 @@ test("other Tuzi models keep the legacy submit and query protocol", async () => 
       ? { id: "legacy", status: "submitted" }
       : { status: "completed", result: { data: [{ b64_json: image }] } });
   } });
-  await adapter.generate({ model: "nano-banana-2", prompt: "test", images: [], responseFormat: "b64_json" });
+  await adapter.generate({ model: "doubao-seedream-4-5-251128", prompt: "test", images: [], responseFormat: "b64_json" });
   assert.deepEqual(urls, ["https://provider.example/async/v1/images/generations", "https://provider.example/get-async?id=legacy"]);
 });
 
@@ -28,9 +28,10 @@ test("Tuzi adapter submits one async image task and unwraps its completed result
       const url = String(input);
       urls.push(url);
       if (url.endsWith("/v1/videos")) {
-        const body = JSON.parse(String(init?.body));
-        assert.equal(body.model, "gpt-image-2");
-        assert.match(body.image, /^data:image\/png;base64,/);
+        const body = init?.body as FormData;
+        assert.equal(body.get("model"), "gpt-image-2");
+        assert.equal(new Headers(init?.headers).has("content-type"), false);
+        assert.equal((body.get("input_reference") as Blob).type, "image/png");
         return new Response(JSON.stringify({ id: "task-1", status: "submitted" }), { status: 202, headers: { "x-oneapi-request-id": "request-1" } });
       }
       queries += 1;

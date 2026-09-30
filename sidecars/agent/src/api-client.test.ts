@@ -24,7 +24,8 @@ describe('Esse Provider client', () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer local-provider-key');
       if (String(url).endsWith('/v1/videos')) {
-        expect(JSON.parse(String(init?.body))).toMatchObject({ model: 'gpt-image-2', response_format: 'url' });
+        expect((init?.body as FormData).get('model')).toBe('gpt-image-2');
+        expect(new Headers(init?.headers).has('content-type')).toBe(false);
         return new Response(JSON.stringify({ id: 'task-1', status: 'queued' }), { status: 202, headers: { 'x-oneapi-request-id': 'request-1' } });
       }
       expect(String(url)).toBe('https://provider.example/v1/videos/task-1');
@@ -53,10 +54,11 @@ describe('Esse Provider client', () => {
     const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer local-provider-key');
       if (String(url).endsWith('/v1/videos')) {
-        const body = JSON.parse(String(init?.body));
-        expect(body.model).toBe('gpt-image-2');
-        expect(body.quality).toBe('4K');
-        expect(body.image).toMatch(/^data:image\/png;base64,/);
+        const body = init?.body as FormData;
+        expect(body.get('model')).toBe('gpt-image-2');
+        expect(body.get('quality')).toBe('4K');
+        expect((body.get('input_reference') as Blob).type).toBe('image/png');
+        expect(new Headers(init?.headers).has('content-type')).toBe(false);
         return new Response(JSON.stringify({ id: 'task-edit-1', status: 'queued' }), { status: 202, headers: { 'x-oneapi-request-id': 'request-edit-1' } });
       }
       expect(String(url)).toBe('https://provider.example/v1/videos/task-edit-1');
@@ -85,7 +87,7 @@ describe('Esse Provider client', () => {
       expect(String(url)).toBe('https://provider.example/get-async?id=legacy');
       return Response.json({ status: 'completed', result: { data: [{ url: 'https://cdn.example/legacy.png' }] } });
     }) as unknown as typeof fetch;
-    const client = new EsseApiClient(fakeSettings('tuzi-json-images', 'nano-banana-2'), fetchMock);
+    const client = new EsseApiClient(fakeSettings('tuzi-json-images', 'doubao-seedream-4-5-251128'), fetchMock);
     await expect(client.generate({ model: 'legacy', prompt: 'test' })).resolves.toMatchObject({ items: [{ url: 'https://cdn.example/legacy.png' }] });
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
@@ -192,7 +194,81 @@ describe('Esse Provider client', () => {
   });
 });
 
-function fakeSettings(adapterId: 'tuzi-json-images' | 'openai-images', providerModelId = 'gpt-image-2'): ProviderSettingsStore {
+for (const model of ['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-preview', 'gemini-3-pro-image-preview-2k', 'gemini-3-pro-image-preview-4k', 'nano-banana-2', 'nano-banana-2-2k', 'nano-banana-2-4k']) {
+  for (const count of [0, 1, 2]) it(`${model}: synchronous JSON with ${count} local references`, async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-sync-contract-'));
+    temporaryDirectories.push(directory);
+    const source = path.join(directory, 'source.png');
+    await writeFile(source, 'image');
+    const references = Array(count).fill('data:image/png;base64,aW1hZ2U=');
+    const onTask = vi.fn();
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(String(url)).toBe('https://provider.example/v1/images/generations');
+      expect(new Headers(init?.headers).get('content-type')).toBe('application/json');
+      expect(JSON.parse(String(init?.body))).toEqual({ model, prompt: 'contract', n: 1, size: '9x16', quality: '2k', response_format: 'url', ...(count ? { image: count === 1 ? references[0] : references } : {}) });
+      return new Response(JSON.stringify({ data: [{ url: 'https://cdn.example/output.png' }] }), { headers: { 'x-request-id': 'sync-request' } });
+    }) as unknown as typeof fetch;
+    const client = new EsseApiClient(fakeSettings('tuzi-json-images', model, 'https://provider.example/v1/'), fetchMock);
+    const input = { model: 'offering', prompt: 'contract', size: '9:16', quality: '2K' };
+    const result = count ? await client.edit(input, Array(count).fill(source), 'dummy', { onTask }) : await client.generate(input, 'dummy', { onTask });
+    expect(result).toMatchObject({ requestId: 'sync-request', items: [{ url: 'https://cdn.example/output.png' }] });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(onTask).not.toHaveBeenCalled();
+  });
+}
+
+for (const model of ['gemini-3-pro-image-preview-async', 'gemini-3-pro-image-preview-2k-async', 'gemini-3-pro-image-preview-4k-async', 'gpt-image-2']) it(`${model}: multipart video image contract`, async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-video-contract-'));
+  temporaryDirectories.push(directory);
+  const source = path.join(directory, 'source.png');
+  await writeFile(source, 'image');
+  const urls: string[] = [];
+  const onTask = vi.fn();
+  const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    urls.push(String(url));
+    if (init?.method === 'POST') {
+      expect(String(url)).toBe('https://provider.example/v1/videos');
+      expect(new Headers(init.headers).has('content-type')).toBe(false);
+      const form = init.body as FormData;
+      expect(form.get('model')).toBe(model);
+      expect(form.get('size')).toBe(model === 'gpt-image-2' ? '1024x1536' : '9:16');
+      expect(form.has('image')).toBe(false);
+      expect(form.has('response_format')).toBe(false);
+      if (model !== 'gpt-image-2') expect(form.has('quality')).toBe(false);
+      const references = form.getAll('input_reference');
+      expect(references).toHaveLength(2);
+      expect(await (references[0] as Blob).text()).toBe('image');
+      return Response.json({ id: 'accepted', status: 'processing', progress: '15' });
+    }
+    return Response.json({ status: 'completed', video_url: 'https://cdn.example/image.png' });
+  }) as unknown as typeof fetch;
+  const client = new EsseApiClient(fakeSettings('tuzi-json-images', model, 'https://provider.example/v1'), fetchMock);
+  await expect(client.edit({ model: 'offering', prompt: 'contract', size: model === 'gpt-image-2' ? '1024x1536' : '9x16', quality: '4K' }, [source, source], 'dummy', { onTask })).resolves.toMatchObject({ items: [{ url: 'https://cdn.example/image.png' }] });
+  expect(urls).toEqual(['https://provider.example/v1/videos', 'https://provider.example/v1/videos/accepted']);
+  expect(onTask).toHaveBeenCalledWith(expect.objectContaining({ protocol: 'tuzi-video', status: 'in_progress', progress: 15 }));
+});
+
+for (const protocol of ['tuzi-video', 'tuzi-images'] as const) it(`persisted ${protocol} wins over today's model routing`, async () => {
+  const urls: string[] = [];
+  const now = new Date().toISOString();
+  const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    urls.push(String(url)); expect(init?.method).not.toBe('POST');
+    return Response.json(protocol === 'tuzi-video' ? { status: 'completed', video_url: 'https://cdn.example/image.png' } : { status: 'completed', result: JSON.stringify({ data: [{ url: 'https://cdn.example/image.png' }] }) });
+  }) as unknown as typeof fetch;
+  const client = new EsseApiClient(fakeSettings('tuzi-json-images', 'gemini-3.1-flash-image-preview', 'https://provider.example/v1/'), fetchMock);
+  await client.resume({ model: 'offering', prompt: 'resume' }, { id: 'old/id', protocol, status: 'in_progress', submittedAt: now, updatedAt: now });
+  expect(urls).toEqual([protocol === 'tuzi-video' ? 'https://provider.example/v1/videos/old%2Fid' : 'https://provider.example/get-async?id=old%2Fid']);
+});
+
+for (const status of ['failed', 'expired', 'unexpected']) it(`${status} remains charge-unknown and never resubmits`, async () => {
+  const now = new Date().toISOString();
+  const fetchMock = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => { expect(init?.method).not.toBe('POST'); return Response.json({ status }); }) as unknown as typeof fetch;
+  const client = new EsseApiClient(fakeSettings('tuzi-json-images'), fetchMock);
+  await expect(client.resume({ model: 'offering', prompt: 'resume' }, { id: 'accepted', protocol: 'tuzi-video', status: 'in_progress', submittedAt: now, updatedAt: now })).rejects.toMatchObject({ details: { chargeState: 'unknown' } });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+function fakeSettings(adapterId: 'tuzi-json-images' | 'openai-images', providerModelId = 'gpt-image-2', baseUrl = 'https://provider.example'): ProviderSettingsStore {
   const offering: OfferingConfig = {
     id: 'provider-1:gpt-image-2',
     canonicalModelId: 'gpt-image-2',
@@ -220,7 +296,7 @@ function fakeSettings(adapterId: 'tuzi-json-images' | 'openai-images', providerM
   };
   return {
     listOfferings: async () => [summary],
-    resolveOffering: async () => ({ profile, offering }),
+    resolveOffering: async () => ({ profile: { ...profile, baseUrl }, offering }),
     getApiKey: async () => 'local-provider-key',
   } as unknown as ProviderSettingsStore;
 }

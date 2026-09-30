@@ -20,6 +20,9 @@ export interface TuziProviderPreset {
 const observedAt = "2026-07-19";
 const gptImageSizes = ["auto", "1024x1024", "1536x1024", "1024x1536", "2048x2048", "2048x1152", "3840x2160", "2160x3840"];
 
+const videoRatioSizes = ["1:1", "2:3", "3:2", "3:4", "4:3", "4:5", "5:4", "9:16", "16:9", "21:9"];
+const syncRatioSizes = videoRatioSizes.map((size) => size.replace(":", "x"));
+
 export const TUZI_PROVIDER_PRESETS: TuziProviderPreset[] = [
   {
     id: "tuzi-default",
@@ -30,6 +33,13 @@ export const TUZI_PROVIDER_PRESETS: TuziProviderPreset[] = [
     adapterId: "tuzi-json-images",
     concurrency: 3,
     models: [
+      model("gemini-3.1-flash-image-preview", "gemini-3.1-flash-image-preview", "gemini-3.1-flash-image-preview", "gemini-3.1-flash-image-preview", undefined, "default", syncRatioSizes, ["1k", "2k", "4k"]),
+      model("gemini-3-pro-image-preview", "gemini-3-pro-image-preview", "gemini-3-pro-image-preview", "gemini-3-pro-image-preview", undefined, "default", syncRatioSizes),
+      model("gemini-3-pro-image-preview-2k", "gemini-3-pro-image-preview-2k", "gemini-3-pro-image-preview-2k", "gemini-3-pro-image-preview-2k", undefined, "default", syncRatioSizes),
+      model("gemini-3-pro-image-preview-4k", "gemini-3-pro-image-preview-4k", "gemini-3-pro-image-preview-4k", "gemini-3-pro-image-preview-4k", undefined, "default", syncRatioSizes),
+      model("gemini-3-pro-image-preview-async", "gemini-3-pro-image-preview-async", "gemini-3-pro-image-preview-async", "gemini-3-pro-image-preview-async", undefined, "default", videoRatioSizes),
+      model("gemini-3-pro-image-preview-2k-async", "gemini-3-pro-image-preview-2k-async", "gemini-3-pro-image-preview-2k-async", "gemini-3-pro-image-preview-2k-async", undefined, "default", videoRatioSizes),
+      model("gemini-3-pro-image-preview-4k-async", "gemini-3-pro-image-preview-4k-async", "gemini-3-pro-image-preview-4k-async", "gemini-3-pro-image-preview-4k-async", undefined, "default", videoRatioSizes),
       model("gpt-image-2", "gpt-image-2", "gpt-image-2", "GPT-Image 2", 0.035, "default", gptImageSizes),
       model("nano-banana-2-1k", "nano-banana-2", "nano-banana-2", "Nano Banana 2 · 1K", 0.1778, "default"),
       model("nano-banana-2-2k", "nano-banana-2", "nano-banana-2-2k", "Nano Banana 2 · 2K", 0.286, "default"),
@@ -76,7 +86,7 @@ export function tuziProviderPresetForDraft(draft: ProviderDraft): TuziProviderPr
 export function createTuziProviderDraft(id: TuziProviderPresetId): ProviderDraft {
   const preset = tuziProviderPresetById(id);
   if (!preset) throw new Error(`Unknown Tuzi Provider preset: ${id}`);
-  const defaultModels = preset.id === "tuzi-default" ? preset.models.slice(0, 3) : preset.models.slice(0, 1);
+  const defaultModels = preset.id === "tuzi-default" ? ["gpt-image-2", "nano-banana-2-1k", "nano-banana-2-2k"].map((id) => preset.models.find((entry) => entry.catalogId === id)!) : preset.models.slice(0, 1);
   return {
     displayName: preset.displayName,
     tierName: preset.tierName,
@@ -125,9 +135,10 @@ function model(
   canonicalModelId: string,
   providerModelId: string,
   displayName: string,
-  amount: number,
+  amount: number | undefined,
   tierName: string,
   sizes: string[] = [],
+  qualities: string[] = [],
 ): TuziModelPreset {
   return {
     catalogId,
@@ -135,7 +146,7 @@ function model(
     canonicalModelId,
     providerModelId,
     displayName,
-    price: {
+    price: amount === undefined ? { mode: "unknown", currency: "CNY" } : {
       mode: "per_request",
       currency: "CNY",
       amount,
@@ -144,8 +155,8 @@ function model(
     },
     supportsTextToImage: true,
     supportsImageToImage: true,
-    sizes: [...sizes],
-    qualities: [],
+    sizes: sizes.length ? [...sizes] : providerModelId.startsWith("nano-banana-2") ? [...syncRatioSizes] : [],
+    qualities: [...qualities],
   };
 }
 

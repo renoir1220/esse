@@ -104,6 +104,12 @@ describe('Esse batch manager', () => {
     await restarted.initialize();
     await expect(restarted.create({ ...input, prompt: 'different after restart' })).rejects.toThrow(/different arguments/);
     await expect(restarted.append({ ...append, jobs: [{ prompt: 'different after restart' }] })).rejects.toThrow(/different arguments/);
+    const generate = vi.spyOn(api, 'generate');
+    const runner = managerFor(fixture, api);
+    await runner.initialize();
+    await runner.waitForIdle();
+    expect(generate).toHaveBeenCalledTimes(2);
+    expect(runner.get(first.id).jobs.map((job) => job.status)).toEqual(['succeeded', 'succeeded']);
   });
 
   it.each(['start', 'task', 'finish'])('releases running bookkeeping when %s persistence fails', async (stage) => {

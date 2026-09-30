@@ -101,16 +101,18 @@ export class EsseApiClient {
   ): Promise<ApiGenerateResult> {
     let task = hooks.resumeTask;
     if (!task) {
+      const protocol = submissionProtocol(model);
       let response: Response;
       try {
-        response = isVideoModel(model)
-          ? await this.fetchImpl(`${profile.baseUrl}/v1/videos`, {
+        response = protocol === 'video'
+          ? await this.tuziVideo(profile.baseUrl, apiKey, model, input, images)
+          : protocol === 'sync' ? await this.fetchImpl(`${apiBase(profile.baseUrl)}/v1/images/generations`, {
             method: 'POST',
             headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-            body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, quality: input.quality, response_format: 'url', ...(input.size ? { size: input.size } : {}), ...(images.length ? { image: images.length === 1 ? images[0] : images } : {}) }),
-            signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
+            body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, quality: input.quality?.toLowerCase(), response_format: 'url', ...(ratioSize(input.size, 'x') ? { size: ratioSize(input.size, 'x') } : {}), ...(images.length ? { image: images.length === 1 ? images[0] : images } : {}) }),
+            signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
           })
-          : images.length ? await this.tuziLegacyEdit(profile.baseUrl, apiKey, model, input, images) : await this.fetchImpl(`${profile.baseUrl}/async/v1/images/generations`, {
+          : images.length ? await this.tuziLegacyEdit(profile.baseUrl, apiKey, model, input, images) : await this.fetchImpl(`${apiBase(profile.baseUrl)}/async/v1/images/generations`, {
             method: 'POST', headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
             body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, response_format: 'b64_json', ...(input.size ? { size: input.size } : {}), ...(input.quality ? { quality: input.quality } : {}) }),
             signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
@@ -125,6 +127,13 @@ export class EsseApiClient {
       }
       const body = await parseResponse(response);
       if (!response.ok) throw providerError(response, body, profile);
+      if (protocol === 'sync') {
+        const items = extractItems(body);
+        if (!items.length) throw new EsseApiError('Provider returned no usable image.', {
+          code: 'empty_provider_result', requestId: requestId(response, body), chargeState: 'unknown', origin: 'esse',
+        });
+        return { requestId: requestId(response, body) || randomUUID(), items, reused: false, trustedBaseUrl: profile.baseUrl };
+      }
       const record = asRecord(body);
       const id = firstString(record.id, record.task_id, record.taskId);
       if (!id) throw new EsseApiError('图片服务接受了异步请求，但没有返回任务 ID。', {
@@ -133,7 +142,7 @@ export class EsseApiClient {
       const now = new Date().toISOString();
       task = {
         id,
-        protocol: isVideoModel(model) ? 'tuzi-video' : 'tuzi-images',
+        protocol: protocol === 'video' ? 'tuzi-video' : 'tuzi-images',
         status: providerTaskStatus(record.status) || 'queued',
         progress: providerProgress(record.progress),
         requestId: requestId(response, body),
@@ -145,6 +154,28 @@ export class EsseApiClient {
     return this.pollTuziTask(profile, apiKey, task, hooks);
   }
 
+  private async tuziVideo(baseUrl: string, apiKey: string, model: string, input: GenerateInput, images: string[]): Promise<Response> {
+    const form = new FormData();
+    form.set('model', model);
+    form.set('prompt', input.prompt);
+    const size = model === 'gpt-image-2' ? input.size : ratioSize(input.size, ':');
+    if (size && size !== 'auto') form.set('size', size);
+    if (model === 'gpt-image-2' && input.quality) form.set('quality', input.quality);
+    for (const [index, image] of images.entries()) {
+      const match = /^data:([^;,]+);base64,(.+)$/s.exec(image);
+      if (match?.[1] && match[2]) {
+        form.append('input_reference', new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
+      } else if (/^https?:\/\//i.test(image)) {
+        form.append('input_reference', image);
+      } else {
+        throw new Error('Invalid reference image.');
+      }
+    }
+    return this.fetchImpl(`${apiBase(baseUrl)}/v1/videos`, {
+      method: 'POST', headers: { authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS),
+    });
+  }
+
   private async tuziLegacyEdit(baseUrl: string, apiKey: string, model: string, input: GenerateInput, images: string[]): Promise<Response> {
     const form = new FormData(); form.set('model', model); form.set('prompt', input.prompt); form.set('n', String(input.n ?? 1)); form.set('response_format', 'b64_json');
     if (input.size) form.set('size', input.size); if (input.quality) form.set('quality', input.quality);
@@ -153,7 +184,7 @@ export class EsseApiClient {
       if (!match?.[1] || !match[2]) throw new Error('Invalid local reference image.');
       form.append('image', new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
     }
-    return this.fetchImpl(`${baseUrl}/async/v1/images/edits`, { method: 'POST', headers: { authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS) });
+    return this.fetchImpl(`${apiBase(baseUrl)}/async/v1/images/edits`, { method: 'POST', headers: { authorization: `Bearer ${apiKey}` }, body: form, signal: AbortSignal.timeout(TUZI_SUBMIT_TIMEOUT_MS) });
   }
 
   private async pollTuziTask(
@@ -174,8 +205,8 @@ export class EsseApiClient {
       let body: unknown;
       try {
         const queryUrl = task.protocol === 'tuzi-video'
-          ? `${profile.baseUrl}/v1/videos/${encodeURIComponent(task.id)}`
-          : `${profile.baseUrl}/get-async?id=${encodeURIComponent(task.id)}`;
+          ? `${apiBase(profile.baseUrl)}/v1/videos/${encodeURIComponent(task.id)}`
+          : `${apiBase(profile.baseUrl)}/get-async?id=${encodeURIComponent(task.id)}`;
         response = await this.fetchImpl(queryUrl, {
           headers: { authorization: `Bearer ${apiKey}` },
           signal: hooks.signal ? AbortSignal.any([hooks.signal, AbortSignal.timeout(TUZI_POLL_TIMEOUT_MS)]) : AbortSignal.timeout(TUZI_POLL_TIMEOUT_MS),
@@ -324,8 +355,31 @@ function providerTaskTimeout(task: ProviderTaskState, cause?: unknown): EsseApiE
   }, cause ? { cause } : undefined);
 }
 
-function isVideoModel(model: string): boolean {
-  return model === 'gpt-image-2' || model.startsWith('gemini-3.1-flash-image-preview');
+function submissionProtocol(model: string): 'sync' | 'video' | 'legacy' {
+  if (model === 'gpt-image-2' || /^gemini-3-pro-image-preview(?:-(?:2k|4k))?-async$/.test(model)) return 'video';
+  if (model === 'gemini-3.1-flash-image-preview' || /^gemini-3-pro-image-preview(?:-(?:hd|2k|4k))?$/.test(model)
+    || /^nano-banana-2(?:-(?:hd|2k|4k))?$/.test(model) || /^gemini-2\.5-flash-image(?:-preview)?$/.test(model)) return 'sync';
+  return 'legacy';
+}
+
+function apiBase(baseUrl: string): string {
+  return baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '');
+}
+
+function ratioSize(size: string | undefined, separator: 'x' | ':'): string | undefined {
+  if (!size || size === 'auto') return undefined;
+  const match = /^(\d+)[x:](\d+)$/.exec(size);
+  if (!match) return size;
+  let width = Number(match[1]);
+  let height = Number(match[2]);
+  if (width > 32 || height > 32) {
+    let a = width;
+    let b = height;
+    while (b) [a, b] = [b, a % b];
+    width /= a;
+    height /= a;
+  }
+  return `${width}${separator}${height}`;
 }
 
 function isTransientTaskQueryStatus(status: number): boolean {
@@ -353,6 +407,7 @@ function providerTaskStatus(value: unknown): ProviderTaskStatus | undefined {
   const clean = value.trim().toLowerCase();
   if (clean === 'succeeded') return 'completed';
   if (clean === 'failed') return 'failure';
+  if (clean === 'processing') return 'in_progress';
   return ['not_start', 'submitted', 'queued', 'in_progress', 'completed', 'failure', 'expired'].includes(clean)
     ? clean as ProviderTaskStatus
     : undefined;
