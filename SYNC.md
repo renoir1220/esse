@@ -115,3 +115,8 @@ The initial import deliberately excludes the private commercial server, user acc
 - shared domain/provider/UI packages;
 - physical-device macOS UI validation beyond GitHub-hosted arm64/x64 packaging and smoke checks;
 - a true standalone application under `apps/standalone`.
+# 2026-09-30 reliability recovery
+
+The Sidecar now deduplicates concurrent create/append/modify requests before asynchronous model resolution and persists request fingerprints to reject conflicting replays. Reference imports share the image-library write queue. Provider request IDs remain metadata; new output folders use local UUIDs, and unsafe historical library paths are quarantined while healthy history is retained.
+
+Both the Plugin and Sidecar catch initial job-persistence failures inside the job lifecycle. Sidecar running/retrieval bookkeeping is released even if final persistence fails; Plugin scheduler promises observe failures without unhandled rejection. Offline failure injection covers start, provider-task update, and completion, followed by another successful queued request.

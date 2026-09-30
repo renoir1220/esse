@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { access, copyFile, link, mkdir, readFile, rename, stat, unlink, writeFile } from 'node:fs/promises';
+import { access, copyFile, link, mkdir, readFile, rename, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { decodeImageBase64, detectImageFormat, MAX_IMAGE_BYTES } from './image-format';
 import { downloadRemoteImage } from './remote-image-download';
@@ -107,9 +107,11 @@ export class ImageStore {
 
     const now = new Date();
     const month = now.toISOString().slice(0, 7);
-    const batchDir = path.join(this.outputDir, month, input.requestId);
+    const batchDir = this.resolveRelative(path.join(month, randomUUID()));
     await mkdir(batchDir, { recursive: true });
     const stored: StoredImage[] = [];
+    const createdPaths: string[] = [];
+    try {
     for (const [index, item] of input.items.entries()) {
       const bytes = item.b64_json
         ? decodeImageBase64(item.b64_json)
@@ -120,7 +122,8 @@ export class ImageStore {
       if (!format) throw new Error('Provider output is not a recognized image file.');
       const id = randomUUID();
       const fileName = `${String(index + 1).padStart(2, '0')}-${id}.${format.extension}`;
-      const fullPath = path.join(batchDir, fileName);
+      const fullPath = this.resolveRelative(path.relative(this.outputDir, path.join(batchDir, fileName)));
+      createdPaths.push(fullPath);
       await writeFile(fullPath, bytes, { mode: 0o600 });
       stored.push({
         id,
@@ -133,10 +136,17 @@ export class ImageStore {
         createdAt: now.toISOString(),
       });
     }
-    library.images.unshift(...stored);
-    await this.writeLibrary(library);
+    input.signal?.throwIfAborted();
+    const nextLibrary: LibraryFile = { version: 1, images: [...stored, ...library.images] };
+    await this.writeLibrary(nextLibrary);
+    this.libraryPromise = Promise.resolve(nextLibrary);
     this.addToIndex(stored);
     return stored.map((image) => this.savedImage(image, this.resolveRelative(image.relativePath)));
+    } catch (error) {
+      await Promise.all(createdPaths.map((filePath) => unlink(filePath).catch(() => undefined)));
+      await rmdir(batchDir).catch(() => undefined);
+      throw error;
+    }
   }
 
   async pathForId(id: string): Promise<string> {
@@ -207,6 +217,12 @@ export class ImageStore {
     model: string;
     hidden?: boolean;
   }): Promise<SavedImage> {
+    const task = this.writeQueue.then(() => this.importFileOnce(input));
+    this.writeQueue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+
+  private async importFileOnce(input: { sourcePath: string; requestId: string; prompt: string; model: string; hidden?: boolean }): Promise<SavedImage> {
     const existing = (await this.readLibrary()).images.find((image) => image.requestId === input.requestId);
     if (existing) {
       const fullPath = this.resolveRelative(existing.relativePath);
@@ -222,9 +238,10 @@ export class ImageStore {
     if (!format) throw new Error('Generated file is not a supported image.');
     const now = new Date();
     const id = randomUUID();
-    const relativePath = path.join(now.toISOString().slice(0, 7), input.requestId, `01-${id}.${format.extension}`);
+    const relativePath = path.join(now.toISOString().slice(0, 7), randomUUID(), `01-${id}.${format.extension}`);
     const destination = this.resolveRelative(relativePath);
     await mkdir(path.dirname(destination), { recursive: true });
+    try {
     await copyFile(source, destination);
     const stored: StoredImage = {
       id,
@@ -237,9 +254,17 @@ export class ImageStore {
       createdAt: now.toISOString(),
       hidden: input.hidden,
     };
-    await this.updateLibrary((library) => { library.images.unshift(stored); });
+    const library = await this.readLibrary();
+    const nextLibrary: LibraryFile = { version: 1, images: [stored, ...library.images] };
+    await this.writeLibrary(nextLibrary);
+    this.libraryPromise = Promise.resolve(nextLibrary);
     this.addToIndex([stored]);
     return this.savedImage(stored, destination);
+    } catch (error) {
+      await unlink(destination).catch(() => undefined);
+      await rmdir(path.dirname(destination)).catch(() => undefined);
+      throw error;
+    }
   }
 
   async trash(ids: string[]): Promise<string[]> {
@@ -319,6 +344,9 @@ export class ImageStore {
   }
 
   private resolveRelative(relative: string): string {
+    if (typeof relative !== 'string' || path.posix.isAbsolute(relative) || path.win32.isAbsolute(relative)
+      || relative.split(/[\\/]/).some((segment) => segment === '..')) throw new Error('Image path escapes the Esse output directory.');
+    relative = relative.replace(/[\\/]/g, path.sep);
     const fullPath = path.resolve(this.outputDir, relative);
     const relation = path.relative(this.outputDir, fullPath);
     if (!relation || relation === '.') throw new Error('Image path must identify a file.');
@@ -358,6 +386,21 @@ export class ImageStore {
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
       library = { version: 1, images: [] };
+    }
+    const rejected: StoredImage[] = [];
+    const valid = library.images.filter((image) => {
+      try {
+        this.resolveRelative(image.relativePath);
+        for (const batchLink of image.batchLinks ?? []) this.resolveRelative(batchLink);
+        return true;
+      } catch { rejected.push(image); return false; }
+    });
+    if (rejected.length) {
+      const quarantineDirectory = path.join(this.dataDir, '.quarantine');
+      await mkdir(quarantineDirectory, { recursive: true });
+      await writeFile(path.join(quarantineDirectory, `library-invalid-${randomUUID()}.json`), JSON.stringify({ version: 1, images: rejected }, null, 2), { encoding: 'utf8', mode: 0o600 });
+      library = { version: 1, images: valid };
+      await this.writeLibrary(library);
     }
     this.reindex(library);
     return library;

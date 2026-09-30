@@ -10,8 +10,34 @@ import { BatchStore } from "../src/storage/batch-store.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
 import { BatchManager } from "../src/jobs/batch-manager.js";
 import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
+import type { BatchRecord } from "../src/types.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
+
+for (const stage of ["start", "task", "finish"] as const) test(`provider queue continues after ${stage} persistence failure`, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-persistence-failure-"));
+  const save = BatchStore.prototype.save;
+  let injected = false;
+  t.mock.method(BatchStore.prototype, "save", async function (this: BatchStore, batch: BatchRecord) {
+    const job = batch.jobs[0]!;
+    const matches = stage === "start" ? job.status === "running" && !job.providerTask
+      : stage === "task" ? job.status === "running" && Boolean(job.providerTask) : job.status === "succeeded";
+    if (!injected && matches) { injected = true; throw new Error(`injected ${stage} persistence failure`); }
+    return save.call(this, batch);
+  });
+  try {
+    const { manager } = await createManager(root, async () => Response.json({ data: [{ b64_json: onePixelPng }] }));
+    const created = await manager.create({ offeringId: "offer-default", prompt: "failure injection", requestKey: `failure-${stage}` });
+    if (stage === "finish") await assert.rejects(waitForBatch(manager, created.id), /injected finish/);
+    else await waitForBatch(manager, created.id);
+    await manager.waitForPersistence(created.id).catch((error: Error) => assert.match(error.message, /injected finish/));
+    assert(injected);
+    assert.notEqual(manager.get(created.id).jobs[0]?.status, "running");
+    const next = await manager.create({ offeringId: "offer-default", prompt: "queue continues", requestKey: `after-${stage}` });
+    assert.equal((await waitForBatch(manager, next.id)).succeeded, 1);
+    await manager.waitForPersistence(next.id);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("persistent local batch respects profile concurrency and writes unique output files", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-batch-"));

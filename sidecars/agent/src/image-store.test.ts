@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -11,6 +11,66 @@ afterEach(async () => {
 });
 
 describe('desktop image store', () => {
+  it('serializes concurrent reference imports before writing files or library entries', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-import-concurrency-'));
+    temporaryDirectories.push(directory);
+    const sourcePath = path.join(directory, 'reference.png');
+    await writeFile(sourcePath, testPng('reference'));
+    const store = new ImageStore(directory);
+    const input = { sourcePath, requestId: 'one-reference-import', prompt: 'reference', model: 'local' };
+    const saved = await Promise.all([store.importFile(input), store.importFile(input), store.importFile(input)]);
+    expect(new Set(saved.map((image) => image.id)).size).toBe(1);
+    expect(await store.list()).toHaveLength(1);
+  });
+
+  it.each(['../escape', '../../outside', '/absolute/path', 'C:\\outside\\image', '..\\escape', 'arbitrary/provider:id'])('uses a local UUID directory for request metadata %s', async (requestId) => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-output-containment-'));
+    temporaryDirectories.push(directory);
+    const store = new ImageStore(directory);
+    const [saved] = await store.saveBatch({ requestId, prompt: 'safe output', model: 'test', items: [{ b64_json: testPng('safe').toString('base64') }] });
+    expect(saved.requestId).toBe(requestId);
+    const fullPath = await store.pathForId(saved.id);
+    const relative = path.relative(store.outputDir, fullPath);
+    expect(relative.startsWith('..')).toBe(false);
+    expect(path.basename(path.dirname(fullPath))).toMatch(/^[a-f0-9-]{36}$/);
+    const sourcePath = path.join(directory, 'reference.png');
+    await writeFile(sourcePath, testPng('imported'));
+    const imported = await store.importFile({ sourcePath, requestId: `${requestId}-import`, prompt: 'reference', model: 'local' });
+    expect(path.basename(path.dirname(await store.pathForId(imported.id)))).toMatch(/^[a-f0-9-]{36}$/);
+  });
+
+  it('removes partially written originals after an item or library save fails and can retry', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-output-save-failure-'));
+    temporaryDirectories.push(directory);
+    const store = new ImageStore(directory);
+    const input = { requestId: 'save-failure', prompt: 'test', model: 'test', items: [{ b64_json: testPng('first').toString('base64') }] };
+    await expect(store.saveBatch({ ...input, items: [...input.items, { b64_json: 'not-an-image' }] })).rejects.toThrow();
+    const month = new Date().toISOString().slice(0, 7);
+    expect(await readdir(path.join(store.outputDir, month))).toEqual([]);
+    await mkdir(path.join(directory, 'library.json.tmp'));
+    await expect(store.saveBatch(input)).rejects.toThrow();
+    expect(await readdir(path.join(store.outputDir, month))).toEqual([]);
+    expect(await store.list()).toEqual([]);
+    await rm(path.join(directory, 'library.json.tmp'), { recursive: true });
+    const [saved] = await store.saveBatch(input);
+    expect((await store.list()).map((image) => image.id)).toEqual([saved.id]);
+  });
+
+  it('quarantines unsafe historical library entries while retaining healthy image history', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-library-quarantine-'));
+    temporaryDirectories.push(directory);
+    const store = new ImageStore(directory);
+    const [healthy] = await store.saveBatch({ requestId: 'healthy', prompt: 'safe', model: 'test', items: [{ b64_json: testPng('healthy').toString('base64') }] });
+    const library = JSON.parse(await readFile(path.join(directory, 'library.json'), 'utf8'));
+    library.images.push(...['../outside.png', '/outside.png', 'C:\\outside.png', '..\\outside.png'].map((relativePath, index) => ({ ...library.images[0], id: `bad-${index}`, relativePath })));
+    await writeFile(path.join(directory, 'library.json'), JSON.stringify(library));
+    const restored = new ImageStore(directory);
+    expect((await restored.list()).map((image) => image.id)).toEqual([healthy.id]);
+    expect(await readdir(path.join(directory, '.quarantine'))).toHaveLength(1);
+    const retained = JSON.parse(await readFile(path.join(directory, 'library.json'), 'utf8'));
+    expect(retained.images.map((image: { id: string }) => image.id)).toEqual([healthy.id]);
+  });
+
   it('persists one original and returns a validated local media URL', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-desktop-test-'));
     temporaryDirectories.push(directory);

@@ -46,6 +46,7 @@ export type BatchManagerChange =
 export class BatchManager {
   private readonly batches = new Map<string, BatchRecord>();
   private readonly createKeys = new Map<string, string>();
+  private readonly requestOperations = new Map<string, { fingerprint: string; promise: Promise<unknown> }>();
   private readonly activeJobs = new Set<string>();
   private readonly retrievalSignals = new Map<string, AbortSignal>();
   private readonly backgroundTasks = new Set<Promise<void>>();
@@ -146,9 +147,16 @@ export class BatchManager {
   }
 
   async create(input: CreateBatchInput): Promise<BatchSnapshot> {
+    return this.withRequestKey(`create:${input.requestKey}`, input, () => this.createOnce(input));
+  }
+
+  private async createOnce(input: CreateBatchInput): Promise<BatchSnapshot> {
     assertRequestKey(input.requestKey);
     const existingId = this.createKeys.get(input.requestKey);
-    if (existingId) return this.get(existingId);
+    if (existingId) {
+      assertMatchingFingerprint(this.requiredBatch(existingId).requestFingerprint, requestFingerprint(input));
+      return this.get(existingId);
+    }
     const definitions = normalizedJobs(input);
     if (definitions.length > MAX_BATCH_IMAGES) throw new Error(`A batch may contain at most ${MAX_BATCH_IMAGES} images.`);
     const offering = await this.resolveOffering(input.offeringId);
@@ -157,6 +165,7 @@ export class BatchManager {
     const batch: BatchRecord = {
       id: randomUUID(),
       requestKey: input.requestKey,
+      requestFingerprint: requestFingerprint(input),
       appendKeys: {},
       modificationKeys: {},
       mergeKeys: {},
@@ -187,10 +196,17 @@ export class BatchManager {
   }
 
   async append(input: AppendBatchInput): Promise<{ batch: BatchSnapshot; appendedJobIds: string[] }> {
+    return this.withRequestKey(`append:${input.batchId}:${input.requestKey}`, input, () => this.appendOnce(input));
+  }
+
+  private async appendOnce(input: AppendBatchInput): Promise<{ batch: BatchSnapshot; appendedJobIds: string[] }> {
     assertRequestKey(input.requestKey);
     const batch = this.requiredBatch(input.batchId);
     const existing = batch.appendKeys[input.requestKey];
-    if (existing) return { batch: snapshot(batch), appendedJobIds: existing };
+    if (existing) {
+      assertMatchingFingerprint(batch.appendFingerprints?.[input.requestKey], requestFingerprint(input));
+      return { batch: snapshot(batch), appendedJobIds: existing };
+    }
     if (!input.jobs.length || input.jobs.length > MAX_BATCH_IMAGES) throw new Error('Provide between 1 and 50 jobs.');
     for (const job of input.jobs) assertReferenceCount(job.referenceImageIds ?? []);
     if (batch.jobs.length + input.jobs.length > MAX_BATCH_IMAGES) throw new Error(`A batch may contain at most ${MAX_BATCH_IMAGES} images.`);
@@ -209,10 +225,13 @@ export class BatchManager {
       quality: input.quality,
       now,
     }));
-    batch.jobs.push(...appended);
-    batch.appendKeys[input.requestKey] = appended.map((job) => job.id);
+    const previous = { jobs: batch.jobs, appendKeys: batch.appendKeys, appendFingerprints: batch.appendFingerprints, updatedAt: batch.updatedAt };
+    batch.jobs = [...batch.jobs, ...appended];
+    batch.appendKeys = { ...batch.appendKeys, [input.requestKey]: appended.map((job) => job.id) };
+    batch.appendFingerprints = { ...batch.appendFingerprints, [input.requestKey]: requestFingerprint(input) };
     batch.updatedAt = now;
-    await this.options.store.save(batch);
+    try { await this.options.store.save(batch); }
+    catch (error) { Object.assign(batch, previous); throw error; }
     this.activeBatchId = batch.id;
     this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: appended.flatMap((job) => job.referenceImageIds) });
     this.schedule();
@@ -220,10 +239,17 @@ export class BatchManager {
   }
 
   async modify(input: ModifyBatchInput): Promise<{ batch: BatchSnapshot; modifiedJobIds: string[] }> {
+    return this.withRequestKey(`modify:${input.batchId}:${input.requestKey}`, input, () => this.modifyOnce(input));
+  }
+
+  private async modifyOnce(input: ModifyBatchInput): Promise<{ batch: BatchSnapshot; modifiedJobIds: string[] }> {
     assertRequestKey(input.requestKey);
     const batch = this.requiredBatch(input.batchId);
     const existing = batch.modificationKeys[input.requestKey];
-    if (existing) return { batch: snapshot(batch), modifiedJobIds: existing };
+    if (existing) {
+      assertMatchingFingerprint(batch.modificationFingerprints?.[input.requestKey], requestFingerprint(input));
+      return { batch: snapshot(batch), modifiedJobIds: existing };
+    }
     const imageIds = unique(input.imageIds);
     if (!imageIds.length || imageIds.length > MAX_BATCH_IMAGES) throw new Error('Select between 1 and 50 images.');
     const additionalReferenceImageIds = unique(input.referenceImageIds ?? []);
@@ -291,6 +317,7 @@ export class BatchManager {
     }
     const ids = scheduled.map((job) => job.id);
     batch.modificationKeys[input.requestKey] = ids;
+    batch.modificationFingerprints = { ...batch.modificationFingerprints, [input.requestKey]: requestFingerprint(input) };
     batch.updatedAt = now;
     await this.options.store.save(batch);
     this.activeBatchId = batch.id;
@@ -501,10 +528,10 @@ export class BatchManager {
     if (job.status === 'queued') beginJob(job, job.offering || batch.offering, 'agent');
     if (job.status !== 'running') throw new Error('Agent job is not running.');
     batch.updatedAt = new Date().toISOString();
-    await this.options.store.save(batch);
-    this.changed({ type: 'upsert', batch: snapshot(batch) });
     let changedImageId: string | undefined;
     try {
+      await this.options.store.save(batch);
+      this.changed({ type: 'upsert', batch: snapshot(batch) });
       const saved = await this.options.imageStore.importFile({
         sourcePath: outputPath,
         requestId: `agent-${createHash('sha256').update(job.requestKey).digest('hex')}`,
@@ -518,8 +545,8 @@ export class BatchManager {
       throw error;
     } finally {
       batch.updatedAt = new Date().toISOString();
-      await this.options.store.save(batch);
-      this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: changedImageId ? [changedImageId] : undefined });
+      try { await this.options.store.save(batch); }
+      finally { this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: changedImageId ? [changedImageId] : undefined }); }
     }
     return snapshot(batch);
   }
@@ -570,12 +597,12 @@ export class BatchManager {
     if (resuming) resumeJob(job, offering);
     else beginJob(job, offering, 'provider');
     batch.updatedAt = new Date().toISOString();
-    await this.options.store.save(batch);
-    this.changed({ type: 'upsert', batch: snapshot(batch) });
     let providerSubmitted = resuming;
     let changedImageId: string | undefined;
     const retrievalSignal = this.retrievalSignals.get(jobKey);
     try {
+      await this.options.store.save(batch);
+      this.changed({ type: 'upsert', batch: snapshot(batch) });
       retrievalSignal?.throwIfAborted();
       const client = await this.options.createApiClient();
       const input = {
@@ -622,12 +649,27 @@ export class BatchManager {
       finishFailed(job, retrievalSignal?.aborted ? new Error('本次取回在 1 分钟内没有完成，可以稍后再次取回。') : error, chargeState, retryable);
     } finally {
       batch.updatedAt = new Date().toISOString();
-      await this.options.store.save(batch);
-      this.activeJobs.delete(jobKey);
-      this.retrievalSignals.delete(jobKey);
-      this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: changedImageId ? [changedImageId] : undefined });
-      this.schedule();
+      try { await this.options.store.save(batch); }
+      finally {
+        this.activeJobs.delete(jobKey);
+        this.retrievalSignals.delete(jobKey);
+        this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: changedImageId ? [changedImageId] : undefined });
+        this.schedule();
+      }
     }
+  }
+
+  private async withRequestKey<T>(key: string, input: unknown, operation: () => Promise<T>): Promise<T> {
+    const fingerprint = requestFingerprint(input);
+    const existing = this.requestOperations.get(key);
+    if (existing) {
+      assertMatchingFingerprint(existing.fingerprint, fingerprint);
+      return existing.promise as Promise<T>;
+    }
+    const promise = Promise.resolve().then(operation);
+    this.requestOperations.set(key, { fingerprint, promise });
+    try { return await promise; }
+    finally { if (this.requestOperations.get(key)?.promise === promise) this.requestOperations.delete(key); }
   }
 
   private schedule(): void {
@@ -994,6 +1036,17 @@ function assertLegacyEstimate(offering: OfferingSummary, count: number, approved
 
 function assertRequestKey(value: string): void {
   if (!/^[A-Za-z0-9._:-]{8,200}$/.test(value)) throw new Error('requestKey must contain 8 to 200 letters, numbers, dots, underscores, colons, or hyphens.');
+}
+
+function requestFingerprint(value: unknown): string {
+  const stable = (entry: unknown): unknown => Array.isArray(entry) ? entry.map(stable)
+    : entry && typeof entry === 'object' ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => [key, stable(child)]))
+      : entry;
+  return createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');
+}
+
+function assertMatchingFingerprint(stored: string | undefined, incoming: string): void {
+  if (stored && stored !== incoming) throw new Error('requestKey was already used with different arguments.');
 }
 
 function derivedRequestKey(root: string, suffix: string): string {

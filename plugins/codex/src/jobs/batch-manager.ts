@@ -219,9 +219,9 @@ export class BatchManager {
       createdAt: now,
       updatedAt: now
     };
+    await this.store.save(batch);
     this.batches.set(id, batch);
     if (input.requestKey) this.requestKeys.set(input.requestKey, id);
-    await this.store.save(batch);
     this.activate(id);
     if (!isAgentGeneration(resolved)) for (const job of jobs) this.schedule(batch, job, resolved);
     return snapshot(batch);
@@ -753,9 +753,9 @@ export class BatchManager {
       errorOrigin: undefined
     });
     batch.updatedAt = new Date().toISOString();
-    await this.persist(batch);
     try {
       const previousOutputs = job.generationInputPaths?.length ? job.generationInputPaths : job.generationInputPath ? [job.generationInputPath] : [];
+      await this.persist(batch);
       job.outputPath = await importGeneratedImage({ sourcePath: imagePath, outputDirectory: batch.outputDirectory, sourceName: job.name });
       for (const previousOutput of previousOutputs) {
         if (isInside(batch.outputDirectory, previousOutput)) await rm(previousOutput, { force: true }).catch(() => undefined);
@@ -809,6 +809,8 @@ export class BatchManager {
     void semaphore.use(async () => {
       if (job.status !== "queued") return;
       await this.runJob(batch, job, resolved);
+    }).catch((error: unknown) => {
+      process.stderr.write(`[esse] batch persistence failed: ${error instanceof Error ? error.message : String(error)}\n`);
     });
   }
 
@@ -827,8 +829,8 @@ export class BatchManager {
       errorOrigin: undefined
     });
     batch.updatedAt = new Date().toISOString();
-    await this.persist(batch);
     try {
+      await this.persist(batch);
       const adapter = await this.registry.adapterFor(resolved.profile);
       const generationInputs = generationInputsFor(job);
       const images = job.providerTask ? [] : await imageFilesToDataUrls(generationInputs);

@@ -189,6 +189,9 @@ export interface BatchRecord {
   id: string;
   parentBatchId?: string;
   requestKey?: string;
+  requestFingerprint?: string;
+  appendFingerprints?: Record<string, string>;
+  modificationFingerprints?: Record<string, string>;
   appendKeys: Record<string, string[]>;
   modificationKeys: Record<string, string[]>;
   mergeKeys: Record<string, string[]>;

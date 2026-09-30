@@ -17,6 +17,67 @@ afterEach(async () => {
 });
 
 describe('Esse batch manager', () => {
+  it('deduplicates concurrent create and append before offering resolution and rejects conflicting keys', async () => {
+    const fixture = await fixtureDirectory();
+    const api = fakeApi();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const originalOfferings = api.offerings;
+    const offerings = vi.spyOn(api, 'offerings').mockImplementation(async () => { await gate; return originalOfferings(); });
+    const manager = managerFor(fixture, api, { canRun: async () => false });
+    await manager.initialize();
+    const input = { prompt: 'one durable batch', requestKey: 'concurrent-create-key' };
+    const pending = [manager.create(input), manager.create({ ...input })];
+    await expect(manager.create({ ...input, prompt: 'different' })).rejects.toThrow(/different arguments/);
+    release();
+    const [first, second] = await Promise.all(pending);
+    expect(first.id).toBe(second.id);
+    expect(offerings).toHaveBeenCalledTimes(1);
+    expect(manager.list()).toHaveLength(1);
+    const append = { batchId: first.id, requestKey: 'concurrent-append-key', jobs: [{ prompt: 'one appended job' }] };
+    const appended = await Promise.all([manager.append(append), manager.append({ ...append })]);
+    expect(appended[0].appendedJobIds).toEqual(appended[1].appendedJobIds);
+    expect(manager.get(first.id).jobs).toHaveLength(2);
+    await expect(manager.append({ ...append, jobs: [{ prompt: 'different' }] })).rejects.toThrow(/different arguments/);
+    const restarted = managerFor(fixture, api, { canRun: async () => false });
+    await restarted.initialize();
+    await expect(restarted.create({ ...input, prompt: 'different after restart' })).rejects.toThrow(/different arguments/);
+    await expect(restarted.append({ ...append, jobs: [{ prompt: 'different after restart' }] })).rejects.toThrow(/different arguments/);
+  });
+
+  it.each(['start', 'task', 'finish'])('releases running bookkeeping when %s persistence fails', async (stage) => {
+    const fixture = await fixtureDirectory();
+    const api = fakeApi(1);
+    const now = new Date().toISOString();
+    api.generate = vi.fn(async (_input?: unknown, requestKey = 'generated', hooks?: ProviderTaskHooks) => {
+      await hooks?.onTask?.({ id: 'accepted-task', protocol: 'tuzi-video', status: 'in_progress', submittedAt: now, updatedAt: now });
+      return generatedResult(requestKey);
+    });
+    let canRun = false;
+    const manager = managerFor(fixture, api, { canRun: async () => canRun });
+    await manager.initialize();
+    const created = await manager.create({ prompt: 'failure injection', requestKey: `failure-${stage}-key` });
+    const save = fixture.batchStore.save.bind(fixture.batchStore);
+    let injected = false;
+    vi.spyOn(fixture.batchStore, 'save').mockImplementation(async (batch) => {
+      const job = batch.jobs[0];
+      const matches = stage === 'start' ? job.status === 'running' && !job.providerTask
+        : stage === 'task' ? job.status === 'running' && Boolean(job.providerTask) : job.status === 'succeeded';
+      if (!injected && matches) { injected = true; throw new Error(`injected ${stage} save failure`); }
+      await save(batch);
+    });
+    canRun = true;
+    manager.resume();
+    if (stage === 'finish') await expect(manager.waitForIdle()).rejects.toThrow(/injected finish/);
+    else await manager.waitForIdle();
+    expect(injected).toBe(true);
+    expect(manager.get(created.id).jobs[0].status).not.toBe('running');
+    const next = await manager.create({ prompt: 'queue continues', requestKey: `after-${stage}-failure-key` });
+    await manager.waitForIdle();
+    expect(manager.get(next.id).jobs[0].status).toBe('succeeded');
+    if (stage === 'start') expect(api.generate).toHaveBeenCalledTimes(1);
+  });
+
   it('publishes a batch-local change after durable acceptance', async () => {
     const fixture = await fixtureDirectory();
     const changes: BatchManagerChange[] = [];
