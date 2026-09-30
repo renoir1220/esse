@@ -32,7 +32,7 @@ Esse is the durable owner of batch state, original files, retries, and history. 
     - Call `modify_selected_images` once with the exact `batchId` and `imageIds`. Never create a replacement batch. Current results update in place while prior versions remain as `图1-1`, `图1-2`, and so on; selecting a backup or failed source creates a new job in the same batch from that exact asset.
     - Omit `offeringId` to reuse the batch model unless the user explicitly names another, then follow the managed or Agent-owned execution branch above.
 13. Delete only explicitly authorized exact image IDs with `delete_esse_images`. Deleting a current image also deletes its preserved versions. Do not delete queued/running images or interpret image deletion as permission to delete a batch.
-14. Combine distinct terminal batches only with `merge_image_batches`, one exact target and exact source IDs, and a stable `requestKey`. Preserve source batches unless the user explicitly requests `deleteSourceBatches: true`. Do not use merge for append work.
+14. Combine distinct terminal batches only with `merge_image_batches`, one exact target and exact source IDs, and a stable `requestKey`. Merge moves jobs, images and history into the target, then removes the source batches after durable acceptance. The legacy `deleteSourceBatches` argument does not change this behavior. Do not use merge for append work.
 
 ## Guardrails
 

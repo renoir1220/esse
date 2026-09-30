@@ -210,6 +210,25 @@ export class ImageStore {
     return batchFolder;
   }
 
+  async removeBatchFolder(batchId: string, batchTitle: string): Promise<void> {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(batchId)) throw new Error('Invalid batch ID.');
+    const relativeFolder = path.join('batches', `${safeFileStem(batchTitle)}-${batchId.slice(0, 8)}`);
+    await this.updateLibrary(async (library) => {
+      for (const image of library.images) {
+        const retained: string[] = [];
+        for (const batchLink of image.batchLinks ?? []) {
+          if (path.dirname(batchLink.replace(/[\\/]/g, path.sep)) !== relativeFolder) { retained.push(batchLink); continue; }
+          await unlink(this.resolveRelative(batchLink)).catch((error: NodeJS.ErrnoException) => { if (error.code !== 'ENOENT') throw error; });
+        }
+        image.batchLinks = retained;
+      }
+    });
+    this.visibleCache = undefined;
+    await rmdir(this.resolveRelative(relativeFolder)).catch((error: NodeJS.ErrnoException) => {
+      if (!['ENOENT', 'ENOTEMPTY', 'EEXIST'].includes(error.code ?? '')) throw error;
+    });
+  }
+
   async importFile(input: {
     sourcePath: string;
     requestId: string;

@@ -439,7 +439,7 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "merge_image_batches", {
     title: "Merge Esse image batches",
-    description: "Copies every image job from terminal source batches into one terminal target batch. Source batches are preserved by default; set deleteSourceBatches only when the user explicitly asks to remove them. The merged target cannot exceed 50 images.",
+    description: "Moves every image job and its history from terminal source batches into one terminal target batch, then removes the source batches after durable acceptance. The merged target cannot exceed 50 images. deleteSourceBatches is retained only for compatibility and does not change move semantics.",
     inputSchema: {
       targetBatchId: z.string().min(1),
       sourceBatchIds: z.array(z.string().min(1)).min(1).max(50),
@@ -451,8 +451,7 @@ export function createLocalEsseServer(options: {
     _meta: headlessToolMeta()
   }, async (input) => {
     const batch = await options.batches.mergeBatches(input);
-    const sourceAction = input.deleteSourceBatches ? "，源批次已按要求删除" : "，源批次已保留";
-    return batchResult(batch, `已将 ${input.sourceBatchIds.length} 个批次合并到“${batch.title}”${sourceAction}。`, true);
+    return batchResult(batch, `已将 ${input.sourceBatchIds.length} 个批次合并到“${batch.title}”，源批次已移除。`, true);
   });
 
   registerUiTools(server, options, updateChecker, originalImages);

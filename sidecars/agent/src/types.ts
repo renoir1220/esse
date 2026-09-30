@@ -192,6 +192,9 @@ export interface BatchRecord {
   requestFingerprint?: string;
   appendFingerprints?: Record<string, string>;
   modificationFingerprints?: Record<string, string>;
+  createAliases?: Record<string, string | null>;
+  mergeFingerprints?: Record<string, string>;
+  mergeCleanup?: Array<{ id: string; title: string }>;
   appendKeys: Record<string, string[]>;
   modificationKeys: Record<string, string[]>;
   mergeKeys: Record<string, string[]>;

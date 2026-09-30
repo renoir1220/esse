@@ -160,6 +160,8 @@ export interface BatchRecord {
   modificationFingerprints?: Record<string, string>;
   mergeKeys?: Record<string, string[]>;
   mergeFingerprints?: Record<string, string>;
+  createAliases?: Record<string, string | null>;
+  mergeCleanup?: Array<{ id: string; outputDirectory: string; managedPaths: string[] }>;
   title: string;
   prompt: string;
   inputDirectory?: string;

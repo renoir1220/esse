@@ -35,7 +35,7 @@ Use the local Esse MCP tools. Let Esse resolve the user's configured default off
    - A current successful result is updated in place and its previous version is kept as `图1-1`, `图1-2`, and so on. A selected backup or failed-job source creates a new job inside the same batch using that exact image; never substitute a different image.
    Pass `offeringId` only when the user explicitly names a model or selected it in the Esse widget; otherwise omit it so Esse reuses the batch model. Then follow the normal-Provider or `agent-generation` branch above.
 13. When the user explicitly asks to delete images, resolve exact current-image or backup IDs and call `delete_esse_images`. Deleting a current image also deletes its preserved versions. Do not delete queued or running images, and do not treat deleting an image as permission to delete its whole batch.
-14. When the user explicitly asks to combine distinct batches, call `merge_image_batches` with one exact `targetBatchId` and the exact `sourceBatchIds`. Do not use merge for append requests. Batches must be terminal and the merged target may contain at most 50 images. Preserve source batches by default; set `deleteSourceBatches: true` only when the user explicitly asks to remove them. Use a stable `requestKey`.
+14. When the user explicitly asks to combine distinct batches, call `merge_image_batches` with one exact `targetBatchId` and the exact `sourceBatchIds`. Do not use merge for append requests. Batches must be terminal and the merged target may contain at most 50 images. Merge moves jobs and history into the target and removes source batches after durable acceptance. The legacy `deleteSourceBatches` argument does not change this behavior. Use a stable `requestKey`.
 
 ## Guardrails
 

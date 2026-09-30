@@ -579,7 +579,7 @@ test("deleting exact images removes managed files without renumbering survivors"
   }
 });
 
-test("merging batches copies managed images and preserves or deletes sources explicitly", async () => {
+test("merging batches moves managed images and always removes source batches", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-merge-"));
   try {
     const { manager } = await createManager(root, async () => new Response(JSON.stringify({ data: [{ b64_json: onePixelPng }] }), { status: 200, headers: { "content-type": "application/json" } }));
@@ -592,9 +592,9 @@ test("merging batches copies managed images and preserves or deletes sources exp
     assert.notEqual(merged.jobs[1]?.id, source.jobs[0]?.id);
     assert.notEqual(merged.jobs[1]?.outputPath, sourceOutput);
     assert(merged.jobs[1]?.outputPath?.startsWith(target.outputDirectory));
-    await access(sourceOutput);
+    await assert.rejects(access(sourceOutput));
     await access(merged.jobs[1]!.outputPath!);
-    assert.equal(manager.get(source.id).id, source.id);
+    assert.throws(() => manager.get(source.id), /Unknown image batch/);
     const duplicate = await manager.mergeBatches({ targetBatchId: target.id, sourceBatchIds: [source.id], requestKey: "merge-once" });
     assert.equal(duplicate.total, 2);
 
@@ -634,6 +634,42 @@ test("batch library pages all records by most recent activity", async () => {
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+for (const stage of ["commit", "cleanup", "receipt"] as const) test(`merged batches recover after ${stage} failure without duplicate jobs`, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-merge-recovery-"));
+  try {
+    const response = async () => Response.json({ data: [{ b64_json: onePixelPng }] });
+    const { manager, paths } = await createManager(root, response);
+    const target = await waitForBatch(manager, (await manager.create({ offeringId: "offer-default", prompt: "target", requestKey: "target-create" })).id);
+    const sourceInput = { offeringId: "offer-default", prompt: "source", requestKey: "source-create" };
+    const source = await waitForBatch(manager, (await manager.create(sourceInput)).id);
+    const save = BatchStore.prototype.save;
+    const remove = BatchStore.prototype.delete;
+    let failed = false;
+    t.mock.method(BatchStore.prototype, "save", async function (this: BatchStore, batch: BatchRecord) {
+      const matches = stage === "commit" ? Boolean(batch.mergeCleanup?.length) : stage === "receipt" && batch.id === target.id && batch.jobs.length === 2 && !batch.mergeCleanup;
+      if (!failed && matches) { failed = true; throw new Error(`injected ${stage} merge failure`); }
+      return save.call(this, batch);
+    });
+    t.mock.method(BatchStore.prototype, "delete", async function (this: BatchStore, id: string) {
+      if (stage === "cleanup" && !failed) { failed = true; throw new Error("injected cleanup merge failure"); }
+      return remove.call(this, id);
+    });
+    const input = { targetBatchId: target.id, sourceBatchIds: [source.id], requestKey: "recover-merge" };
+    await assert.rejects(manager.mergeBatches(input), /injected/);
+    assert.equal(manager.listPage(1, 50).total, stage === "commit" ? 2 : 1);
+    t.mock.restoreAll();
+    const { manager: restarted } = await createManager(root, response);
+    const merged = await restarted.mergeBatches(input);
+    assert.equal(merged.total, 2);
+    assert.equal(restarted.listPage(1, 50).total, 1);
+    assert.equal((await restarted.create(sourceInput)).id, target.id);
+    assert.equal((await new BatchStore(paths.batchesDir).loadAll()).length, 1);
+    await access(merged.jobs[1]!.outputPath!);
+    await restarted.deleteImages(target.id, [merged.jobs[1]!.id]);
+    assert.equal(restarted.get(target.id).total, 1);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 async function createManager(root: string, fetchImpl: typeof fetch) {

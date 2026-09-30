@@ -379,7 +379,7 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
 
   server.registerTool('merge_image_batches', {
     title: 'Merge terminal Esse batches',
-    description: '把不同的已结束批次合并到目标批次；默认保留源批次。追加图片不得使用此工具。',
+    description: '把不同的已结束批次及图片历史移动到目标批次，持久保存目标后移除源批次。deleteSourceBatches 仅为旧调用兼容，不改变移动语义。追加图片不得使用此工具。',
     inputSchema: {
       targetBatchId: z.string().uuid(),
       sourceBatchIds: z.array(z.string().uuid()).min(1).max(49),

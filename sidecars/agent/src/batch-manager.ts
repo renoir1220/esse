@@ -47,6 +47,7 @@ export class BatchManager {
   private readonly batches = new Map<string, BatchRecord>();
   private readonly createKeys = new Map<string, string>();
   private readonly requestOperations = new Map<string, { fingerprint: string; promise: Promise<unknown> }>();
+  private mergeChain: Promise<void> = Promise.resolve();
   private readonly activeJobs = new Set<string>();
   private readonly retrievalSignals = new Map<string, AbortSignal>();
   private readonly backgroundTasks = new Set<Promise<void>>();
@@ -60,7 +61,9 @@ export class BatchManager {
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    for (const raw of await this.options.store.loadAll()) {
+    const records = await this.options.store.loadAll();
+    const movedIds = new Set(records.flatMap((batch) => (batch.mergeCleanup ?? []).map((source) => source.id)));
+    for (const raw of records.filter((batch) => !movedIds.has(batch.id))) {
       const batch = normalizeBatch(raw);
       let changed = false;
       for (const job of batch.jobs) {
@@ -98,7 +101,14 @@ export class BatchManager {
       }
       this.batches.set(batch.id, batch);
       if (batch.requestKey) this.createKeys.set(batch.requestKey, batch.id);
+      for (const key of Object.keys(batch.createAliases ?? {})) this.createKeys.set(key, batch.id);
       if (changed) await this.options.store.save(batch);
+    }
+    for (const batch of this.batches.values()) {
+      if (batch.mergeCleanup?.length) {
+        try { await this.cleanupMergedSources(batch); }
+        catch (error) { process.stderr.write(`[esse] merge cleanup remains pending: ${error instanceof Error ? error.message : String(error)}\n`); }
+      }
     }
     await this.importLegacyImages();
     this.activeBatchId = this.list()[0]?.id;
@@ -154,7 +164,8 @@ export class BatchManager {
     assertRequestKey(input.requestKey);
     const existingId = this.createKeys.get(input.requestKey);
     if (existingId) {
-      assertMatchingFingerprint(this.requiredBatch(existingId).requestFingerprint, requestFingerprint(input));
+      const batch = this.requiredBatch(existingId);
+      assertMatchingFingerprint(batch.createAliases && Object.hasOwn(batch.createAliases, input.requestKey) ? batch.createAliases[input.requestKey] : batch.requestFingerprint, requestFingerprint(input));
       return this.get(existingId);
     }
     const definitions = normalizedJobs(input);
@@ -451,9 +462,10 @@ export class BatchManager {
   async deleteBatch(batchId: string): Promise<void> {
     const batch = this.requiredBatch(batchId);
     if (batch.jobs.some((job) => job.status === 'queued' || job.status === 'running')) throw new Error('Cancel or finish active jobs before deleting the batch.');
-    this.batches.delete(batchId);
-    if (batch.requestKey) this.createKeys.delete(batch.requestKey);
+    await this.cleanupMergedSources(batch);
     await this.options.store.delete(batchId);
+    this.batches.delete(batchId);
+    for (const [key, id] of this.createKeys) if (id === batchId) this.createKeys.delete(key);
     this.activeBatchId = this.list()[0]?.id;
     this.changed({ type: 'delete', batchId, activeBatchId: this.activeBatchId });
   }
@@ -464,40 +476,83 @@ export class BatchManager {
     deleteSourceBatches?: boolean;
     requestKey: string;
   }): Promise<BatchSnapshot> {
+    const fingerprintInput = { ...input, deleteSourceBatches: undefined };
+    return this.withRequestKey(`merge:${input.targetBatchId}:${input.requestKey}`, fingerprintInput, () => {
+      const task = this.mergeChain.then(() => this.mergeOnce(input));
+      this.mergeChain = task.then(() => undefined, () => undefined);
+      return task;
+    });
+  }
+
+  private async mergeOnce(input: { targetBatchId: string; sourceBatchIds: string[]; deleteSourceBatches?: boolean; requestKey: string }): Promise<BatchSnapshot> {
     assertRequestKey(input.requestKey);
     const target = this.requiredBatch(input.targetBatchId);
     const replay = target.mergeKeys[input.requestKey];
-    if (replay) return snapshot(target);
+    const fingerprint = requestFingerprint({ ...input, deleteSourceBatches: undefined });
+    if (replay) {
+      assertMatchingFingerprint(target.mergeFingerprints?.[input.requestKey], fingerprint);
+      await this.cleanupMergedSources(target);
+      return snapshot(target);
+    }
+    await this.cleanupMergedSources(target);
     const sources = unique(input.sourceBatchIds).map((id) => this.requiredBatch(id));
+    if (!sources.length) throw new Error('Select at least one source batch.');
     if (sources.some((batch) => batch.id === target.id)) throw new Error('The target batch cannot also be a source batch.');
     if (![target, ...sources].every(isTerminal)) throw new Error('Only terminal batches can be merged.');
     const incoming = sources.flatMap((batch) => batch.jobs);
     if (target.jobs.length + incoming.length > MAX_BATCH_IMAGES) throw new Error(`A merged batch may contain at most ${MAX_BATCH_IMAGES} images.`);
     const now = new Date().toISOString();
+    const merged: BatchRecord = {
+      ...target,
+      jobs: [...target.jobs],
+      mergeKeys: { ...target.mergeKeys },
+      mergeFingerprints: { ...target.mergeFingerprints, [input.requestKey]: fingerprint },
+      createAliases: { ...target.createAliases },
+      mergeCleanup: sources.map((source) => ({ id: source.id, title: source.title })),
+      updatedAt: now,
+    };
     const clonedIds: string[] = [];
     for (const sourceJob of incoming) {
       const id = randomUUID();
       clonedIds.push(id);
-      target.jobs.push({
+      merged.jobs.push({
         ...structuredClone(sourceJob),
         id,
-        index: target.jobs.length,
-        name: `图${target.jobs.length + 1}`,
+        index: merged.jobs.length,
+        name: `图${merged.jobs.length + 1}`,
       });
     }
-    target.mergeKeys[input.requestKey] = clonedIds;
-    target.updatedAt = now;
-    await this.options.store.save(target);
-    if (input.deleteSourceBatches) {
-      for (const source of sources) {
-        this.batches.delete(source.id);
-        if (source.requestKey) this.createKeys.delete(source.requestKey);
-        await this.options.store.delete(source.id);
-      }
+    for (const source of sources) {
+      Object.assign(merged.createAliases!, source.createAliases);
+      if (source.requestKey) merged.createAliases![source.requestKey] = source.requestFingerprint ?? null;
     }
-    this.activeBatchId = target.id;
-    this.changed({ type: 'upsert', batch: snapshot(target) });
-    return snapshot(target);
+    merged.mergeKeys[input.requestKey] = clonedIds;
+    await this.options.store.save(merged);
+    this.batches.set(merged.id, merged);
+    for (const source of sources) this.batches.delete(source.id);
+    for (const key of Object.keys(merged.createAliases!)) this.createKeys.set(key, merged.id);
+    this.activeBatchId = merged.id;
+    for (const source of sources) this.changed({ type: 'delete', batchId: source.id, activeBatchId: merged.id });
+    this.changed({ type: 'upsert', batch: snapshot(merged) });
+    await this.cleanupMergedSources(merged);
+    return snapshot(merged);
+  }
+
+  private async cleanupMergedSources(target: BatchRecord): Promise<void> {
+    const sources = target.mergeCleanup;
+    if (!sources?.length) return;
+    const images = target.jobs.flatMap((job) => [
+      ...(job.outputImageId ? [{ id: job.outputImageId, name: job.name }] : []),
+      ...job.backups.map((backup) => ({ id: backup.imageId, name: backup.name })),
+    ]);
+    await this.options.imageStore.prepareBatchFolder(target.id, target.title, images);
+    for (const source of sources) {
+      await this.options.imageStore.removeBatchFolder(source.id, source.title);
+      await this.options.store.delete(source.id);
+    }
+    const complete = { ...target, mergeCleanup: undefined };
+    await this.options.store.save(complete);
+    target.mergeCleanup = undefined;
   }
 
   async startAgentJob(batchId: string, jobId: string): Promise<BatchJob> {
@@ -1045,7 +1100,7 @@ function requestFingerprint(value: unknown): string {
   return createHash('sha256').update(JSON.stringify(stable(value))).digest('hex');
 }
 
-function assertMatchingFingerprint(stored: string | undefined, incoming: string): void {
+function assertMatchingFingerprint(stored: string | undefined | null, incoming: string): void {
   if (stored && stored !== incoming) throw new Error('requestKey was already used with different arguments.');
 }
 

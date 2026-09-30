@@ -59,6 +59,7 @@ export class BatchManager {
   private readonly agentCompletionChains = new Map<string, Promise<BatchSnapshot>>();
   private readonly requestOperations = new Map<string, { fingerprint: string | undefined; promise: Promise<unknown> }>();
   private readonly deletingBatchIds = new Set<string>();
+  private mergeChain: Promise<void> = Promise.resolve();
   private activationRevision = Date.now();
   private activatedBatchId: string | undefined;
 
@@ -80,7 +81,9 @@ export class BatchManager {
 
   async initialize(): Promise<void> {
     const resumable: Array<{ batch: BatchRecord; job: JobRecord }> = [];
-    for (const batch of await this.store.loadAll()) {
+    const records = await this.store.loadAll();
+    const movedIds = new Set(records.flatMap((batch) => (batch.mergeCleanup || []).map((source) => source.id)));
+    for (const batch of records.filter((candidate) => !movedIds.has(candidate.id))) {
       let changed = false;
       for (const job of batch.jobs) {
         if (migrateLegacyCallHistory(job, job.offering || batch.offering)) changed = true;
@@ -139,6 +142,13 @@ export class BatchManager {
       }
       this.batches.set(batch.id, batch);
       if (batch.requestKey) this.requestKeys.set(batch.requestKey, batch.id);
+      for (const key of Object.keys(batch.createAliases || {})) this.requestKeys.set(key, batch.id);
+    }
+    for (const batch of this.batches.values()) {
+      if (batch.mergeCleanup?.length) {
+        try { await this.cleanupMergedSources(batch); }
+        catch (error) { process.stderr.write(`[esse] merge cleanup remains pending: ${error instanceof Error ? error.message : String(error)}\n`); }
+      }
     }
     for (const { batch, job } of resumable) {
       try {
@@ -163,7 +173,9 @@ export class BatchManager {
     const fingerprint = input.requestKey ? requestFingerprint({ ...input, requestKey: undefined }) : undefined;
     const existingId = input.requestKey ? this.requestKeys.get(input.requestKey) : undefined;
     if (existingId) {
-      assertMatchingFingerprint(this.requireBatch(existingId).requestFingerprint, fingerprint, input.requestKey!);
+      const existing = this.requireBatch(existingId);
+      const stored = existing.createAliases && Object.hasOwn(existing.createAliases, input.requestKey!) ? existing.createAliases[input.requestKey!] ?? undefined : existing.requestFingerprint;
+      assertMatchingFingerprint(stored, fingerprint, input.requestKey!);
       this.activate(existingId);
       return this.get(existingId);
     }
@@ -607,8 +619,12 @@ export class BatchManager {
     deleteSourceBatches?: boolean;
     requestKey?: string;
   }): Promise<BatchSnapshot> {
-    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
-    return this.withRequestKey(`merge:${options.targetBatchId}:${options.requestKey || ""}`, options.requestKey, fingerprint, () => this.mergeBatchesUnlocked(options));
+    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined, deleteSourceBatches: undefined }) : undefined;
+    return this.withRequestKey(`merge:${options.targetBatchId}:${options.requestKey || ""}`, options.requestKey, fingerprint, () => {
+      const task = this.mergeChain.then(() => this.mergeBatchesUnlocked(options));
+      this.mergeChain = task.then(() => undefined, () => undefined);
+      return task;
+    });
   }
 
   private async mergeBatchesUnlocked(options: {
@@ -618,12 +634,14 @@ export class BatchManager {
     requestKey?: string;
   }): Promise<BatchSnapshot> {
     const target = this.requireBatch(options.targetBatchId);
-    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
+    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined, deleteSourceBatches: undefined }) : undefined;
     if (options.requestKey && target.mergeKeys?.[options.requestKey]) {
       assertMatchingFingerprint(target.mergeFingerprints?.[options.requestKey], fingerprint, options.requestKey);
+      await this.cleanupMergedSources(target);
       this.activate(target.id);
       return snapshot(target);
     }
+    await this.cleanupMergedSources(target);
     const sourceIds = [...new Set(options.sourceBatchIds.map((value) => value.trim()).filter(Boolean))];
     if (!sourceIds.length) throw new Error("Select at least one source batch to merge.");
     if (sourceIds.includes(target.id)) throw new Error("The target batch cannot also be a source batch.");
@@ -667,7 +685,20 @@ export class BatchManager {
     const previousJobs = target.jobs;
     const previousMergeKeys = target.mergeKeys;
     const previousMergeFingerprints = target.mergeFingerprints;
+    const previousAliases = target.createAliases;
+    const previousCleanup = target.mergeCleanup;
+    const previousUpdatedAt = target.updatedAt;
     target.jobs = [...target.jobs, ...clones];
+    target.createAliases = { ...target.createAliases };
+    for (const source of sources) {
+      Object.assign(target.createAliases, source.createAliases);
+      if (source.requestKey) target.createAliases[source.requestKey] = source.requestFingerprint ?? null;
+    }
+    target.mergeCleanup = sources.map((source) => ({
+      id: source.id,
+      outputDirectory: source.outputDirectory,
+      managedPaths: [...new Set(source.jobs.flatMap(allJobPaths).map((filePath) => path.resolve(filePath)).filter((filePath) => isInside(source.outputDirectory, filePath)))],
+    }));
     if (options.requestKey) {
       target.mergeKeys = { ...(target.mergeKeys || {}), [options.requestKey]: clones.map((job) => job.id) };
       target.mergeFingerprints = { ...(target.mergeFingerprints || {}), [options.requestKey]: fingerprint! };
@@ -679,12 +710,37 @@ export class BatchManager {
       target.jobs = previousJobs;
       target.mergeKeys = previousMergeKeys;
       target.mergeFingerprints = previousMergeFingerprints;
+      target.createAliases = previousAliases;
+      target.mergeCleanup = previousCleanup;
+      target.updatedAt = previousUpdatedAt;
       await Promise.all(copiedPaths.map((filePath) => rm(filePath, { force: true })));
       throw error;
     }
-    if (options.deleteSourceBatches) for (const source of sources) await this.delete(source.id);
+    for (const source of sources) this.batches.delete(source.id);
+    for (const key of Object.keys(target.createAliases)) this.requestKeys.set(key, target.id);
     this.activate(target.id);
+    await this.cleanupMergedSources(target);
     return snapshot(target);
+  }
+
+  private async cleanupMergedSources(target: BatchRecord): Promise<void> {
+    const sources = target.mergeCleanup;
+    if (!sources?.length) return;
+    const retainedPaths = new Set([...this.batches.values()].filter((batch) => !sources.some((source) => source.id === batch.id))
+      .flatMap((batch) => batch.jobs.flatMap(allJobPaths)).map((filePath) => path.resolve(filePath)));
+    for (const source of sources) {
+      await this.waitForPersistence(source.id);
+      for (const filePath of source.managedPaths) {
+        if (isInside(source.outputDirectory, filePath) && !retainedPaths.has(path.resolve(filePath))) await rm(filePath, { force: true });
+      }
+      await this.store.delete(source.id);
+      this.saveChains.delete(source.id);
+      await rmdir(source.outputDirectory).catch((error: NodeJS.ErrnoException) => {
+        if (!["ENOENT", "ENOTEMPTY", "EEXIST"].includes(error.code || "")) throw error;
+      });
+    }
+    await this.persist({ ...target, mergeCleanup: undefined });
+    target.mergeCleanup = undefined;
   }
 
   private async withRequestKey<T>(
@@ -713,6 +769,7 @@ export class BatchManager {
     if (batch.jobs.some((job) => job.status === "queued" || job.status === "running")) throw new Error("正在运行的批次不能删除，请等待任务结束或先取消排队任务。");
     this.deletingBatchIds.add(batch.id);
     try {
+      await this.cleanupMergedSources(batch);
       await this.waitForPersistence(batch.id);
       if (this.batches.get(batch.id) !== batch) throw new Error(`Unknown image batch: ${batch.id}`);
       if (batch.jobs.some((job) => job.status === "queued" || job.status === "running")) throw new Error("正在运行的批次不能删除，请等待任务结束或先取消排队任务。");
@@ -730,7 +787,7 @@ export class BatchManager {
       if (!remaining.length) await rmdir(batch.outputDirectory).catch(() => undefined);
       await this.store.delete(batch.id);
       this.batches.delete(batch.id);
-      if (batch.requestKey) this.requestKeys.delete(batch.requestKey);
+      for (const [key, id] of this.requestKeys) if (id === batch.id) this.requestKeys.delete(key);
       this.saveChains.delete(batch.id);
     } finally {
       this.deletingBatchIds.delete(batch.id);

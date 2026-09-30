@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -17,6 +17,67 @@ afterEach(async () => {
 });
 
 describe('Esse batch manager', () => {
+  it('moves completed jobs, backups, images and history, remaps create keys and supports deletion after restart', async () => {
+    const fixture = await fixtureDirectory();
+    const api = fakeApi();
+    const manager = managerFor(fixture, api);
+    await manager.initialize();
+    const target = await manager.create({ prompt: 'target', requestKey: 'merge-target-create' });
+    const sourceInput = { prompt: 'source', requestKey: 'merge-source-create' };
+    const source = await manager.create(sourceInput);
+    await manager.waitForIdle();
+    const original = manager.get(source.id).jobs[0].outputImageId!;
+    await manager.modify({ batchId: source.id, imageIds: [original], prompt: 'changed source', requestKey: 'merge-source-modify' });
+    await manager.waitForIdle();
+    const before = manager.get(source.id).jobs[0];
+    const folder = await fixture.imageStore.prepareBatchFolder(source.id, source.title, [{ id: before.outputImageId!, name: before.name }]);
+    const merged = await manager.merge({ targetBatchId: target.id, sourceBatchIds: [source.id], requestKey: 'merge-move-key', deleteSourceBatches: false });
+    expect(manager.list()).toHaveLength(1);
+    expect(merged.jobs[1]).toMatchObject({ outputImageId: before.outputImageId, backups: before.backups, callHistory: before.callHistory });
+    await expect(access(folder)).rejects.toThrow();
+    expect((await manager.create(sourceInput)).id).toBe(target.id);
+    const restarted = managerFor(fixture, api);
+    await restarted.initialize();
+    expect(restarted.list()).toHaveLength(1);
+    expect((await restarted.create(sourceInput)).id).toBe(target.id);
+    expect((await restarted.merge({ targetBatchId: target.id, sourceBatchIds: [source.id], requestKey: 'merge-move-key', deleteSourceBatches: true })).jobs).toHaveLength(2);
+    await restarted.deleteImages(target.id, [before.backups[0].imageId]);
+    expect(await fixture.imageStore.get(before.backups[0].imageId)).toBeUndefined();
+    expect(await fixture.imageStore.get(before.outputImageId!)).toBeDefined();
+  });
+
+  it.each(['commit', 'cleanup', 'receipt'])('recovers a merge when %s persistence fails', async (stage) => {
+    const fixture = await fixtureDirectory();
+    const api = fakeApi();
+    const manager = managerFor(fixture, api);
+    await manager.initialize();
+    const target = await manager.create({ prompt: 'target', requestKey: `target-${stage}-create` });
+    const sourceInput = { prompt: 'source', requestKey: `source-${stage}-create` };
+    const source = await manager.create(sourceInput);
+    await manager.waitForIdle();
+    const save = fixture.batchStore.save.bind(fixture.batchStore);
+    let failed = false;
+    const saveSpy = vi.spyOn(fixture.batchStore, 'save').mockImplementation(async (batch) => {
+      const matches = stage === 'commit' ? Boolean(batch.mergeCleanup?.length) : stage === 'receipt' && batch.id === target.id && batch.jobs.length === 2 && !batch.mergeCleanup;
+      if (!failed && matches) { failed = true; throw new Error(`injected ${stage} merge failure`); }
+      await save(batch);
+    });
+    const deleteSpy = vi.spyOn(fixture.batchStore, 'delete').mockImplementationOnce(async () => { if (stage === 'cleanup') { failed = true; throw new Error('injected cleanup merge failure'); } });
+    const input = { targetBatchId: target.id, sourceBatchIds: [source.id], requestKey: `merge-${stage}-key` };
+    await expect(manager.merge(input)).rejects.toThrow(/injected/);
+    expect(manager.list()).toHaveLength(stage === 'commit' ? 2 : 1);
+    if (stage === 'commit') expect(manager.get(target.id).jobs).toHaveLength(1);
+    saveSpy.mockRestore();
+    deleteSpy.mockRestore();
+    const restarted = managerFor(fixture, api);
+    await restarted.initialize();
+    const merged = await restarted.merge(input);
+    expect(merged.jobs).toHaveLength(2);
+    expect(restarted.list()).toHaveLength(1);
+    expect((await fixture.batchStore.loadAll()).map((batch) => batch.id)).toEqual([target.id]);
+    expect((await restarted.create(sourceInput)).id).toBe(target.id);
+  });
+
   it('deduplicates concurrent create and append before offering resolution and rejects conflicting keys', async () => {
     const fixture = await fixtureDirectory();
     const api = fakeApi();
