@@ -9,6 +9,8 @@ export class TuziJsonImagesAdapter implements ProviderAdapter {
   constructor(private readonly options: { baseUrl: string; apiKey: string; fetchImpl?: FetchLike; timeoutMs?: number }) {}
 
   async generate(request: GenerateRequest, signal?: AbortSignal): Promise<GenerateResult> {
+    const legacyFlash = /^gemini-3\.1-flash-image-preview-(1k|2k|4k)$/.exec(request.model);
+    if (legacyFlash) request = { ...request, model: "gemini-3.1-flash-image-preview", quality: request.quality || legacyFlash[1] };
     const fetchImpl = this.options.fetchImpl ?? fetch;
     let task = request.providerTask;
     if (!task) {

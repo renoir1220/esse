@@ -217,6 +217,17 @@ for (const model of ['gemini-3.1-flash-image-preview', 'gemini-3-pro-image-previ
   });
 }
 
+it('normalizes saved Flash resolution suffix to the documented base model and quality', async () => {
+  const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+    expect(String(url)).toBe('https://provider.example/v1/images/generations');
+    expect(JSON.parse(String(init?.body))).toMatchObject({ model: 'gemini-3.1-flash-image-preview', quality: '4k' });
+    return Response.json({ data: [{ url: 'https://cdn.example/image.png' }] });
+  }) as unknown as typeof fetch;
+  const client = new EsseApiClient(fakeSettings('tuzi-json-images', 'gemini-3.1-flash-image-preview-4k'), fetchMock);
+  await client.generate({ model: 'offering', prompt: 'legacy config' });
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
 for (const model of ['gemini-3-pro-image-preview-async', 'gemini-3-pro-image-preview-2k-async', 'gemini-3-pro-image-preview-4k-async', 'gpt-image-2']) it(`${model}: multipart video image contract`, async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-video-contract-'));
   temporaryDirectories.push(directory);

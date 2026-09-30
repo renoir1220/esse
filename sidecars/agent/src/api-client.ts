@@ -99,6 +99,11 @@ export class EsseApiClient {
     images: string[],
     hooks: ProviderTaskHooks,
   ): Promise<ApiGenerateResult> {
+    const legacyFlash = /^gemini-3\.1-flash-image-preview-(1k|2k|4k)$/.exec(model);
+    if (legacyFlash) {
+      model = 'gemini-3.1-flash-image-preview';
+      input = { ...input, quality: input.quality || legacyFlash[1] };
+    }
     let task = hooks.resumeTask;
     if (!task) {
       const protocol = submissionProtocol(model);

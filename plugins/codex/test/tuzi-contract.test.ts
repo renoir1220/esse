@@ -5,6 +5,16 @@ import type { ProviderTaskState } from "../src/types.js";
 
 // Contracts from Tuzi's current images/videos docs; no network requests.
 const reference = "data:image/png;base64,aW1hZ2U=";
+test("saved Flash resolution suffix normalizes to the documented base model and quality", async () => {
+  const adapter = new TuziJsonImagesAdapter({ baseUrl: "https://provider.example", apiKey: "dummy-key", fetchImpl: async (url, init) => {
+    assert.equal(String(url), "https://provider.example/v1/images/generations");
+    const body = JSON.parse(String(init?.body));
+    assert.equal(body.model, "gemini-3.1-flash-image-preview");
+    assert.equal(body.quality, "4k");
+    return Response.json({ data: [{ url: "https://cdn.example/image.png" }] });
+  } });
+  await adapter.generate({ model: "gemini-3.1-flash-image-preview-4k", prompt: "legacy config", images: [], responseFormat: "url" });
+});
 for (const model of ["gemini-3.1-flash-image-preview", "gemini-3-pro-image-preview", "gemini-3-pro-image-preview-2k", "gemini-3-pro-image-preview-4k", "nano-banana-2", "nano-banana-2-2k", "nano-banana-2-4k"]) {
   for (const count of [0, 1, 2]) test(`${model}: synchronous JSON with ${count} references`, async () => {
     let submissions = 0;
