@@ -542,6 +542,8 @@ function registerIpc(): void {
       url: mcpServer.endpoint,
       headers: { Authorization: `Bearer ${pairingToken}` },
       description: 'Esse local image generation',
+      providerConfigPath: path.join(app.getPath('userData'), 'providers.json'),
+      settingsConfigPath: path.join(app.getPath('userData'), 'settings.json'),
     }));
   });
   ipcMain.on('smoke:ready', (_event, details: unknown) => {
@@ -615,6 +617,8 @@ async function startMcpBridge(): Promise<void> {
       port: smokeMode || Boolean(qaCapturePath) ? 0 : DEFAULT_MCP_PORT,
       batchManager,
       imageStore,
+      providerConfigPath: path.join(app.getPath('userData'), 'providers.json'),
+      settingsConfigPath: path.join(app.getPath('userData'), 'settings.json'),
       createImagePreview: createNativeImagePreview,
       onOpenRequested: async ({ tab, batchId }) => {
         if (mainWindow?.isMinimized()) mainWindow.restore();
