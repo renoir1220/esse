@@ -28,6 +28,31 @@ export function downloadUrl(value) {
   return url.href;
 }
 
+export function diagnoseCurlTransfer(result, headerText = '') {
+  const [status, duration, connected] = (result.stdout ?? '').trim().split(/\s+/);
+  const httpStatus = /^\d{3}$/.test(status ?? '') ? Number(status) : 0;
+  const reportedConnect = /^\d{3}$/.test(connected ?? '') ? Number(connected) : 0;
+  const connectHttpStatus = reportedConnect || Number(/CONNECT tunnel failed, response (\d{3})/.exec(result.stderr ?? '')?.[1]) || null;
+  const proxyMarker = /(?:^|\n)x-(?:mitmproxy-blocked-reason|proxy-error):/i.test(headerText);
+  const connectFailed = connectHttpStatus !== null && (connectHttpStatus < 200 || connectHttpStatus >= 300);
+  const originObserved = !connectFailed && !proxyMarker && connectHttpStatus === 200 && httpStatus > 0;
+  const succeeded = result.status === 0 && httpStatus >= 200 && httpStatus < 300;
+  return {
+    httpStatus,
+    connectHttpStatus,
+    originHttpStatus: originObserved ? httpStatus : null,
+    durationSeconds: Number(duration) || 0,
+    curlExit: result.status,
+    requestId: /(?:^|\n)x-oneapi-request-id:\s*([^\r\n]+)/i.exec(headerText)?.[1]?.trim(),
+    proxyDenied: proxyMarker || connectHttpStatus === 403 || connectHttpStatus === 407
+      ? true : connectHttpStatus === 200 ? false : null,
+    failureStage: connectFailed ? 'platform_proxy_connect' : proxyMarker ? 'platform_proxy_response'
+      : succeeded ? null : originObserved ? 'origin_http_response'
+        : httpStatus > 0 ? 'http_response_unattributed' : 'transport',
+    error: safeError(result.error?.message ?? result.stderr),
+  };
+}
+
 async function saveJson(destination, value) {
   const temporary = `${destination}.${randomUUID()}.tmp`;
   await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
@@ -39,22 +64,13 @@ async function curl(url, destination, authenticated, requestFile) {
   await writeFile(destination, '', { mode: 0o600 });
   const headers = `${destination}.headers`;
   await writeFile(headers, '', { mode: 0o600 });
-  const shell = 'curl -q --silent --show-error --max-time 120 --max-filesize 62914560 --output "$1" --dump-header "$2" --write-out "%{http_code} %{time_total}"'
+  const shell = 'curl -q --silent --show-error --max-time 120 --max-filesize 62914560 --output "$1" --dump-header "$2" --write-out "%{http_code} %{time_total} %{http_connect}"'
     + (authenticated ? ' --header "Authorization: Bearer ${tuzi_api_key}"' : '')
     + (requestFile ? ' --header "Content-Type: application/json" --data-binary "@$4"' : '') + ' "$3"';
   const result = spawnSync('bash', ['--noprofile', '--norc', '-c', shell, 'tuzi-cloud-probe', destination, headers, url, requestFile ?? ''], { encoding: 'utf8', timeout: 125_000 });
-  const [status, duration] = (result.stdout ?? '').trim().split(/\s+/);
   const headerText = await readFile(headers, 'utf8');
   await unlink(headers);
-  return {
-    httpStatus: /^\d{3}$/.test(status) ? Number(status) : 0,
-    connectHttpStatus: Number(/CONNECT tunnel failed, response (\d{3})/.exec(result.stderr ?? '')?.[1]) || undefined,
-    durationSeconds: Number(duration) || 0,
-    curlExit: result.status,
-    requestId: /(?:^|\n)x-oneapi-request-id:\s*([^\r\n]+)/i.exec(headerText)?.[1]?.trim(),
-    proxyDenied: /(?:^|\n)x-(?:mitmproxy-blocked-reason|proxy-error):/i.test(headerText),
-    error: safeError(result.error?.message ?? result.stderr),
-  };
+  return diagnoseCurlTransfer(result, headerText);
 }
 
 export async function runProbe({ ledgerPath, evidenceDir, requestPath, reservedCny = 2 }) {
