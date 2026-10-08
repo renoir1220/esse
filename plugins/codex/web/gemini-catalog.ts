@@ -21,7 +21,9 @@ export const GEMINI_PROVIDER_PRESET = {
 
 export function createGeminiProviderDraft(): ProviderDraft {
   const preset = GEMINI_PROVIDER_PRESET;
-  return { displayName: preset.displayName, tierName: preset.tierName, baseUrl: preset.baseUrl, adapterId: preset.adapterId, concurrency: preset.concurrency, apiKey: '', hasApiKey: false, offerings: [structuredClone(preset.models[0])] };
+  const defaultModel = preset.models[0];
+  if (!defaultModel) throw new Error('Google Gemini 预设缺少默认模型。');
+  return { displayName: preset.displayName, tierName: preset.tierName, baseUrl: preset.baseUrl, adapterId: preset.adapterId, concurrency: preset.concurrency, apiKey: '', hasApiKey: false, offerings: [structuredClone(defaultModel)] };
 }
 
 export function geminiProviderPresetForDraft(draft: ProviderDraft): typeof GEMINI_PROVIDER_PRESET | undefined {
