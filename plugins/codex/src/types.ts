@@ -97,6 +97,8 @@ export interface JobRecord {
   errorOrigin?: ErrorOrigin;
   providerRequestId?: string;
   providerTask?: ProviderTaskState;
+  /** Result bytes/URLs are held in a private local checkpoint, never in snapshots. */
+  hasProviderResult?: boolean;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;

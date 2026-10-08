@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -10,10 +10,220 @@ import { MemorySecretStore } from "../src/storage/secret-store.js";
 import { BatchStore } from "../src/storage/batch-store.js";
 import { ProviderRegistry } from "../src/providers/registry.js";
 import { BatchManager } from "../src/jobs/batch-manager.js";
+import { Semaphore } from "../src/jobs/semaphore.js";
 import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 import type { BatchRecord } from "../src/types.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
+
+for (const mode of ["result", "task"] as const) test(`restart resumes queued ${mode} recovery without a generation POST`, async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-queued-recovery-"));
+  try {
+    const fixture = await pendingProviderFixture(root, { mode, status: "queued", chargeState: "charged" });
+    const restored = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await restored.initialize();
+    const recovered = await waitForBatch(restored, fixture.batchId);
+    await restored.waitForPersistence(fixture.batchId);
+    assert.equal(recovered.succeeded, 1);
+    assert.equal(recovered.jobs[0]!.callHistory!.length, 1);
+    assert.equal(recovered.jobs[0]!.callHistory![0]!.id, fixture.callId);
+    assert.equal(fixture.requests.filter((request) => request.method === "POST").length, 0);
+    assert.equal(fixture.requests.length, mode === "task" ? 1 : 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+for (const mode of ["result", "task"] as const) for (const chargeState of ["unknown", "charged"] as const) test(`cancel queued ${mode} recovery retains ${chargeState} and can retrieve again`, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-cancel-recovery-"));
+  try {
+    const fixture = await pendingProviderFixture(root, { mode, status: "failed", chargeState });
+    const manager = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await manager.initialize();
+    const hold = t.mock.method(Semaphore.prototype, "use", async (_action: () => Promise<unknown>) => undefined);
+    await manager.retry(fixture.batchId, [fixture.jobId]);
+    const canceled = await manager.cancelQueued(fixture.batchId);
+    assert.equal(canceled.jobs[0]!.status, "failed");
+    assert.equal(canceled.jobs[0]!.chargeState, chargeState);
+    assert.equal(canceled.jobs[0]!.retryable, true);
+    assert.equal(canceled.jobs[0]!.callHistory![0]!.chargeState, chargeState);
+    assert.equal(canceled.jobs[0]!.providerRequestId, "accepted-request");
+    assert.match(canceled.jobs[0]!.error!, /Provider submission was not canceled/);
+    assert.equal(fixture.requests.length, 0);
+    hold.mock.restore();
+    await manager.retry(fixture.batchId, [fixture.jobId]);
+    const recovered = await waitForBatch(manager, fixture.batchId);
+    await manager.waitForPersistence(fixture.batchId);
+    assert.equal(recovered.succeeded, 1);
+    assert.equal(recovered.jobs[0]!.callHistory!.length, 1);
+    assert.equal(fixture.requests.filter((request) => request.method === "POST").length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+for (const stage of ["normal", "commit", "cleanup", "receipt"] as const) test(`merged result checkpoint recovers after ${stage} and remains owned by its original call`, async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-merge-result-"));
+  try {
+    const fixture = await pendingProviderFixture(root, { mode: "result", status: "failed", chargeState: "unknown", target: true });
+    const manager = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await manager.initialize();
+    let injected = false;
+    const save = BatchStore.prototype.save;
+    const remove = BatchStore.prototype.delete;
+    t.mock.method(BatchStore.prototype, "save", async function (this: BatchStore, batch: BatchRecord) {
+      const matches = batch.id === fixture.targetId && batch.jobs.length === 2
+        && (stage === "commit" ? Boolean(batch.mergeCleanup) : stage === "receipt" && !batch.mergeCleanup);
+      if (matches && !injected) { injected = true; throw new Error(`injected ${stage}`); }
+      await save.call(this, batch);
+    });
+    t.mock.method(BatchStore.prototype, "delete", async function (this: BatchStore, id: string) {
+      if (stage === "cleanup" && !injected && id === fixture.batchId) { injected = true; throw new Error("injected cleanup"); }
+      await remove.call(this, id);
+    });
+    const input = { targetBatchId: fixture.targetId!, sourceBatchIds: [fixture.batchId], requestKey: "merge-private-result" };
+    if (stage === "normal") await manager.mergeBatches(input);
+    else await assert.rejects(manager.mergeBatches(input), /injected/);
+    assert.equal(injected, stage !== "normal");
+    assert((await fixture.store.loadProviderResult(fixture.callId))?.b64Json);
+    const restarted = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await restarted.initialize();
+    const merged = await restarted.mergeBatches(input);
+    const moved = merged.jobs[1]!;
+    assert.equal(moved.callHistory![0]!.id, fixture.callId);
+    assert.equal(moved.hasProviderResult, true);
+    await restarted.retry(merged.id, [moved.id]);
+    const recovered = await waitForBatch(restarted, merged.id);
+    await restarted.waitForPersistence(merged.id);
+    assert.equal(recovered.succeeded, 2);
+    assert.equal(recovered.jobs[1]!.callHistory!.length, 1);
+    assert.equal(fixture.requests.length, 0);
+    // Historical completed-result files also belong to this moved call and must be removed on deletion.
+    await fixture.store.saveProviderResult(fixture.callId, { b64Json: onePixelPng, providerRequestId: "accepted-request" });
+    await restarted.delete(merged.id);
+    assert.equal(await fixture.store.loadProviderResult(fixture.callId), undefined);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("result cleanup failure keeps the batch metadata available for deletion retry", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-delete-result-retry-"));
+  try {
+    const fixture = await pendingProviderFixture(root, { mode: "result", status: "failed", chargeState: "unknown" });
+    const manager = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await manager.initialize();
+    const cleanup = t.mock.method(fixture.store, "deleteProviderResult", async () => { throw new Error("injected result cleanup failure"); });
+    await assert.rejects(manager.delete(fixture.batchId), /injected result cleanup/);
+    assert(await fixture.store.get(fixture.batchId));
+    assert.equal(manager.get(fixture.batchId).jobs[0]!.chargeState, "unknown");
+    assert(await fixture.store.loadProviderResult(fixture.callId));
+    cleanup.mock.restore();
+    await manager.delete(fixture.batchId);
+    assert.equal(await fixture.store.get(fixture.batchId), undefined);
+    assert.equal(await fixture.store.loadProviderResult(fixture.callId), undefined);
+    assert.equal(fixture.requests.length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("deleting a failed output slot also removes its private result checkpoint", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-delete-result-slot-"));
+  try {
+    const fixture = await pendingProviderFixture(root, { mode: "result", status: "failed", chargeState: "unknown" });
+    const manager = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await manager.initialize();
+    const deleted = await manager.deleteImages(fixture.batchId, [fixture.jobId]);
+    assert.equal(deleted.jobs.length, 0);
+    assert.equal(await fixture.store.loadProviderResult(fixture.callId), undefined);
+    assert.equal(fixture.requests.length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("failed checkpoint cleanup leaves multi-selection deletion unchanged and retry removes all files", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-delete-multi-result-"));
+  try {
+    const fixture = await pendingProviderFixture(root, { mode: "result", status: "failed", chargeState: "unknown", target: true });
+    const target = fixture.manager.get(fixture.targetId!);
+    const modified = await fixture.manager.modifyInPlace({ batchId: target.id, imageIds: [target.jobs[0]!.id], instructions: "seed a real local backup" });
+    await waitForBatch(fixture.manager, modified.id);
+    await fixture.manager.waitForPersistence(modified.id);
+    const manager = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await manager.initialize();
+    const merged = await manager.mergeBatches({ targetBatchId: target.id, sourceBatchIds: [fixture.batchId], requestKey: "merge-for-multi-delete" });
+    const backup = merged.jobs[0]!.backups![0]!;
+    const selectors = [merged.jobs[1]!.id, backup.id];
+    const beforeMemory = manager.get(merged.id);
+    const beforeDisk = await fixture.store.get(merged.id);
+    const cleanup = t.mock.method(fixture.store, "deleteProviderResult", async () => { throw new Error("injected checkpoint cleanup failure"); });
+    await assert.rejects(manager.deleteImages(merged.id, selectors), /injected checkpoint cleanup/);
+    assert.deepEqual(manager.get(merged.id), beforeMemory);
+    assert.deepEqual(await fixture.store.get(merged.id), beforeDisk);
+    await access(backup.outputPath);
+    assert(await fixture.store.loadProviderResult(fixture.callId));
+    cleanup.mock.restore();
+    const retried = await manager.deleteImages(merged.id, selectors);
+    assert.equal(retried.jobs.length, 1);
+    assert.equal(retried.jobs[0]!.backups!.length, 0);
+    assert.equal(await fixture.store.loadProviderResult(fixture.callId), undefined);
+    await assert.rejects(access(backup.outputPath), { code: "ENOENT" });
+    await manager.delete(merged.id);
+    assert.equal(await fixture.store.get(merged.id), undefined);
+    await assert.rejects(readdir(merged.outputDirectory), { code: "ENOENT" });
+    assert.equal(fixture.requests.length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("failed result saving during recovery preserves an already charged call", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-charged-recovery-"));
+  try {
+    const fixture = await pendingProviderFixture(root, { mode: "result", status: "failed", chargeState: "charged" });
+    const manager = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await manager.initialize();
+    const output = manager.get(fixture.batchId).outputDirectory;
+    await rm(output, { recursive: true, force: true });
+    await writeFile(output, "owned output obstruction");
+    await manager.retry(fixture.batchId, [fixture.jobId]);
+    const failed = await waitForBatch(manager, fixture.batchId);
+    await manager.waitForPersistence(fixture.batchId);
+    assert.equal(failed.jobs[0]!.status, "failed");
+    assert.equal(failed.jobs[0]!.chargeState, "charged");
+    assert.equal(failed.jobs[0]!.callHistory![0]!.chargeState, "charged");
+    assert.equal(failed.jobs[0]!.callHistory!.length, 1);
+    assert.equal(fixture.requests.length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
+test("synchronous output save failure preserves the result and retries without a paid submission", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-sync-result-"));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let submissions = 0;
+  try {
+    const { manager, store } = await createManager(root, async () => {
+      submissions += 1;
+      await gate;
+      return Response.json({ data: [{ b64_json: onePixelPng }] }, { headers: { "x-oneapi-request-id": "sync-result-request" } });
+    }, "nano-banana-2-2k");
+    const created = await manager.create({ offeringId: "offer-default", prompt: "save recovery", requestKey: "sync-save-recovery" });
+    await rm(created.outputDirectory, { recursive: true, force: true });
+    await writeFile(created.outputDirectory, "owned test obstruction");
+    release();
+    const failed = await waitForBatch(manager, created.id);
+    await manager.waitForPersistence(created.id);
+    assert.equal(failed.failed, 1);
+    const job = failed.jobs[0]!;
+    assert.equal(job.chargeState, "unknown");
+    assert.equal(job.hasProviderResult, true);
+    assert.equal(job.providerRequestId, "sync-result-request");
+    assert(!JSON.stringify(failed).includes(onePixelPng));
+    const callId = job.callHistory!.at(-1)!.id;
+    assert.equal((await store.loadProviderResult(callId))?.b64Json, onePixelPng);
+    await rm(created.outputDirectory);
+    await mkdir(created.outputDirectory);
+    await manager.retry(created.id, [job.id]);
+    const recovered = await waitForBatch(manager, created.id);
+    await manager.waitForPersistence(created.id);
+    assert.equal(recovered.succeeded, 1);
+    assert.equal(submissions, 1);
+    assert.equal(recovered.jobs[0]!.callHistory!.length, 1);
+    for (let i = 0; i < 50 && await store.loadProviderResult(callId); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+    assert.equal(await store.loadProviderResult(callId), undefined);
+  } finally { release(); await rm(root, { recursive: true, force: true }); }
+});
 
 for (const stage of ["start", "task", "finish"] as const) test(`provider queue continues after ${stage} persistence failure`, async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-persistence-failure-"));
@@ -700,7 +910,43 @@ for (const stage of ["commit", "cleanup", "receipt"] as const) test(`merged batc
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-async function createManager(root: string, fetchImpl: typeof fetch) {
+async function pendingProviderFixture(root: string, options: { mode: "result" | "task"; status: "queued" | "failed"; chargeState: "unknown" | "charged"; target?: boolean }) {
+  const seed = await createManager(root, async () => Response.json({ data: [{ b64_json: onePixelPng }] }), options.mode === "result" ? "nano-banana-2-2k" : "gpt-image-2");
+  const completed = await waitForBatch(seed.manager, (await seed.manager.create({ offeringId: "offer-default", prompt: "seed accepted request" })).id);
+  await seed.manager.waitForPersistence(completed.id);
+  let targetId: string | undefined;
+  if (options.target) {
+    const target = await waitForBatch(seed.manager, (await seed.manager.create({ offeringId: "offer-default", prompt: "merge target" })).id);
+    await seed.manager.waitForPersistence(target.id);
+    targetId = target.id;
+  }
+  const record = (await seed.store.get(completed.id))!;
+  const job = record.jobs[0]!;
+  const call = job.callHistory![0]!;
+  for (let i = 0; i < 50 && await seed.store.loadProviderResult(call.id); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  await rm(job.outputPath!, { force: true });
+  Object.assign(job, { status: options.status, outputPath: undefined, retryable: true, chargeState: options.chargeState, providerRequestId: "accepted-request", hasProviderResult: options.mode === "result" });
+  Object.assign(call, { status: "failed", chargeState: options.chargeState, providerRequestId: "accepted-request" });
+  if (options.mode === "result") {
+    job.providerTask = undefined;
+    await seed.store.saveProviderResult(call.id, { b64Json: onePixelPng, providerRequestId: "accepted-request" });
+  } else {
+    const now = new Date().toISOString();
+    job.providerTask = { id: "accepted-task", protocol: "tuzi-video", status: "in_progress", requestId: "accepted-request", submittedAt: now, updatedAt: now };
+    call.providerTask = structuredClone(job.providerTask);
+  }
+  await seed.store.save(record);
+  const requests: Array<{ method: string; url: string }> = [];
+  const registry = new ProviderRegistry(seed.settings, async (input, init) => {
+    requests.push({ method: init?.method || "GET", url: String(input) });
+    assert.equal(init?.method || "GET", "GET", "recovery must never POST");
+    assert(String(input).endsWith("/v1/videos/accepted-task"));
+    return Response.json({ id: "accepted-task", status: "completed", video_url: `data:image/png;base64,${onePixelPng}` });
+  });
+  return { ...seed, registry, requests, batchId: record.id, jobId: job.id, callId: call.id, targetId };
+}
+
+async function createManager(root: string, fetchImpl: typeof fetch, providerModelId = "gpt-image-2") {
   const paths = resolveDataPaths({ ESSE_DATA_DIR: root }, process.platform);
   await ensureDataPaths(paths);
   const settings = new SettingsStore(paths.settingsFile, new MemorySecretStore());
@@ -714,8 +960,8 @@ async function createManager(root: string, fetchImpl: typeof fetch) {
     apiKey: "test-key",
     offerings: [{
       id: "offer-default",
-      canonicalModelId: "gpt-image-2",
-      providerModelId: "gpt-image-2",
+      canonicalModelId: providerModelId,
+      providerModelId,
       displayName: "GPT-Image 2",
       price: { mode: "per_request", currency: "USD", amount: 0.05 },
       supportsTextToImage: true,

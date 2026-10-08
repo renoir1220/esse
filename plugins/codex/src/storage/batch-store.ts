@@ -1,11 +1,36 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rename, rm } from "node:fs/promises";
 import path from "node:path";
-import type { BatchRecord } from "../types.js";
+import type { BatchRecord, GenerateResult } from "../types.js";
 import { readJsonFile, writeJsonFile } from "./atomic-json.js";
 
 export class BatchStore {
   constructor(private readonly batchesDir: string) {}
+
+  async saveProviderResult(callId: string, result: GenerateResult): Promise<void> {
+    const destination = this.resultFileFor(callId);
+    await mkdir(path.dirname(destination), { recursive: true, mode: 0o700 });
+    await writeJsonFile(destination, result);
+  }
+
+  async loadProviderResult(callId: string): Promise<GenerateResult | undefined> {
+    try {
+      const result = await readJsonFile<GenerateResult>(this.resultFileFor(callId));
+      if (result && typeof result.outputUrl !== "string" && typeof result.b64Json !== "string") throw new Error("Invalid saved Provider result.");
+      return result;
+    } catch (error) {
+      throw new Error("Saved Provider result could not be read; no new generation was submitted.", { cause: error });
+    }
+  }
+
+  async deleteProviderResult(callId: string): Promise<void> {
+    await rm(this.resultFileFor(callId), { force: true });
+  }
+
+  private resultFileFor(callId: string): string {
+    if (!/^[A-Za-z0-9_-]{1,128}$/.test(callId)) throw new Error("Invalid Provider call ID.");
+    return path.join(this.batchesDir, ".provider-results", `${callId}.json`);
+  }
 
   async loadAll(): Promise<BatchRecord[]> {
     const names = await readdir(this.batchesDir).catch((error: NodeJS.ErrnoException) => {

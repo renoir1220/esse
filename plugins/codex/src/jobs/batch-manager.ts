@@ -92,8 +92,13 @@ export class BatchManager {
           job.name = chineseName;
           changed = true;
         }
-        if (job.status === "running" && (job.offering || batch.offering).adapterId !== "agent-generation" && job.providerTask) {
-          Object.assign(job, { status: "queued", error: undefined, errorOrigin: undefined, finishedAt: undefined, durationMs: undefined });
+        const callId = job.callHistory?.at(-1)?.id;
+        if ((job.status === "running" || job.status === "queued") && (job.offering || batch.offering).adapterId !== "agent-generation" && callId) {
+          try { if (await this.store.loadProviderResult(callId)) job.hasProviderResult = true; }
+          catch { job.hasProviderResult = true; } // Keep a corrupt checkpoint terminal; never submit again.
+        }
+        if ((job.status === "running" || job.status === "queued") && (job.offering || batch.offering).adapterId !== "agent-generation" && (job.providerTask || job.hasProviderResult)) {
+          Object.assign(job, { status: "queued", chargeState: job.chargeState === "charged" ? "charged" : "unknown", error: undefined, errorOrigin: undefined, finishedAt: undefined, durationMs: undefined });
           resumable.push({ batch, job });
           changed = true;
         } else if (job.status === "running") {
@@ -377,6 +382,7 @@ export class BatchManager {
           errorOrigin: undefined,
           providerRequestId: undefined,
           providerTask: undefined,
+          hasProviderResult: false,
           startedAt: undefined,
           finishedAt: undefined,
           durationMs: undefined
@@ -536,7 +542,16 @@ export class BatchManager {
     for (const job of batch.jobs) {
       if (jobIds && !jobIds.includes(job.id)) continue;
       if (job.status !== "queued") continue;
-      Object.assign(job, { status: "canceled", progress: 0, chargeState: "not_charged", finishedAt: new Date().toISOString() });
+      if (job.providerTask || job.hasProviderResult) {
+        const now = new Date().toISOString();
+        const chargeState = job.chargeState === "charged" ? "charged" : "unknown";
+        const error = "Local result retrieval was canceled. The Provider submission was not canceled; its result can be retrieved again.";
+        Object.assign(job, { status: "failed", progress: 100, retryable: true, chargeState, error, errorOrigin: "esse", finishedAt: now });
+        const call = job.callHistory?.at(-1);
+        if (call) Object.assign(call, { status: "failed", chargeState, error, errorOrigin: "esse", finishedAt: now });
+      } else {
+        Object.assign(job, { status: "canceled", progress: 0, chargeState: "not_charged", finishedAt: new Date().toISOString() });
+      }
     }
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
@@ -547,6 +562,12 @@ export class BatchManager {
     const batch = this.requireBatch(batchId);
     for (const job of batch.jobs) {
       if (!jobIds.includes(job.id) || job.status !== "failed" || !job.retryable) continue;
+      if (job.hasProviderResult || (job.providerTask && ["not_start", "submitted", "queued", "in_progress", "completed"].includes(job.providerTask.status))) {
+        Object.assign(job, { status: "queued", chargeState: job.chargeState === "charged" ? "charged" : "unknown", error: undefined, errorOrigin: undefined });
+        const resolved = await this.registry.resolveOffering(job.offering?.id || batch.offering.id);
+        if (!isAgentGeneration(resolved)) this.schedule(batch, job, resolved);
+        continue;
+      }
       if (job.chargeState === "unknown" && !allowUnknownCharge) continue;
       Object.assign(job, {
         status: "queued",
@@ -601,6 +622,7 @@ export class BatchManager {
         throw new Error(`Cannot delete an image that active job ${job.name} still uses.`);
       }
     }
+    await Promise.all(batch.jobs.filter((job) => removedJobIds.has(job.id)).flatMap((job) => job.callHistory || []).map((call) => this.store.deleteProviderResult(call.id)));
     for (const job of remainingJobs) {
       if (job.backups?.length) job.backups = job.backups.filter((backup) => !removedBackupIds.has(backup.id));
       stripJobPaths(job, pathsToDelete);
@@ -803,6 +825,7 @@ export class BatchManager {
       }
       const remaining = await readdir(batch.outputDirectory).catch(() => []);
       if (!remaining.length) await rmdir(batch.outputDirectory).catch(() => undefined);
+      await Promise.all(batch.jobs.flatMap((job) => job.callHistory || []).map((call) => this.store.deleteProviderResult(call.id)));
       await this.store.delete(batch.id);
       this.batches.delete(batch.id);
       for (const [key, id] of this.requestKeys) if (id === batch.id) this.requestKeys.delete(key);
@@ -891,12 +914,16 @@ export class BatchManager {
 
   private async runJob(batch: BatchRecord, job: JobRecord, resolved: ResolvedOffering): Promise<void> {
     const started = Date.now();
-    const startedAt = job.providerTask && job.startedAt ? job.startedAt : new Date(started).toISOString();
-    const call = job.providerTask ? activeCall(job) || beginCall(job, resolved.snapshot, startedAt) : beginCall(job, resolved.snapshot, startedAt);
+    const resuming = Boolean(job.providerTask || job.hasProviderResult);
+    const knownChargeState = job.chargeState;
+    const startedAt = resuming && job.startedAt ? job.startedAt : new Date(started).toISOString();
+    const call = resuming ? activeCall(job) || job.callHistory?.at(-1) || beginCall(job, resolved.snapshot, startedAt) : beginCall(job, resolved.snapshot, startedAt);
+    if (resuming) Object.assign(call, { status: "running", finishedAt: undefined, durationMs: undefined, error: undefined, errorOrigin: undefined });
+    let providerSubmitted = resuming;
     Object.assign(job, {
       status: "running",
       progress: job.providerTask ? job.progress : 5,
-      chargeState: "unknown",
+      chargeState: resuming && knownChargeState === "charged" ? "charged" : "unknown",
       startedAt,
       finishedAt: undefined,
       durationMs: undefined,
@@ -906,11 +933,16 @@ export class BatchManager {
     batch.updatedAt = new Date().toISOString();
     try {
       await this.persist(batch);
-      const adapter = await this.registry.adapterFor(resolved.profile);
       const generationInputs = generationInputsFor(job);
-      const images = job.providerTask ? [] : await imageFilesToDataUrls(generationInputs);
+      const images = resuming ? [] : await imageFilesToDataUrls(generationInputs);
       const runtime = job.generationOptions || batch.generationOptions || {};
-      const result = await adapter.generate({
+      const savedResult = job.hasProviderResult ? await this.store.loadProviderResult(call.id) : undefined;
+      if (job.hasProviderResult && !savedResult) throw new Error("Saved Provider result is missing; no new generation was submitted.");
+      let result = savedResult;
+      if (!result) {
+        const adapter = await this.registry.adapterFor(resolved.profile);
+        providerSubmitted = true;
+        result = await adapter.generate({
         model: resolved.offering.providerModelId,
         prompt: job.prompt,
         images,
@@ -925,7 +957,14 @@ export class BatchManager {
           batch.updatedAt = new Date().toISOString();
           await this.persist(batch);
         }
-      });
+        });
+      }
+      providerSubmitted = true;
+      job.providerRequestId = result.providerRequestId;
+      call.providerRequestId = result.providerRequestId;
+      if (!job.hasProviderResult) await this.store.saveProviderResult(call.id, result);
+      job.hasProviderResult = true;
+      await this.persist(batch);
       const previousOutputs = job.generationInputPaths?.length ? job.generationInputPaths : job.generationInputPath ? [job.generationInputPath] : [];
       job.outputPath = await saveGeneratedImage({
         result,
@@ -940,6 +979,7 @@ export class BatchManager {
         status: "succeeded",
         progress: 100,
         retryable: false,
+        hasProviderResult: false,
         chargeState: "charged",
         providerRequestId: result.providerRequestId,
         generationInputPath: undefined,
@@ -954,11 +994,11 @@ export class BatchManager {
       const providerError = error instanceof ProviderError ? error as ProviderRequestError : undefined;
       const failureMessage = error instanceof Error ? error.message : "Unknown local image generation error";
       const errorOrigin = providerError?.details.origin ?? "esse";
-      const chargeState = providerError?.details.chargeState ?? (job.providerTask ? "unknown" : "not_charged");
+      const chargeState = resuming && knownChargeState === "charged" ? "charged" : providerError?.details.chargeState ?? (providerSubmitted ? "unknown" : "not_charged");
       Object.assign(job, {
         status: "failed",
         progress: 100,
-        retryable: providerError?.details.retryable ?? false,
+        retryable: Boolean(job.hasProviderResult) || (providerError?.details.retryable ?? false),
         chargeState,
         error: failureMessage,
         errorOrigin,
@@ -979,6 +1019,7 @@ export class BatchManager {
       Object.assign(job, { finishedAt: new Date(finished).toISOString(), durationMs });
       batch.updatedAt = new Date().toISOString();
       await this.persist(batch);
+      if (job.status === "succeeded") await this.store.deleteProviderResult(call.id).catch(() => undefined);
     }
   }
 
@@ -1143,7 +1184,8 @@ async function cloneMergedJob(
     generationInputPaths: await copySources(job.generationInputPaths),
     backups,
     offering: job.offering ? cloneOffering(job.offering) : undefined,
-    callHistory: job.callHistory?.map((call) => ({ ...call, id: randomUUID(), offering: cloneOffering(call.offering) }))
+    // Merge moves the original Provider calls; their IDs also own private result checkpoints.
+    callHistory: job.callHistory?.map((call) => ({ ...structuredClone(call), offering: cloneOffering(call.offering) }))
   };
 }
 
