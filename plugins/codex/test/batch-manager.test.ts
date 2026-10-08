@@ -133,6 +133,40 @@ test("deleting a failed output slot also removes its private result checkpoint",
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
+test("failed checkpoint cleanup leaves multi-selection deletion unchanged and retry removes all files", async (t) => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-delete-multi-result-"));
+  try {
+    const fixture = await pendingProviderFixture(root, { mode: "result", status: "failed", chargeState: "unknown", target: true });
+    const target = fixture.manager.get(fixture.targetId!);
+    const modified = await fixture.manager.modifyInPlace({ batchId: target.id, imageIds: [target.jobs[0]!.id], instructions: "seed a real local backup" });
+    await waitForBatch(fixture.manager, modified.id);
+    await fixture.manager.waitForPersistence(modified.id);
+    const manager = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await manager.initialize();
+    const merged = await manager.mergeBatches({ targetBatchId: target.id, sourceBatchIds: [fixture.batchId], requestKey: "merge-for-multi-delete" });
+    const backup = merged.jobs[0]!.backups![0]!;
+    const selectors = [merged.jobs[1]!.id, backup.id];
+    const beforeMemory = manager.get(merged.id);
+    const beforeDisk = await fixture.store.get(merged.id);
+    const cleanup = t.mock.method(fixture.store, "deleteProviderResult", async () => { throw new Error("injected checkpoint cleanup failure"); });
+    await assert.rejects(manager.deleteImages(merged.id, selectors), /injected checkpoint cleanup/);
+    assert.deepEqual(manager.get(merged.id), beforeMemory);
+    assert.deepEqual(await fixture.store.get(merged.id), beforeDisk);
+    await access(backup.outputPath);
+    assert(await fixture.store.loadProviderResult(fixture.callId));
+    cleanup.mock.restore();
+    const retried = await manager.deleteImages(merged.id, selectors);
+    assert.equal(retried.jobs.length, 1);
+    assert.equal(retried.jobs[0]!.backups!.length, 0);
+    assert.equal(await fixture.store.loadProviderResult(fixture.callId), undefined);
+    await assert.rejects(access(backup.outputPath), { code: "ENOENT" });
+    await manager.delete(merged.id);
+    assert.equal(await fixture.store.get(merged.id), undefined);
+    await assert.rejects(readdir(merged.outputDirectory), { code: "ENOENT" });
+    assert.equal(fixture.requests.length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 test("failed result saving during recovery preserves an already charged call", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-charged-recovery-"));
   try {

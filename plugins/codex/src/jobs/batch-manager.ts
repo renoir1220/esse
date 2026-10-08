@@ -622,11 +622,11 @@ export class BatchManager {
         throw new Error(`Cannot delete an image that active job ${job.name} still uses.`);
       }
     }
+    await Promise.all(batch.jobs.filter((job) => removedJobIds.has(job.id)).flatMap((job) => job.callHistory || []).map((call) => this.store.deleteProviderResult(call.id)));
     for (const job of remainingJobs) {
       if (job.backups?.length) job.backups = job.backups.filter((backup) => !removedBackupIds.has(backup.id));
       stripJobPaths(job, pathsToDelete);
     }
-    await Promise.all(batch.jobs.filter((job) => removedJobIds.has(job.id)).flatMap((job) => job.callHistory || []).map((call) => this.store.deleteProviderResult(call.id)));
     batch.jobs = remainingJobs;
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
