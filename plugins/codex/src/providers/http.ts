@@ -138,5 +138,5 @@ function decodeDataImage(value: string | undefined): { base64: string; mimeType:
 }
 
 function sanitize(value: string): string {
-  return value.replace(/sk-[A-Za-z0-9_-]{8,}/g, "[redacted]").slice(0, 800);
+  return value.replace(/sk-[A-Za-z0-9_-]{8,}|AIza[A-Za-z0-9_-]{20,}/g, "[redacted]").slice(0, 800);
 }

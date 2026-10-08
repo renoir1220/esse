@@ -1,5 +1,12 @@
 # Plugin and Agent Sidecar parity
 
+## 2026-10-08 — official Google Gemini image Provider
+
+- Both implementations add a Google Gemini preset with no embedded credential and a native image adapter inside the existing Provider registry/settings architecture. Tuzi, OpenAI-compatible/Subrouter profiles and their stored adapter IDs keep their original routing.
+- Official Gemini Developer API uses x-goog-api-key, models/{id}:generateContent, inlineData reference bytes and final inlineData image results. The adapters map aspect ratio and resolution to generationConfig.imageConfig, retain responseId, skip thought images and reject unsupported inputs before submitting.
+- Connection testing is a read-only native models GET. Ambiguous submission, malformed/safety-blocked output and server failure preserve unknown charge and never repeat a generation POST. Price remains unknown; the UI asks only for a key after selecting the preset.
+- Official REST/schema and offline contracts are documented in docs/google-gemini-provider.md. No real Google credential or paid image invocation has been used; a merged change is not an update to an already published beta.8 binary.
+
 Esse currently has two independent implementations. They intentionally do not share a runtime Core yet. When behavior is ported between `plugins/codex` and `sidecars/agent`, record the user-visible contract here instead of adding a cross-package dependency.
 
 ## 2026-07-21 — initial Sidecar import

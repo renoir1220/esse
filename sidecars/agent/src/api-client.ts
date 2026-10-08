@@ -4,6 +4,7 @@ import path from 'node:path';
 import type { ProviderSettingsStore } from './provider-settings';
 import type { ErrorOrigin, GenerateInput, OfferingSummary, ProviderProfile, ProviderTaskState, ProviderTaskStatus } from './types';
 import product from '../product.json';
+import { GeminiInputError, geminiApiRoot, geminiBlockReason, geminiImages, geminiRequest, geminiResponseId } from './gemini-protocol';
 
 interface ApiImageItem {
   url?: string;
@@ -74,6 +75,9 @@ export class EsseApiClient {
       if (profile.adapterId === 'tuzi-json-images') {
         return await this.tuziRequest(profile, apiKey, offering.providerModelId, input, images, hooks);
       }
+      if (profile.adapterId === 'gemini-native-images') {
+        return await this.geminiRequest(profile, apiKey, offering.providerModelId, input, images, hooks.signal);
+      }
       response = await this.openAiRequest(profile.baseUrl, apiKey, offering.providerModelId, input, images);
     } catch (error) {
       if (error instanceof EsseApiError) throw error;
@@ -89,6 +93,27 @@ export class EsseApiClient {
     const items = extractItems(body);
     if (!items.length) throw new EsseApiError('Provider 没有返回可用图片。', { code: 'empty_provider_result', requestId: requestId(response, body), chargeState: 'unknown', origin: 'esse' });
     return { requestId: requestId(response, body) || randomUUID(), items, reused: false, trustedBaseUrl: profile.baseUrl };
+  }
+
+  private async geminiRequest(profile: ProviderProfile, apiKey: string, model: string, input: GenerateInput, images: string[], signal?: AbortSignal): Promise<ApiGenerateResult> {
+    let url: string;
+    let body: string;
+    try {
+      const prepared = geminiRequest({ ...input, model, images });
+      url = `${geminiApiRoot(profile.baseUrl)}${prepared.endpoint}`;
+      body = prepared.body;
+    } catch (error) {
+      if (!(error instanceof GeminiInputError)) throw error;
+      throw new EsseApiError(error.message, { code: 'invalid_gemini_input', chargeState: 'not_charged', origin: 'esse' });
+    }
+    const timeout = AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS);
+    const response = await this.fetchImpl(url, { method: 'POST', headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' }, body, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    const parsed = await parseResponse(response);
+    if (!response.ok) throw providerError(response, parsed, profile);
+    const id = requestId(response, parsed) || geminiResponseId(parsed);
+    const items = geminiImages(parsed).map((image) => ({ b64_json: image.b64Json }));
+    if (!items.length) throw new EsseApiError(`Gemini 没有返回最终图片${geminiBlockReason(parsed) ? `（${geminiBlockReason(parsed)}）` : ''}；扣费状态未知，不会自动重试。`, { code: 'empty_gemini_result', requestId: id, chargeState: 'unknown', origin: 'upstream' });
+    return { requestId: id || randomUUID(), items, reused: false, trustedBaseUrl: profile.baseUrl };
   }
 
   private async tuziRequest(
@@ -445,7 +470,7 @@ export function sanitizeProviderError(
   profile: Pick<ProviderProfile, 'displayName' | 'baseUrl'>,
   attribution: { showProviderIdentity: boolean; redactProviderTerms: readonly string[] } = product.errorAttribution,
 ): string {
-  let result = value.replace(/sk-[A-Za-z0-9_-]{8,}/g, '[redacted]');
+  let result = value.replace(/sk-[A-Za-z0-9_-]{8,}|AIza[A-Za-z0-9_-]{20,}/g, '[redacted]');
   if (!attribution.showProviderIdentity) {
     const configuredTerms = [
       profile.displayName,
