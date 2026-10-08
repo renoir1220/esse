@@ -67,7 +67,9 @@ export class BatchManager {
       const batch = normalizeBatch(raw);
       let changed = false;
       for (const job of batch.jobs) {
-        if (job.status === 'running' && job.operation !== 'agent' && job.providerTask) {
+        const callId = job.callHistory.at(-1)?.id;
+        if (job.status === 'running' && job.operation !== 'agent' && callId && await this.options.store.loadProviderResult(callId)) job.hasProviderResult = true;
+        if (job.status === 'running' && job.operation !== 'agent' && (job.providerTask || job.hasProviderResult)) {
           job.status = 'queued';
           job.error = undefined;
           job.errorOrigin = undefined;
@@ -320,6 +322,7 @@ export class BatchManager {
       job.errorOrigin = undefined;
       job.requestId = undefined;
       job.providerTask = undefined;
+      job.hasProviderResult = false;
       job.startedAt = undefined;
       job.finishedAt = undefined;
       job.durationMs = undefined;
@@ -362,6 +365,12 @@ export class BatchManager {
     for (const job of matches) {
       if (job.status !== 'failed') throw new Error(`${job.name} is not a failed job.`);
       if (job.operation === 'agent') throw new Error(`${job.name} must be started again by the current Agent.`);
+      if (job.hasProviderResult) {
+        job.status = 'queued';
+        job.error = undefined;
+        job.errorOrigin = undefined;
+        continue;
+      }
       if (job.chargeState === 'unknown' && !allowUnknownCharge) throw new Error(`${job.name} cannot be retried without an explicit unknown-charge confirmation.`);
       job.status = 'queued';
       job.progress = 0;
@@ -666,7 +675,7 @@ export class BatchManager {
       return;
     }
     const offering = job.offering || batch.offering;
-    const resuming = Boolean(job.providerTask);
+    const resuming = Boolean(job.providerTask || job.hasProviderResult);
     if (resuming) resumeJob(job, offering);
     else beginJob(job, offering, 'provider');
     batch.updatedAt = new Date().toISOString();
@@ -694,14 +703,28 @@ export class BatchManager {
         this.changed({ type: 'upsert', batch: snapshot(batch) });
       };
       let result: ApiGenerateResult;
-      if (job.providerTask) {
+      const call = job.callHistory.at(-1)!;
+      if (job.hasProviderResult) {
+        const savedResult = await this.options.store.loadProviderResult(call.id);
+        if (!savedResult) throw new Error('Saved Provider result is missing; no new generation was submitted.');
+        result = savedResult;
+      } else if (job.providerTask) {
         result = await client.resume(input, job.providerTask, { onTask, ...(retrievalSignal ? { singleQuery: true, signal: retrievalSignal } : {}) });
       } else if (job.referenceImageIds.length) {
         const sourcePaths = await Promise.all(job.referenceImageIds.map((id) => this.options.imageStore.pathForId(id)));
+        providerSubmitted = true;
         result = await client.edit(input, sourcePaths, job.requestKey, { onTask });
       } else {
+        providerSubmitted = true;
         result = await client.generate(input, job.requestKey, { onTask });
       }
+      providerSubmitted = true;
+      job.requestId = result.requestId;
+      call.requestId = result.requestId;
+      if (!job.hasProviderResult) await this.options.store.saveProviderResult(call.id, result);
+      job.hasProviderResult = true;
+      batch.updatedAt = new Date().toISOString();
+      await this.options.store.save(batch);
       const [saved] = await this.options.imageStore.saveBatch({
         requestId: result.requestId,
         prompt: job.prompt,
@@ -716,13 +739,16 @@ export class BatchManager {
       changedImageId = saved.id;
     } catch (error) {
       const chargeState = error instanceof EsseApiError ? error.details.chargeState : providerSubmitted ? 'unknown' : 'not_charged';
-      const retryable = error instanceof EsseApiError && (error.details.chargeState === 'unknown'
+      const retryable = Boolean(job.hasProviderResult) || error instanceof EsseApiError && (error.details.chargeState === 'unknown'
         || (error.details.chargeState === 'not_charged'
           && (error.details.status === 429 || (error.details.status !== undefined && error.details.status >= 500))));
       finishFailed(job, retrievalSignal?.aborted ? new Error('本次取回在 1 分钟内没有完成，可以稍后再次取回。') : error, chargeState, retryable);
     } finally {
       batch.updatedAt = new Date().toISOString();
-      try { await this.options.store.save(batch); }
+      try {
+        await this.options.store.save(batch);
+        if (changedImageId) await this.options.store.deleteProviderResult(job.callHistory.at(-1)!.id).catch(() => undefined);
+      }
       finally {
         this.activeJobs.delete(jobKey);
         this.retrievalSignals.delete(jobKey);
@@ -963,7 +989,9 @@ function resumeJob(job: BatchJob, offering: OfferingSummary): void {
   job.error = undefined;
   job.errorOrigin = undefined;
   const call = job.callHistory.at(-1);
-  if (!call || call.status !== 'running') {
+  if (call) {
+    Object.assign(call, { status: 'running', finishedAt: undefined, durationMs: undefined, error: undefined, errorOrigin: undefined });
+  } else {
     job.callHistory.push({
       id: randomUUID(),
       sequence: job.callHistory.length + 1,
@@ -997,6 +1025,7 @@ function finishSucceeded(job: BatchJob, result: ApiGenerateResult, imageId: stri
   job.status = 'succeeded';
   job.progress = 100;
   job.retryable = false;
+  job.hasProviderResult = false;
   job.chargeState = 'charged';
   job.outputImageId = imageId;
   job.requestId = result.requestId;

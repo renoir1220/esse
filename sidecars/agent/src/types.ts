@@ -176,6 +176,8 @@ export interface BatchJob {
   errorOrigin?: ErrorOrigin;
   requestId?: string;
   providerTask?: ProviderTaskState;
+  /** Result bytes/URLs are held in a private local checkpoint, never in snapshots. */
+  hasProviderResult?: boolean;
   createdAt: string;
   startedAt?: string;
   finishedAt?: string;

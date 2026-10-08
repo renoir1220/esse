@@ -17,6 +17,46 @@ afterEach(async () => {
 });
 
 describe('Esse batch manager', () => {
+  it('retains synchronous results after a download failure and retrieves after restart without another paid request', async () => {
+    const fixture = await fixtureDirectory();
+    const privateUrl = 'https://cdn.provider.invalid/output.png?token=private-download-sentinel';
+    const generate = vi.fn(async () => ({ ...generatedResult('sync-request-id'), items: [{ ...generatedResult('sync-request-id').items[0], url: privateUrl }] }));
+    const manager = managerFor(fixture, { ...fakeApi(), generate });
+    const download = vi.spyOn(fixture.imageStore, 'saveBatch').mockRejectedValueOnce(new Error('Could not download generated image (HTTP 403).'));
+    await manager.initialize();
+    const accepted = await manager.create({ prompt: 'sync result', requestKey: 'sync-result' });
+    await manager.waitForIdle();
+    const failed = manager.get(accepted.id);
+    expect(failed.jobs[0]).toMatchObject({ status: 'failed', chargeState: 'unknown', requestId: 'sync-request-id', hasProviderResult: true, error: expect.stringContaining('HTTP 403') });
+    expect(JSON.stringify(failed)).not.toContain(privateUrl);
+    const callId = failed.jobs[0].callHistory[0].id;
+    expect(await fixture.batchStore.loadProviderResult(callId)).toMatchObject({ requestId: 'sync-request-id', items: [expect.objectContaining({ url: privateUrl })] });
+    download.mockRestore();
+    const restarted = managerFor(fixture, { ...fakeApi(), generate });
+    await restarted.initialize();
+    await restarted.retrieveTimedOut(accepted.id);
+    await restarted.waitForIdle();
+    expect(restarted.get(accepted.id).jobs[0]).toMatchObject({ status: 'succeeded', requestId: 'sync-request-id', hasProviderResult: false });
+    expect(restarted.get(accepted.id).jobs[0].callHistory).toHaveLength(1);
+    expect(generate).toHaveBeenCalledTimes(1);
+    expect(await fixture.batchStore.loadProviderResult(callId)).toBeUndefined();
+  });
+
+  it('never regenerates when a saved result checkpoint is missing', async () => {
+    const fixture = await fixtureDirectory();
+    const generate = vi.fn(async () => generatedResult('lost-checkpoint-request'));
+    const manager = managerFor(fixture, { ...fakeApi(), generate });
+    vi.spyOn(fixture.imageStore, 'saveBatch').mockRejectedValueOnce(new Error('download unavailable'));
+    await manager.initialize();
+    const accepted = await manager.create({ prompt: 'missing checkpoint', requestKey: 'missing-checkpoint' });
+    await manager.waitForIdle();
+    await fixture.batchStore.deleteProviderResult(manager.get(accepted.id).jobs[0].callHistory[0].id);
+    await manager.retrieveTimedOut(accepted.id);
+    await manager.waitForIdle();
+    expect(manager.get(accepted.id).jobs[0]).toMatchObject({ status: 'failed', chargeState: 'unknown', error: expect.stringContaining('no new generation') });
+    expect(generate).toHaveBeenCalledTimes(1);
+  });
+
   it('upgrades legacy keep-source merge replays without cloning again', async () => {
     const fixture = await fixtureDirectory();
     const api = fakeApi();

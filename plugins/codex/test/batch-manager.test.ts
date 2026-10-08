@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -14,6 +14,43 @@ import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 import type { BatchRecord } from "../src/types.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
+
+test("synchronous output save failure preserves the result and retries without a paid submission", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-sync-result-"));
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  let submissions = 0;
+  try {
+    const { manager, store } = await createManager(root, async () => {
+      submissions += 1;
+      await gate;
+      return Response.json({ data: [{ b64_json: onePixelPng }] }, { headers: { "x-oneapi-request-id": "sync-result-request" } });
+    }, "nano-banana-2-2k");
+    const created = await manager.create({ offeringId: "offer-default", prompt: "save recovery", requestKey: "sync-save-recovery" });
+    await rm(created.outputDirectory, { recursive: true, force: true });
+    await writeFile(created.outputDirectory, "owned test obstruction");
+    release();
+    const failed = await waitForBatch(manager, created.id);
+    await manager.waitForPersistence(created.id);
+    assert.equal(failed.failed, 1);
+    const job = failed.jobs[0]!;
+    assert.equal(job.chargeState, "unknown");
+    assert.equal(job.hasProviderResult, true);
+    assert.equal(job.providerRequestId, "sync-result-request");
+    assert(!JSON.stringify(failed).includes(onePixelPng));
+    const callId = job.callHistory!.at(-1)!.id;
+    assert.equal((await store.loadProviderResult(callId))?.b64Json, onePixelPng);
+    await rm(created.outputDirectory);
+    await mkdir(created.outputDirectory);
+    await manager.retry(created.id, [job.id]);
+    const recovered = await waitForBatch(manager, created.id);
+    await manager.waitForPersistence(created.id);
+    assert.equal(recovered.succeeded, 1);
+    assert.equal(submissions, 1);
+    assert.equal(recovered.jobs[0]!.callHistory!.length, 1);
+    assert.equal(await store.loadProviderResult(callId), undefined);
+  } finally { release(); await rm(root, { recursive: true, force: true }); }
+});
 
 for (const stage of ["start", "task", "finish"] as const) test(`provider queue continues after ${stage} persistence failure`, async (t) => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-persistence-failure-"));
@@ -700,7 +737,7 @@ for (const stage of ["commit", "cleanup", "receipt"] as const) test(`merged batc
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-async function createManager(root: string, fetchImpl: typeof fetch) {
+async function createManager(root: string, fetchImpl: typeof fetch, providerModelId = "gpt-image-2") {
   const paths = resolveDataPaths({ ESSE_DATA_DIR: root }, process.platform);
   await ensureDataPaths(paths);
   const settings = new SettingsStore(paths.settingsFile, new MemorySecretStore());
@@ -714,8 +751,8 @@ async function createManager(root: string, fetchImpl: typeof fetch) {
     apiKey: "test-key",
     offerings: [{
       id: "offer-default",
-      canonicalModelId: "gpt-image-2",
-      providerModelId: "gpt-image-2",
+      canonicalModelId: providerModelId,
+      providerModelId,
       displayName: "GPT-Image 2",
       price: { mode: "per_request", currency: "USD", amount: 0.05 },
       supportsTextToImage: true,
