@@ -64,3 +64,11 @@ Write every GitHub Release note as a version-specific, bilingual changelog:
 4. Derive the content from the previous-tag comparison and merged pull requests. Do not claim changes that cannot be verified from the release diff.
 5. Omit release-preparation noise such as version bumps, packaging-only commits, and duplicated auto-generated changelogs unless they materially affect users.
 6. End each language section with the matching full-changelog comparison link. Include pull request links only when they add useful detail.
+
+## Completion and evidence
+
+- Mark release work complete only when the new version is published, CI validates its released commit, and release assets pass validation. Keep required physical installation status explicit.
+- Complete live image acceptance only after retrieving the actual image file and checking its pixels, dimensions and requested parameters. HTTP 200 confirms request acceptance, not image validation.
+- At every checkpoint, list unfinished acceptance items and concrete next actions. Continue all feasible work; waiting remains pending. Record genuine approval or platform blocks with evidence and never bypass them.
+- Reuse the user's bounded authorization for routine steps. Before requesting new authorization, check foreseeable dependencies so the request covers concrete remaining work.
+- Persist source changes promptly in an authorized repository; a temporary snapshot alone is insufficient. Record actual, estimated and reserved costs separately, and do not retry an uncertain POST.
