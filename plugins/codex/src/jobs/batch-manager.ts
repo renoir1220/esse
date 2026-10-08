@@ -93,7 +93,10 @@ export class BatchManager {
           changed = true;
         }
         const callId = job.callHistory?.at(-1)?.id;
-        if (job.status === "running" && (job.offering || batch.offering).adapterId !== "agent-generation" && callId && await this.store.loadProviderResult(callId)) job.hasProviderResult = true;
+        if (job.status === "running" && (job.offering || batch.offering).adapterId !== "agent-generation" && callId) {
+          try { if (await this.store.loadProviderResult(callId)) job.hasProviderResult = true; }
+          catch { job.hasProviderResult = true; } // Keep a corrupt checkpoint terminal; never submit again.
+        }
         if (job.status === "running" && (job.offering || batch.offering).adapterId !== "agent-generation" && (job.providerTask || job.hasProviderResult)) {
           Object.assign(job, { status: "queued", error: undefined, errorOrigin: undefined, finishedAt: undefined, durationMs: undefined });
           resumable.push({ batch, job });
@@ -813,6 +816,7 @@ export class BatchManager {
       const remaining = await readdir(batch.outputDirectory).catch(() => []);
       if (!remaining.length) await rmdir(batch.outputDirectory).catch(() => undefined);
       await this.store.delete(batch.id);
+      await Promise.all(batch.jobs.flatMap((job) => job.callHistory || []).map((call) => this.store.deleteProviderResult(call.id)));
       this.batches.delete(batch.id);
       for (const [key, id] of this.requestKeys) if (id === batch.id) this.requestKeys.delete(key);
       this.saveChains.delete(batch.id);

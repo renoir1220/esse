@@ -68,7 +68,10 @@ export class BatchManager {
       let changed = false;
       for (const job of batch.jobs) {
         const callId = job.callHistory.at(-1)?.id;
-        if (job.status === 'running' && job.operation !== 'agent' && callId && await this.options.store.loadProviderResult(callId)) job.hasProviderResult = true;
+        if (job.status === 'running' && job.operation !== 'agent' && callId) {
+          try { if (await this.options.store.loadProviderResult(callId)) job.hasProviderResult = true; }
+          catch { job.hasProviderResult = true; } // Keep a corrupt checkpoint terminal; never submit again.
+        }
         if (job.status === 'running' && job.operation !== 'agent' && (job.providerTask || job.hasProviderResult)) {
           job.status = 'queued';
           job.error = undefined;
@@ -473,6 +476,7 @@ export class BatchManager {
     if (batch.jobs.some((job) => job.status === 'queued' || job.status === 'running')) throw new Error('Cancel or finish active jobs before deleting the batch.');
     await this.cleanupMergedSources(batch);
     await this.options.store.delete(batchId);
+    await Promise.all(batch.jobs.flatMap((job) => job.callHistory).map((call) => this.options.store.deleteProviderResult(call.id)));
     this.batches.delete(batchId);
     for (const [key, id] of this.createKeys) if (id === batchId) this.createKeys.delete(key);
     this.activeBatchId = this.list()[0]?.id;

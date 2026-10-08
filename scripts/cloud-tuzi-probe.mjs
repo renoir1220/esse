@@ -48,6 +48,7 @@ async function curl(url, destination, authenticated, requestFile) {
   await unlink(headers);
   return {
     httpStatus: /^\d{3}$/.test(status) ? Number(status) : 0,
+    connectHttpStatus: Number(/CONNECT tunnel failed, response (\d{3})/.exec(result.stderr ?? '')?.[1]) || undefined,
     durationSeconds: Number(duration) || 0,
     curlExit: result.status,
     requestId: /(?:^|\n)x-oneapi-request-id:\s*([^\r\n]+)/i.exec(headerText)?.[1]?.trim(),

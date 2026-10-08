@@ -48,6 +48,7 @@ test("synchronous output save failure preserves the result and retries without a
     assert.equal(recovered.succeeded, 1);
     assert.equal(submissions, 1);
     assert.equal(recovered.jobs[0]!.callHistory!.length, 1);
+    for (let i = 0; i < 50 && await store.loadProviderResult(callId); i++) await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(await store.loadProviderResult(callId), undefined);
   } finally { release(); await rm(root, { recursive: true, force: true }); }
 });

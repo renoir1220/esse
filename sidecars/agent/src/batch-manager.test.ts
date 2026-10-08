@@ -1,4 +1,4 @@
-import { access, mkdtemp, rm } from 'node:fs/promises';
+import { access, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -55,6 +55,31 @@ describe('Esse batch manager', () => {
     await manager.waitForIdle();
     expect(manager.get(accepted.id).jobs[0]).toMatchObject({ status: 'failed', chargeState: 'unknown', error: expect.stringContaining('no new generation') });
     expect(generate).toHaveBeenCalledTimes(1);
+  });
+
+  it('isolates a corrupt result checkpoint after a crash without exposing its contents or resubmitting', async () => {
+    const fixture = await fixtureDirectory();
+    const generate = vi.fn(async () => generatedResult('corrupt-checkpoint-request'));
+    const manager = managerFor(fixture, { ...fakeApi(), generate });
+    vi.spyOn(fixture.imageStore, 'saveBatch').mockRejectedValueOnce(new Error('download unavailable'));
+    await manager.initialize();
+    const accepted = await manager.create({ prompt: 'corrupt checkpoint', requestKey: 'corrupt-checkpoint' });
+    await manager.waitForIdle();
+    const [record] = await fixture.batchStore.loadAll();
+    const job = record.jobs[0];
+    const callId = job.callHistory[0].id;
+    await writeFile(path.join(fixture.directory, 'batches', '.provider-results', `${callId}.json`), 'private-url-sentinel: malformed JSON');
+    job.status = 'running';
+    job.hasProviderResult = false;
+    await fixture.batchStore.save(record);
+    const restarted = managerFor(fixture, { ...fakeApi(), generate });
+    await restarted.initialize();
+    await restarted.waitForIdle();
+    expect(restarted.get(accepted.id).jobs[0]).toMatchObject({ status: 'failed', chargeState: 'unknown', error: expect.stringContaining('could not be read') });
+    expect(JSON.stringify(restarted.get(accepted.id))).not.toContain('private-url-sentinel');
+    expect(generate).toHaveBeenCalledTimes(1);
+    await restarted.deleteBatch(accepted.id);
+    expect(await fixture.batchStore.loadProviderResult(callId)).toBeUndefined();
   });
 
   it('upgrades legacy keep-source merge replays without cloning again', async () => {

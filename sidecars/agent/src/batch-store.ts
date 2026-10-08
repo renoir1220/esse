@@ -24,7 +24,7 @@ export class BatchStore {
       return result;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined;
-      throw error;
+      throw new Error('Saved Provider result could not be read; no new generation was submitted.', { cause: error });
     }
   }
 

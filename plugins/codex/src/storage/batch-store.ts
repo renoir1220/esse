@@ -14,9 +14,13 @@ export class BatchStore {
   }
 
   async loadProviderResult(callId: string): Promise<GenerateResult | undefined> {
-    const result = await readJsonFile<GenerateResult>(this.resultFileFor(callId));
-    if (result && typeof result.outputUrl !== "string" && typeof result.b64Json !== "string") throw new Error("Invalid saved Provider result.");
-    return result;
+    try {
+      const result = await readJsonFile<GenerateResult>(this.resultFileFor(callId));
+      if (result && typeof result.outputUrl !== "string" && typeof result.b64Json !== "string") throw new Error("Invalid saved Provider result.");
+      return result;
+    } catch (error) {
+      throw new Error("Saved Provider result could not be read; no new generation was submitted.", { cause: error });
+    }
   }
 
   async deleteProviderResult(callId: string): Promise<void> {
