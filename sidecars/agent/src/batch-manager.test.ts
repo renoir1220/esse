@@ -17,6 +17,81 @@ afterEach(async () => {
 });
 
 describe('Esse batch manager', () => {
+  for (const mode of ['result', 'task'] as const) for (const chargeState of ['unknown', 'charged'] as const) {
+    it(`cancel queued ${mode} retrieval retains ${chargeState} and can retrieve again without submission`, async () => {
+      const fixture = await pendingProviderFixture(mode, chargeState);
+      let canRun = false;
+      const generate = vi.fn(fakeApi().generate);
+      const resume = vi.fn(fakeApi().resume);
+      const manager = managerFor(fixture, { ...fakeApi(), generate, resume }, { canRun: async () => canRun });
+      await manager.initialize();
+      const pending = manager.retrieveTimedOut(fixture.batchId);
+      await vi.waitFor(() => expect(manager.get(fixture.batchId).jobs[0].status).toBe('queued'));
+      const canceled = await manager.cancelQueued(fixture.batchId);
+      await pending;
+      expect(canceled.jobs[0]).toMatchObject({ status: 'failed', chargeState, retryable: true, requestId: 'accepted-request', error: expect.stringContaining('Provider submission was not canceled') });
+      expect(canceled.jobs[0].callHistory).toHaveLength(1);
+      expect(canceled.jobs[0].callHistory[0].chargeState).toBe(chargeState);
+      expect(generate).not.toHaveBeenCalled();
+      expect(resume).not.toHaveBeenCalled();
+      canRun = true;
+      await manager.retrieveTimedOut(fixture.batchId);
+      await manager.waitForIdle();
+      expect(manager.get(fixture.batchId).jobs[0]).toMatchObject({ status: 'succeeded', requestId: 'accepted-request' });
+      expect(manager.get(fixture.batchId).jobs[0].callHistory).toHaveLength(1);
+      expect(generate).not.toHaveBeenCalled();
+      expect(resume).toHaveBeenCalledTimes(mode === 'task' ? 1 : 0);
+    });
+  }
+
+  it('resumes a queued result checkpoint after restart without another Provider request', async () => {
+    const fixture = await pendingProviderFixture('result', 'charged');
+    const [record] = await fixture.batchStore.loadAll();
+    record.jobs[0].status = 'queued';
+    record.jobs[0].hasProviderResult = false; // The private result is authoritative even before the marker is persisted.
+    await fixture.batchStore.save(record);
+    const generate = vi.fn(fakeApi().generate);
+    const resume = vi.fn(fakeApi().resume);
+    const restarted = managerFor(fixture, { ...fakeApi(), generate, resume });
+    await restarted.initialize();
+    await restarted.waitForIdle();
+    expect(restarted.get(fixture.batchId).jobs[0]).toMatchObject({ status: 'succeeded', chargeState: 'charged', requestId: 'accepted-request' });
+    expect(restarted.get(fixture.batchId).jobs[0].callHistory).toHaveLength(1);
+    expect(generate).not.toHaveBeenCalled();
+    expect(resume).not.toHaveBeenCalled();
+  });
+
+  it('keeps batch metadata when private result cleanup fails so deletion can be retried', async () => {
+    const fixture = await pendingProviderFixture('result', 'unknown');
+    const generate = vi.fn(fakeApi().generate);
+    const manager = managerFor(fixture, { ...fakeApi(), generate });
+    await manager.initialize();
+    const callId = manager.get(fixture.batchId).jobs[0].callHistory[0].id;
+    vi.spyOn(fixture.batchStore, 'deleteProviderResult').mockRejectedValueOnce(new Error('injected result cleanup failure'));
+    await expect(manager.deleteBatch(fixture.batchId)).rejects.toThrow('injected result cleanup');
+    expect((await fixture.batchStore.loadAll()).map((batch) => batch.id)).toContain(fixture.batchId);
+    expect(manager.get(fixture.batchId).jobs[0].chargeState).toBe('unknown');
+    expect(await fixture.batchStore.loadProviderResult(callId)).toBeDefined();
+    await manager.deleteBatch(fixture.batchId);
+    expect(await fixture.batchStore.loadProviderResult(callId)).toBeUndefined();
+    expect(generate).not.toHaveBeenCalled();
+  });
+
+  it('preserves an already charged call when a repeated result download fails', async () => {
+    const fixture = await pendingProviderFixture('result', 'charged');
+    const generate = vi.fn(fakeApi().generate);
+    const manager = managerFor(fixture, { ...fakeApi(), generate });
+    vi.spyOn(fixture.imageStore, 'saveBatch').mockRejectedValueOnce(new Error('download still unavailable'));
+    await manager.initialize();
+    await manager.retrieveTimedOut(fixture.batchId);
+    await manager.waitForIdle();
+    const failed = manager.get(fixture.batchId).jobs[0];
+    expect(failed).toMatchObject({ status: 'failed', chargeState: 'charged', hasProviderResult: true });
+    expect(failed.callHistory).toHaveLength(1);
+    expect(failed.callHistory[0].chargeState).toBe('charged');
+    expect(generate).not.toHaveBeenCalled();
+  });
+
   it('retains synchronous results after a download failure and retrieves after restart without another paid request', async () => {
     const fixture = await fixtureDirectory();
     const privateUrl = 'https://cdn.provider.invalid/output.png?token=private-download-sentinel';
@@ -694,6 +769,23 @@ describe('Esse batch manager', () => {
     expect(failed.jobs[0].callHistory[0]).toMatchObject({ source: 'agent', errorOrigin: 'upstream' });
   });
 });
+
+async function pendingProviderFixture(mode: 'result' | 'task', chargeState: 'unknown' | 'charged') {
+  const fixture = await fixtureDirectory();
+  const seed = managerFor(fixture, fakeApi(), { canRun: async () => false });
+  await seed.initialize();
+  const created = await seed.create({ prompt: 'accepted Provider request', requestKey: 'pending-provider-request' });
+  await seed.waitForIdle();
+  const [record] = await fixture.batchStore.loadAll();
+  const job = record.jobs[0];
+  const now = new Date().toISOString();
+  Object.assign(job, { status: 'failed', chargeState, retryable: true, requestId: 'accepted-request', hasProviderResult: mode === 'result', startedAt: now });
+  job.callHistory = [{ id: `accepted-call-${mode}`, sequence: 1, attempt: 1, source: 'provider', offering: record.offering, status: 'failed', chargeState, startedAt: now, requestId: 'accepted-request' }];
+  if (mode === 'result') await fixture.batchStore.saveProviderResult(job.callHistory[0].id, generatedResult('accepted-request'));
+  else job.providerTask = { id: 'accepted-request', protocol: 'tuzi-video', status: 'in_progress', requestId: 'accepted-request', submittedAt: now, updatedAt: now };
+  await fixture.batchStore.save(record);
+  return { ...fixture, batchId: created.id };
+}
 
 async function fixtureDirectory() {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-batch-manager-test-'));

@@ -68,9 +68,13 @@ export class BatchManager {
       let changed = false;
       for (const job of batch.jobs) {
         const callId = job.callHistory.at(-1)?.id;
-        if (job.status === 'running' && job.operation !== 'agent' && callId) {
+        if ((job.status === 'running' || job.status === 'queued') && job.operation !== 'agent' && callId) {
           try { if (await this.options.store.loadProviderResult(callId)) job.hasProviderResult = true; }
           catch { job.hasProviderResult = true; } // Keep a corrupt checkpoint terminal; never submit again.
+        }
+        if ((job.status === 'running' || job.status === 'queued') && (job.providerTask || job.hasProviderResult) && job.chargeState === 'not_charged') {
+          job.chargeState = 'unknown';
+          changed = true;
         }
         if (job.status === 'running' && job.operation !== 'agent' && (job.providerTask || job.hasProviderResult)) {
           job.status = 'queued';
@@ -348,10 +352,16 @@ export class BatchManager {
     const now = new Date().toISOString();
     for (const job of batch.jobs) {
       if (job.status !== 'queued') continue;
-      job.status = 'canceled';
-      job.progress = 100;
-      job.finishedAt = now;
-      job.chargeState = 'not_charged';
+      if (job.providerTask || job.hasProviderResult) {
+        const chargeState = job.chargeState === 'charged' ? 'charged' : 'unknown';
+        finishFailed(job, new Error('Local result retrieval was canceled. The Provider submission was not canceled; its result can be retrieved again.'), chargeState, true, 'esse');
+        this.retrievalSignals.delete(`${batchId}:${job.id}`);
+      } else {
+        job.status = 'canceled';
+        job.progress = 100;
+        job.finishedAt = now;
+        job.chargeState = 'not_charged';
+      }
     }
     batch.updatedAt = now;
     await this.options.store.save(batch);
@@ -370,6 +380,7 @@ export class BatchManager {
       if (job.operation === 'agent') throw new Error(`${job.name} must be started again by the current Agent.`);
       if (job.hasProviderResult) {
         job.status = 'queued';
+        job.chargeState = job.chargeState === 'charged' ? 'charged' : 'unknown';
         job.error = undefined;
         job.errorOrigin = undefined;
         continue;
@@ -411,7 +422,7 @@ export class BatchManager {
       job.errorOrigin = undefined;
       job.finishedAt = undefined;
       job.durationMs = undefined;
-      job.chargeState = 'unknown';
+      job.chargeState = job.chargeState === 'charged' ? 'charged' : 'unknown';
     }
     if (jobs.length) {
       batch.updatedAt = now;
@@ -429,7 +440,7 @@ export class BatchManager {
       const unfinished = jobs.filter((job) => job.status === 'queued' || job.status === 'running');
       if (unfinished.length) {
         for (const job of unfinished) {
-          finishFailed(job, new Error('本次取回在 1 分钟内没有完成，可以稍后再次取回。'), 'unknown', true, 'transport');
+          finishFailed(job, new Error('本次取回在 1 分钟内没有完成，可以稍后再次取回。'), job.chargeState === 'charged' ? 'charged' : 'unknown', true, 'transport');
           if (!this.activeJobs.has(`${batchId}:${job.id}`)) this.retrievalSignals.delete(`${batchId}:${job.id}`);
         }
         batch.updatedAt = new Date().toISOString();
@@ -475,8 +486,8 @@ export class BatchManager {
     const batch = this.requiredBatch(batchId);
     if (batch.jobs.some((job) => job.status === 'queued' || job.status === 'running')) throw new Error('Cancel or finish active jobs before deleting the batch.');
     await this.cleanupMergedSources(batch);
-    await this.options.store.delete(batchId);
     await Promise.all(batch.jobs.flatMap((job) => job.callHistory).map((call) => this.options.store.deleteProviderResult(call.id)));
+    await this.options.store.delete(batchId);
     this.batches.delete(batchId);
     for (const [key, id] of this.createKeys) if (id === batchId) this.createKeys.delete(key);
     this.activeBatchId = this.list()[0]?.id;
@@ -680,6 +691,7 @@ export class BatchManager {
     }
     const offering = job.offering || batch.offering;
     const resuming = Boolean(job.providerTask || job.hasProviderResult);
+    const knownChargeState = job.chargeState;
     if (resuming) resumeJob(job, offering);
     else beginJob(job, offering, 'provider');
     batch.updatedAt = new Date().toISOString();
@@ -742,7 +754,7 @@ export class BatchManager {
       finishSucceeded(job, result, saved.id);
       changedImageId = saved.id;
     } catch (error) {
-      const chargeState = error instanceof EsseApiError ? error.details.chargeState : providerSubmitted ? 'unknown' : 'not_charged';
+      const chargeState = resuming && knownChargeState === 'charged' ? 'charged' : error instanceof EsseApiError ? error.details.chargeState : providerSubmitted ? 'unknown' : 'not_charged';
       const retryable = Boolean(job.hasProviderResult) || error instanceof EsseApiError && (error.details.chargeState === 'unknown'
         || (error.details.chargeState === 'not_charged'
           && (error.details.status === 429 || (error.details.status !== undefined && error.details.status >= 500))));
@@ -987,7 +999,7 @@ function beginJob(job: BatchJob, offering: OfferingSummary, source: 'provider' |
 function resumeJob(job: BatchJob, offering: OfferingSummary): void {
   job.status = 'running';
   job.retryable = false;
-  job.chargeState = 'unknown';
+  job.chargeState = job.chargeState === 'charged' ? 'charged' : 'unknown';
   job.finishedAt = undefined;
   job.durationMs = undefined;
   job.error = undefined;
@@ -1042,7 +1054,7 @@ function finishSucceeded(job: BatchJob, result: ApiGenerateResult, imageId: stri
 function finishFailed(
   job: BatchJob,
   error: unknown,
-  chargeState: 'not_charged' | 'unknown',
+  chargeState: 'not_charged' | 'unknown' | 'charged',
   retryable: boolean,
   explicitOrigin?: ErrorOrigin,
 ): void {

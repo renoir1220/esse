@@ -93,12 +93,12 @@ export class BatchManager {
           changed = true;
         }
         const callId = job.callHistory?.at(-1)?.id;
-        if (job.status === "running" && (job.offering || batch.offering).adapterId !== "agent-generation" && callId) {
+        if ((job.status === "running" || job.status === "queued") && (job.offering || batch.offering).adapterId !== "agent-generation" && callId) {
           try { if (await this.store.loadProviderResult(callId)) job.hasProviderResult = true; }
           catch { job.hasProviderResult = true; } // Keep a corrupt checkpoint terminal; never submit again.
         }
-        if (job.status === "running" && (job.offering || batch.offering).adapterId !== "agent-generation" && (job.providerTask || job.hasProviderResult)) {
-          Object.assign(job, { status: "queued", error: undefined, errorOrigin: undefined, finishedAt: undefined, durationMs: undefined });
+        if ((job.status === "running" || job.status === "queued") && (job.offering || batch.offering).adapterId !== "agent-generation" && (job.providerTask || job.hasProviderResult)) {
+          Object.assign(job, { status: "queued", chargeState: job.chargeState === "charged" ? "charged" : "unknown", error: undefined, errorOrigin: undefined, finishedAt: undefined, durationMs: undefined });
           resumable.push({ batch, job });
           changed = true;
         } else if (job.status === "running") {
@@ -542,7 +542,16 @@ export class BatchManager {
     for (const job of batch.jobs) {
       if (jobIds && !jobIds.includes(job.id)) continue;
       if (job.status !== "queued") continue;
-      Object.assign(job, { status: "canceled", progress: 0, chargeState: "not_charged", finishedAt: new Date().toISOString() });
+      if (job.providerTask || job.hasProviderResult) {
+        const now = new Date().toISOString();
+        const chargeState = job.chargeState === "charged" ? "charged" : "unknown";
+        const error = "Local result retrieval was canceled. The Provider submission was not canceled; its result can be retrieved again.";
+        Object.assign(job, { status: "failed", progress: 100, retryable: true, chargeState, error, errorOrigin: "esse", finishedAt: now });
+        const call = job.callHistory?.at(-1);
+        if (call) Object.assign(call, { status: "failed", chargeState, error, errorOrigin: "esse", finishedAt: now });
+      } else {
+        Object.assign(job, { status: "canceled", progress: 0, chargeState: "not_charged", finishedAt: new Date().toISOString() });
+      }
     }
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
@@ -553,8 +562,8 @@ export class BatchManager {
     const batch = this.requireBatch(batchId);
     for (const job of batch.jobs) {
       if (!jobIds.includes(job.id) || job.status !== "failed" || !job.retryable) continue;
-      if (job.hasProviderResult) {
-        Object.assign(job, { status: "queued", error: undefined, errorOrigin: undefined });
+      if (job.hasProviderResult || (job.providerTask && ["not_start", "submitted", "queued", "in_progress", "completed"].includes(job.providerTask.status))) {
+        Object.assign(job, { status: "queued", chargeState: job.chargeState === "charged" ? "charged" : "unknown", error: undefined, errorOrigin: undefined });
         const resolved = await this.registry.resolveOffering(job.offering?.id || batch.offering.id);
         if (!isAgentGeneration(resolved)) this.schedule(batch, job, resolved);
         continue;
@@ -617,6 +626,7 @@ export class BatchManager {
       if (job.backups?.length) job.backups = job.backups.filter((backup) => !removedBackupIds.has(backup.id));
       stripJobPaths(job, pathsToDelete);
     }
+    await Promise.all(batch.jobs.filter((job) => removedJobIds.has(job.id)).flatMap((job) => job.callHistory || []).map((call) => this.store.deleteProviderResult(call.id)));
     batch.jobs = remainingJobs;
     batch.updatedAt = new Date().toISOString();
     await this.persist(batch);
@@ -815,8 +825,8 @@ export class BatchManager {
       }
       const remaining = await readdir(batch.outputDirectory).catch(() => []);
       if (!remaining.length) await rmdir(batch.outputDirectory).catch(() => undefined);
-      await this.store.delete(batch.id);
       await Promise.all(batch.jobs.flatMap((job) => job.callHistory || []).map((call) => this.store.deleteProviderResult(call.id)));
+      await this.store.delete(batch.id);
       this.batches.delete(batch.id);
       for (const [key, id] of this.requestKeys) if (id === batch.id) this.requestKeys.delete(key);
       this.saveChains.delete(batch.id);
@@ -905,6 +915,7 @@ export class BatchManager {
   private async runJob(batch: BatchRecord, job: JobRecord, resolved: ResolvedOffering): Promise<void> {
     const started = Date.now();
     const resuming = Boolean(job.providerTask || job.hasProviderResult);
+    const knownChargeState = job.chargeState;
     const startedAt = resuming && job.startedAt ? job.startedAt : new Date(started).toISOString();
     const call = resuming ? activeCall(job) || job.callHistory?.at(-1) || beginCall(job, resolved.snapshot, startedAt) : beginCall(job, resolved.snapshot, startedAt);
     if (resuming) Object.assign(call, { status: "running", finishedAt: undefined, durationMs: undefined, error: undefined, errorOrigin: undefined });
@@ -912,7 +923,7 @@ export class BatchManager {
     Object.assign(job, {
       status: "running",
       progress: job.providerTask ? job.progress : 5,
-      chargeState: "unknown",
+      chargeState: resuming && knownChargeState === "charged" ? "charged" : "unknown",
       startedAt,
       finishedAt: undefined,
       durationMs: undefined,
@@ -983,7 +994,7 @@ export class BatchManager {
       const providerError = error instanceof ProviderError ? error as ProviderRequestError : undefined;
       const failureMessage = error instanceof Error ? error.message : "Unknown local image generation error";
       const errorOrigin = providerError?.details.origin ?? "esse";
-      const chargeState = providerError?.details.chargeState ?? (providerSubmitted ? "unknown" : "not_charged");
+      const chargeState = resuming && knownChargeState === "charged" ? "charged" : providerError?.details.chargeState ?? (providerSubmitted ? "unknown" : "not_charged");
       Object.assign(job, {
         status: "failed",
         progress: 100,
@@ -1173,7 +1184,8 @@ async function cloneMergedJob(
     generationInputPaths: await copySources(job.generationInputPaths),
     backups,
     offering: job.offering ? cloneOffering(job.offering) : undefined,
-    callHistory: job.callHistory?.map((call) => ({ ...call, id: randomUUID(), offering: cloneOffering(call.offering) }))
+    // Merge moves the original Provider calls; their IDs also own private result checkpoints.
+    callHistory: job.callHistory?.map((call) => ({ ...structuredClone(call), offering: cloneOffering(call.offering) }))
   };
 }
 
