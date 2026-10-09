@@ -433,7 +433,7 @@ function registerIpc(): void {
     }
     return loadState();
   });
-  ipcMain.handle('providers:test', async (_event, input: { baseUrl: string; profileId?: string; apiKey?: string }) => providerSettings.testProvider(input, providerNetwork.fetch));
+  ipcMain.handle('providers:test', async (_event, input: { baseUrl: string; profileId?: string; apiKey?: string; adapterId?: import('./types').AdapterId }) => providerSettings.testProvider(input, providerNetwork.fetch));
   ipcMain.handle('batches:modify', async (_event, input: ModifyBatchInput) => {
     await batchManager.modify(input);
     return loadState();

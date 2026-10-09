@@ -1,9 +1,23 @@
 import { constants } from "node:fs";
-import { copyFile, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { GenerateResult } from "../types.js";
 import { decodedBase64Length, detectImageFormat, MAX_GENERATED_IMAGE_BYTES } from "./image-format.js";
 import { downloadRemoteImage } from "./remote-image-download.js";
+
+/** Publish all final parts together; a failed later part leaves no unowned files. */
+export async function saveGeneratedImages(options: Parameters<typeof saveGeneratedImage>[0]): Promise<string[]> {
+  const paths: string[] = [];
+  try {
+    for (const [index, result] of [options.result, ...(options.result.additionalImages || [])].entries()) {
+      paths.push(await saveGeneratedImage({ ...options, result, sourceName: index ? `${options.sourceName}-结果${index + 1}` : options.sourceName }));
+    }
+    return paths;
+  } catch (error) {
+    await Promise.all(paths.map((filePath) => rm(filePath, { force: true })));
+    throw error;
+  }
+}
 
 export async function saveGeneratedImage(options: {
   result: GenerateResult;

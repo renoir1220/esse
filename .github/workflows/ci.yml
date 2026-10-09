@@ -60,6 +60,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run e2e:provider-redirects
       - run: npm run e2e:thumbnails
       - run: npm run make
       - run: npm run verify:icons:windows
@@ -96,6 +97,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+      - run: npm run e2e:provider-redirects
       - run: npm run e2e:thumbnails
       - run: npm run make:macos:${{ matrix.arch }}
       - run: bash scripts/verify-macos-bundle.sh ${{ matrix.arch }}

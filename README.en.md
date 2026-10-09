@@ -27,7 +27,7 @@ You can also download the matching Plugin ZIP from [GitHub Releases](https://git
 
 Download the matching `esse-community-windows-x64-*.exe` or `esse-community-macos-*-*.dmg` from [GitHub Releases](https://github.com/renoir1220/esse/releases), verify it against `sidecar-latest.json` or `checksums.txt`, and open Esse Community after installation. In settings:
 
-1. Select a built-in Tuzi Provider preset or add an OpenAI-compatible Provider.
+1. Select a built-in Tuzi or official Google Gemini Provider preset, or add an OpenAI-compatible Provider. The Google preset supplies its endpoint and model; enter your own API key in settings. See [Google Gemini configuration](docs/google-gemini-provider.md).
 2. Enter the API key inside Esse Community, test the connection, and save a default model.
 3. Copy the MCP configuration into the Agent's user-level HTTP MCP settings.
 

@@ -1,5 +1,12 @@
 # Plugin and Agent Sidecar parity
 
+## 2026-10-08 — official Google Gemini image Provider
+
+- Both implementations add a Google Gemini preset with no embedded credential and a native image adapter inside the existing Provider registry/settings architecture. Tuzi, OpenAI-compatible/Subrouter profiles and their stored adapter IDs keep their original routing.
+- Official Gemini Developer API uses x-goog-api-key, models/{id}:generateContent, inlineData reference bytes and final inlineData image results. The adapters map aspect ratio and resolution to generationConfig.imageConfig, retain responseId, skip thought images and reject unsupported inputs before submitting.
+- Connection testing is a read-only native models GET. Ambiguous submission, malformed/safety-blocked output and server failure preserve unknown charge and never repeat a generation POST. Price remains unknown; the UI asks only for a key after selecting the preset.
+- Official REST/schema and offline contracts are documented in docs/google-gemini-provider.md. No real Google credential or paid image invocation has been used; a merged change is not an update to an already published beta.8 binary.
+
 Esse currently has two independent implementations. They intentionally do not share a runtime Core yet. When behavior is ported between `plugins/codex` and `sidecars/agent`, record the user-visible contract here instead of adding a cross-package dependency.
 
 ## 2026-07-21 — initial Sidecar import
@@ -134,3 +141,9 @@ Both implementations checkpoint completed Provider results in private, permissio
 Batch moves preserve the original Provider call IDs that own these checkpoints, including interrupted merge cleanup. A queued retrieval resumes after restart. Canceling that local retrieval retains the completed result or accepted task, keeps an already charged or unknown charge state, and allows another retrieval without a new submission. Result-cleanup failures leave batch metadata available for deletion retry; deleting a Plugin output slot also removes its private result files.
 
 The cloud-only Tuzi probe persists its complete response and sensitive download reference before downloading, records exact HTTP and curl failures, reserves unknown charges in a cumulative CNY 10 ledger before each single-image request, and never retries a POST. Paid execution requires explicit authorization; the probe is not a desktop installation or UI acceptance test.
+
+## 2026-10-09 — Gemini redirect isolation and complete final results
+
+The independent native adapters reject redirects on both generation POSTs and model-list GETs. Credential-free cross-origin 302/307/308 fixtures cover all four paths; the Sidecar additionally exercises actual Electron session.fetch in isolated temporary app data on Windows and both macOS architectures. No provider key enters a URL.
+
+Every final inline image is checkpointed before output saving. The first image is the main result; additional final images are attached to the same job using the existing auxiliary-image records, marked with resultIndex and the original providerCallId, and displayed as same-call results. Existing bounded previews, image selection/modification, per-image deletion, batch merge and checkpoint recovery retain these attachments without creating extra charged jobs. Plugin multi-part writes roll back only their own new files if a later part fails; Sidecar publishes every saved image ID and removes every related image from UI state on deletion. Native 21:9 and equivalent pixel inputs retain the API spelling after ratio reduction.

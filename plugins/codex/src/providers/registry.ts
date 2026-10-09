@@ -9,6 +9,8 @@ import {
 } from "../types.js";
 import type { SettingsStore } from "../storage/settings-store.js";
 import { OpenAiImagesAdapter } from "./openai-images.js";
+import { GeminiImagesAdapter } from "./gemini-images.js";
+import { geminiApiRoot } from "./gemini-protocol.js";
 import { TuziJsonImagesAdapter } from "./tuzi-json-images.js";
 import { parseResponse, providerError, type FetchLike } from "./http.js";
 
@@ -57,18 +59,30 @@ export class ProviderRegistry {
     const options = { baseUrl: profile.baseUrl, apiKey, fetchImpl: this.fetchImpl };
     if (profile.adapterId === "tuzi-json-images") return new TuziJsonImagesAdapter(options);
     if (profile.adapterId === "openai-images") return new OpenAiImagesAdapter(options);
+    if (profile.adapterId === "gemini-native-images") return new GeminiImagesAdapter(options);
     return assertNever(profile.adapterId);
   }
 
-  async testProfile(input: { baseUrl: string; profileId?: string; apiKey?: string }): Promise<{ models: string[]; requestId?: string }> {
+  async testProfile(input: { baseUrl: string; profileId?: string; apiKey?: string; adapterId?: AdapterId }): Promise<{ models: string[]; requestId?: string }> {
     const apiKey = input.apiKey?.trim() || (input.profileId ? await this.settings.getApiKey(input.profileId) : undefined);
     if (!apiKey) throw new Error("Enter an API key before testing the provider.");
-    const response = await this.fetchImpl(`${apiRoot(input.baseUrl)}/v1/models`, {
-      headers: { authorization: `Bearer ${apiKey}` },
+    const adapterId = input.adapterId || (input.profileId ? (await this.settings.listProfiles()).find((profile) => profile.id === input.profileId)?.adapterId : undefined);
+    const gemini = adapterId === "gemini-native-images";
+    const response = await this.fetchImpl(gemini ? `${geminiApiRoot(input.baseUrl)}/models?pageSize=100` : `${apiRoot(input.baseUrl)}/v1/models`, {
+      headers: gemini ? { "x-goog-api-key": apiKey } : { authorization: `Bearer ${apiKey}` },
+      ...(gemini ? { redirect: "error" as const } : {}),
       signal: AbortSignal.timeout(30_000)
     });
     const body = await parseResponse(response);
     if (!response.ok) throw providerError(response, body);
+    if (gemini) {
+      const records = Array.isArray((body as { models?: unknown[] }).models) ? (body as { models: unknown[] }).models : [];
+      const models = records.flatMap((entry) => {
+        const model = entry as { name?: unknown; supportedGenerationMethods?: unknown[] };
+        return typeof model?.name === "string" && model.supportedGenerationMethods?.includes("generateContent") && /image|nano-banana/.test(model.name) ? [model.name.replace(/^models\//, "")] : [];
+      }).sort();
+      return { models, requestId: response.headers.get("x-request-id") || undefined };
+    }
     const data = Array.isArray((body as { data?: unknown[] }).data) ? (body as { data: unknown[] }).data : [];
     const models = data
       .map((entry) => entry && typeof entry === "object" && typeof (entry as { id?: unknown }).id === "string" ? (entry as { id: string }).id : undefined)
@@ -138,5 +152,5 @@ function assertNever(value: never): never {
 }
 
 export function isAdapterId(value: string): value is AdapterId {
-  return value === "tuzi-json-images" || value === "openai-images" || value === "agent-generation";
+  return value === "tuzi-json-images" || value === "openai-images" || value === "gemini-native-images" || value === "agent-generation";
 }

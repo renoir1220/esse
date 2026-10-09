@@ -1,11 +1,26 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { saveGeneratedImage } from "../src/files/output-files.js";
+import { saveGeneratedImage, saveGeneratedImages } from "../src/files/output-files.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
+
+test('multiple final images roll back only their newly created files when a later part is invalid', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'esse-multiple-output-'));
+  try {
+    const original = await saveGeneratedImage({ result: { b64Json: onePixelPng }, outputDirectory: root, sourceName: 'existing' });
+    await assert.rejects(saveGeneratedImages({
+      result: { b64Json: onePixelPng, additionalImages: [{ b64Json: Buffer.from('not-an-image').toString('base64') }] },
+      outputDirectory: root, sourceName: 'new',
+    }), /not a recognized image/);
+    assert.deepEqual(await readdir(root), [path.basename(original)]);
+    const outputs = await saveGeneratedImages({ result: { b64Json: onePixelPng, additionalImages: [{ b64Json: onePixelPng }] }, outputDirectory: root, sourceName: 'new' });
+    assert.equal(outputs.length, 2);
+    assert.notEqual(outputs[0], outputs[1]);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
 
 test("generated output trusts image signatures instead of MIME or generic RIFF/ftyp containers", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-output-signature-"));

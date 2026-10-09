@@ -541,7 +541,7 @@ function registerUiTools(
       displayName: z.string().min(1).max(100),
       tierName: z.string().min(1).max(100),
       baseUrl: z.string().url(),
-      adapterId: z.enum(["tuzi-json-images", "openai-images"]),
+      adapterId: z.enum(["tuzi-json-images", "openai-images", "gemini-native-images"]),
       concurrency: z.number().int().min(1).max(12),
       apiKey: z.string().max(1000).optional(),
       offerings: z.array(offeringInputSchema).min(1).max(50)
@@ -570,7 +570,7 @@ function registerUiTools(
   registerAppTool(server, "ui_test_provider_profile", {
     title: "Test local provider profile",
     description: "Widget-only provider connection test and model discovery.",
-    inputSchema: { baseUrl: z.string().url(), profileId: z.string().optional(), apiKey: z.string().max(1000).optional() },
+    inputSchema: { baseUrl: z.string().url(), profileId: z.string().optional(), apiKey: z.string().max(1000).optional(), adapterId: z.enum(["tuzi-json-images", "openai-images", "gemini-native-images"]).optional() },
     outputSchema: { ok: z.boolean(), modelCount: z.number().int() },
     annotations: { readOnlyHint: true, openWorldHint: true, destructiveHint: false },
     _meta: appOnly

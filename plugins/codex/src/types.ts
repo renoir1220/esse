@@ -1,7 +1,7 @@
 export const CODEX_GENERATION_OFFERING_ID = "esse-codex-generation";
 export const CODEX_GENERATION_PROFILE_ID = "esse-codex";
 
-export type AdapterId = "tuzi-json-images" | "openai-images" | "agent-generation";
+export type AdapterId = "tuzi-json-images" | "openai-images" | "gemini-native-images" | "agent-generation";
 export type PriceMode = "per_request" | "token" | "model_quota" | "unknown";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 export type JobCallStatus = "running" | "succeeded" | "failed" | "canceled";
@@ -131,6 +131,9 @@ export interface JobBackup {
   referenceImagePaths?: string[];
   offering?: OfferingSnapshot;
   createdAt: string;
+  /** Extra final image from the same paid call, rather than a historical version. */
+  resultIndex?: number;
+  providerCallId?: string;
 }
 
 export interface OfferingSnapshot {
@@ -208,6 +211,7 @@ export interface GenerateResult {
   b64Json?: string;
   mimeType?: string;
   providerRequestId?: string;
+  additionalImages?: Array<{ outputUrl?: string; b64Json?: string; mimeType?: string }>;
 }
 
 export interface ProviderAdapter {

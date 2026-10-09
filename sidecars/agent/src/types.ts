@@ -3,7 +3,7 @@ export type BatchStatus = 'queued' | 'running' | 'completed' | 'partial' | 'fail
 export type ChargeState = 'not_charged' | 'charged' | 'unknown';
 export type BatchOperation = 'generate' | 'modify' | 'agent';
 
-export type AdapterId = 'tuzi-json-images' | 'openai-images' | 'agent-generation';
+export type AdapterId = 'tuzi-json-images' | 'openai-images' | 'gemini-native-images' | 'agent-generation';
 export type PriceMode = 'per_request' | 'token' | 'model_quota' | 'unknown';
 
 export interface PriceConfig {
@@ -118,6 +118,9 @@ export interface JobBackup {
   id: string;
   name: string;
   imageId: string;
+  /** Extra final image from the same paid call, rather than a historical version. */
+  resultIndex?: number;
+  providerCallId?: string;
   prompt: string;
   referenceImageIds?: string[];
   offering?: OfferingSummary;
@@ -297,7 +300,7 @@ export interface EsseDesktopBridge {
   refresh(): Promise<DesktopState>;
   saveProvider(input: SaveProviderInput): Promise<DesktopState>;
   deleteProvider(id: string): Promise<DesktopState>;
-  testProvider(input: { baseUrl: string; profileId?: string; apiKey?: string }): Promise<{ models: string[]; requestId?: string }>;
+  testProvider(input: { baseUrl: string; profileId?: string; apiKey?: string; adapterId?: AdapterId }): Promise<{ models: string[]; requestId?: string }>;
   modifyBatch(input: ModifyBatchInput): Promise<DesktopState>;
   cancelQueued(batchId: string): Promise<DesktopState>;
   retryJobs(batchId: string, jobIds: string[], allowUnknownCharge?: boolean): Promise<DesktopState>;

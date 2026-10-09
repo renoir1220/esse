@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { CredentialStore } from './credential-store';
-import type { OfferingConfig, OfferingSummary, ProviderProfile, SaveProviderInput } from './types';
+import type { AdapterId, OfferingConfig, OfferingSummary, ProviderProfile, SaveProviderInput } from './types';
+import { geminiApiRoot } from './gemini-protocol';
 
 type StoredProviderProfile = Omit<ProviderProfile, 'hasApiKey'>;
 
@@ -87,15 +88,26 @@ export class ProviderSettingsStore {
     await this.write(settings);
   }
 
-  async testProvider(input: { baseUrl: string; profileId?: string; apiKey?: string }, fetchImpl: typeof fetch = fetch): Promise<{ models: string[]; requestId?: string }> {
+  async testProvider(input: { baseUrl: string; profileId?: string; apiKey?: string; adapterId?: AdapterId }, fetchImpl: typeof fetch = fetch): Promise<{ models: string[]; requestId?: string }> {
     const apiKey = input.apiKey?.trim() || (input.profileId ? await this.credentials.get(input.profileId) : undefined);
     if (!apiKey) throw new Error('请输入 API Key 后再测试连接。');
-    const response = await fetchImpl(`${apiRoot(input.baseUrl)}/v1/models`, {
-      headers: { authorization: `Bearer ${apiKey}` },
+    const adapterId = input.adapterId || (input.profileId ? (await this.getProfile(input.profileId)).adapterId : undefined);
+    const gemini = adapterId === 'gemini-native-images';
+    const response = await fetchImpl(gemini ? `${geminiApiRoot(normalizeBaseUrl(input.baseUrl))}/models?pageSize=100` : `${apiRoot(input.baseUrl)}/v1/models`, {
+      headers: gemini ? { 'x-goog-api-key': apiKey } : { authorization: `Bearer ${apiKey}` },
+      ...(gemini ? { redirect: 'error' as const } : {}),
       signal: AbortSignal.timeout(30_000),
     });
     const body = await parseJsonResponse(response);
     if (!response.ok) throw new Error(providerMessage(response.status, body));
+    if (gemini) {
+      const records = Array.isArray((body as { models?: unknown[] }).models) ? (body as { models: unknown[] }).models : [];
+      const models = records.flatMap((entry) => {
+        const model = entry as { name?: unknown; supportedGenerationMethods?: unknown[] };
+        return typeof model?.name === 'string' && model.supportedGenerationMethods?.includes('generateContent') && /image|nano-banana/.test(model.name) ? [model.name.replace(/^models\//, '')] : [];
+      }).sort();
+      return { models, requestId: response.headers.get('x-request-id') || undefined };
+    }
     const data = Array.isArray((body as { data?: unknown[] }).data) ? (body as { data: unknown[] }).data : [];
     const models = data.flatMap((entry) => entry && typeof entry === 'object' && typeof (entry as { id?: unknown }).id === 'string' ? [(entry as { id: string }).id] : []).sort();
     return { models, requestId: response.headers.get('x-request-id') || undefined };
@@ -187,5 +199,5 @@ function providerMessage(status: number, body: unknown): string {
   const record = body && typeof body === 'object' ? body as Record<string, unknown> : {};
   const error = record.error && typeof record.error === 'object' ? record.error as Record<string, unknown> : {};
   const message = typeof error.message === 'string' ? error.message : typeof record.message === 'string' ? record.message : `HTTP ${status}`;
-  return `Provider 连接失败：${message.replace(/sk-[A-Za-z0-9_-]{8,}/g, '[redacted]').slice(0, 800)}`;
+  return `Provider 连接失败：${message.replace(/sk-[A-Za-z0-9_-]{8,}|AIza[A-Za-z0-9_-]{20,}/g, '[redacted]').slice(0, 800)}`;
 }

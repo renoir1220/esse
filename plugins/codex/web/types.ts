@@ -1,4 +1,4 @@
-export type AdapterId = "tuzi-json-images" | "openai-images" | "agent-generation";
+export type AdapterId = "tuzi-json-images" | "openai-images" | "gemini-native-images" | "agent-generation";
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 export type JobCallStatus = "running" | "succeeded" | "failed" | "canceled";
 
@@ -115,6 +115,8 @@ export interface JobBackupSnapshot {
   id: string;
   name: string;
   outputPath: string;
+  resultIndex?: number;
+  providerCallId?: string;
   prompt: string;
   referenceImagePaths?: string[];
   offering?: BatchSnapshot["offering"];
