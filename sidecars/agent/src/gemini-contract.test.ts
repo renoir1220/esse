@@ -4,7 +4,7 @@ import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { EsseApiClient } from './api-client';
 import { createGeminiProviderDraft, GEMINI_PROVIDER_PRESET } from './gemini-catalog';
-import { geminiImages } from './gemini-protocol';
+import { GeminiInputError, geminiImages, geminiRequest } from './gemini-protocol';
 import { ProviderSettingsStore } from './provider-settings';
 import type { CredentialStore } from './credential-store';
 
@@ -15,6 +15,23 @@ function fakeSettings(model = 'gemini-3.1-flash-image'): ProviderSettingsStore {
 }
 
 describe('Gemini official REST contract (offline only)', () => {
+  it('validates every preset ratio/resolution, reference MIME/count and the inline payload bound', () => {
+    const request = { model: 'gemini-3.1-flash-image', prompt: 'Offline fixture', images: [] as string[] };
+    for (const model of GEMINI_PROVIDER_PRESET.models) {
+      for (const size of model.sizes) for (const quality of model.qualities.length ? model.qualities : ['1K']) {
+        const body = JSON.parse(geminiRequest({ ...request, model: model.providerModelId, size, quality }).body);
+        expect(body.generationConfig.imageConfig).toEqual({ aspectRatio: size, ...(model.providerModelId !== 'gemini-2.5-flash-image' ? { imageSize: quality } : {}) });
+      }
+    }
+    expect(JSON.parse(geminiRequest({ ...request, size: '1024x1024' }).body).generationConfig.imageConfig.aspectRatio).toBe('1:1');
+    expect(() => geminiRequest({ ...request, model: 'gemini-3-pro-image', size: '1:8' })).toThrow(GeminiInputError);
+    for (const mime of ['image/png', 'image/jpeg', 'image/webp']) expect(() => geminiRequest({ ...request, images: Array(14).fill(`data:${mime};base64,${image}`) })).not.toThrow();
+    expect(() => geminiRequest({ ...request, model: 'gemini-2.5-flash-image', images: Array(3).fill(`data:image/png;base64,${image}`) })).not.toThrow();
+    expect(() => geminiRequest({ ...request, model: 'gemini-2.5-flash-image', images: Array(4).fill(`data:image/png;base64,${image}`) })).toThrow(GeminiInputError);
+    for (const mime of ['image/gif', 'image/heic', 'image/heif']) expect(() => geminiRequest({ ...request, images: [`data:${mime};base64,${image}`] })).toThrow(GeminiInputError);
+    expect(() => geminiRequest({ ...request, prompt: 'x'.repeat(20_000_000) })).toThrow(GeminiInputError);
+  });
+
   it('transfers original local references with native headers, ratio and resolution in one POST', async () => {
     const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-gemini-reference-'));
     try {
@@ -36,7 +53,7 @@ describe('Gemini official REST contract (offline only)', () => {
   it('rejects bad ratio, quality, count and model-specific reference limits before submission', async () => {
     const fetchMock = vi.fn();
     const client = new EsseApiClient(fakeSettings(), fetchMock);
-    for (const extra of [{ size: '1024x1024' }, { quality: 'high' }, { n: 2 }]) await expect(client.generate({ model: 'offline', prompt: 'fixture', ...extra })).rejects.toMatchObject({ details: { chargeState: 'not_charged', origin: 'esse' } });
+    for (const extra of [{ size: '1920x1000' }, { quality: 'high' }, { n: 2 }]) await expect(client.generate({ model: 'offline', prompt: 'fixture', ...extra })).rejects.toMatchObject({ details: { chargeState: 'not_charged', origin: 'esse' } });
     await expect(new EsseApiClient(fakeSettings('gemini-2.5-flash-image'), fetchMock).generate({ model: 'offline', prompt: 'fixture', quality: '2K' })).rejects.toMatchObject({ details: { chargeState: 'not_charged' } });
     expect(fetchMock).not.toHaveBeenCalled();
   });

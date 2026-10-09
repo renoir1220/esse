@@ -17,14 +17,23 @@ export function geminiRequest(input: { model: string; prompt: string; size?: str
   if (input.images.length > maxReferences) throw new GeminiInputError(`这个 Gemini 模型最多支持 ${maxReferences} 张参考图。`);
   const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [{ text: input.prompt }];
   for (const image of input.images) {
-    const match = /^data:(image\/(?:png|jpeg|webp|heic|heif));base64,([a-zA-Z0-9+/]+={0,2})$/.exec(image);
-    if (!match?.[1] || !match[2] || match[2].length % 4 !== 0) throw new GeminiInputError('Gemini 参考图必须是 PNG、JPEG、WebP、HEIC 或 HEIF 的本地 base64 图片。');
+    const match = /^data:(image\/(?:png|jpeg|webp));base64,([a-zA-Z0-9+/]+={0,2})$/.exec(image);
+    if (!match?.[1] || !match[2] || match[2].length % 4 !== 0) throw new GeminiInputError('Esse 的 Gemini 参考图请使用 PNG、JPEG 或 WebP。');
     parts.push({ inlineData: { mimeType: match[1], data: match[2] } });
   }
   const imageConfig: { aspectRatio?: string; imageSize?: string } = {};
   if (input.size && input.size !== 'auto') {
-    const ratio = input.size.replace('x', ':');
+    const dimensions = /^(\d+)[x:](\d+)$/.exec(input.size);
+    if (!dimensions) throw new GeminiInputError('Gemini 尺寸请使用比例，例如 9:16 或 16:9。');
+    const width = Number(dimensions[1]);
+    const height = Number(dimensions[2]);
+    if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 1 || height < 1) throw new GeminiInputError('Gemini 尺寸必须是正整数比例。');
+    let a = width;
+    let b = height;
+    while (b) [a, b] = [b, a % b];
+    const ratio = `${width / a}:${height / a}`;
     if (!['1:1', '1:4', '4:1', '1:8', '8:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'].includes(ratio)) throw new GeminiInputError('Gemini 尺寸请使用比例，例如 9:16 或 16:9。');
+    if ((legacy || /^gemini-3-pro-image(?:-preview)?$/.test(input.model)) && ['1:4', '4:1', '1:8', '8:1'].includes(ratio)) throw new GeminiInputError('这个 Gemini 模型不支持所选的超宽或超长比例。');
     imageConfig.aspectRatio = ratio;
   }
   if (input.quality && input.quality !== 'auto') {
@@ -36,7 +45,7 @@ export function geminiRequest(input: { model: string; prompt: string; size?: str
     if (!legacy) imageConfig.imageSize = imageSize;
   }
   const body = JSON.stringify({ contents: [{ role: 'user', parts }], generationConfig: { responseModalities: ['TEXT', 'IMAGE'], ...(Object.keys(imageConfig).length ? { imageConfig } : {}) } });
-  if (new TextEncoder().encode(body).byteLength > 20 * 1024 * 1024) throw new GeminiInputError('Gemini 内联请求超过 20 MiB，请减少参考图大小或数量。');
+  if (new TextEncoder().encode(body).byteLength >= 20_000_000) throw new GeminiInputError('Gemini 内联请求必须小于 20 MB，请减少参考图大小或数量。');
   return { endpoint: `/models/${input.model}:generateContent`, body };
 }
 

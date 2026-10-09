@@ -30,7 +30,7 @@ test('Gemini REST submits native authentication, references, ratio and resolutio
 test('Gemini rejects unsupported local inputs before a potentially billable POST', async () => {
   let posts = 0;
   const adapter = new GeminiImagesAdapter({ baseUrl, apiKey: 'offline-placeholder', fetchImpl: async () => { posts++; throw new Error('must not submit'); } });
-  for (const invalid of [{ ...request, size: '1024x1024' }, { ...request, quality: 'high' }, { ...request, model: '../bad' }, { ...request, images: ['https://reference.example/image.png'] }, { ...request, images: Array(15).fill(`data:image/png;base64,${image}`) }, { ...request, model: 'gemini-2.5-flash-image', quality: '2K' }]) {
+  for (const invalid of [{ ...request, size: '1920x1000' }, { ...request, quality: 'high' }, { ...request, model: '../bad' }, { ...request, images: ['https://reference.example/image.png'] }, { ...request, images: Array(15).fill(`data:image/png;base64,${image}`) }, { ...request, model: 'gemini-2.5-flash-image', quality: '2K' }]) {
     await assert.rejects(adapter.generate(invalid), (error) => error instanceof ProviderRequestError && error.details.chargeState === 'not_charged' && !error.details.retryable);
   }
   assert.throws(() => geminiRequest({ ...request, n: 2 }), GeminiInputError);
@@ -54,6 +54,25 @@ test('Gemini transport, malformed and safety-blocked results retain unknown char
 test('Gemini parses the documented inline response and never treats thought-only output as final', () => {
   assert.deepEqual(geminiImages({ candidates: [{ content: { parts: [{ inline_data: { mime_type: 'image/png', data: image } }] } }] }), [{ b64Json: image, mimeType: 'image/png' }]);
   assert.deepEqual(geminiImages({ candidates: [{ content: { parts: [{ thought: true, inlineData: { mimeType: 'image/png', data: image } }] } }] }), []);
+});
+
+test('Gemini preset capability matrix matches native model options', () => {
+  for (const model of GEMINI_PROVIDER_PRESET.models) {
+    for (const size of model.sizes) for (const quality of model.qualities.length ? model.qualities : ['1K']) {
+      const body = JSON.parse(geminiRequest({ ...request, model: model.providerModelId, size, quality }).body);
+      assert.equal(body.generationConfig.imageConfig.aspectRatio, size);
+      assert.equal(body.generationConfig.imageConfig.imageSize, model.providerModelId === 'gemini-2.5-flash-image' ? undefined : quality);
+    }
+  }
+  assert.equal(JSON.parse(geminiRequest({ ...request, size: '1024x1024' }).body).generationConfig.imageConfig.aspectRatio, '1:1');
+  assert.equal(JSON.parse(geminiRequest({ ...request, size: '1920x1080', quality: '4k' }).body).generationConfig.imageConfig.imageSize, '4K');
+  assert.throws(() => geminiRequest({ ...request, model: 'gemini-3-pro-image', size: '1:8' }), GeminiInputError);
+  assert.throws(() => geminiRequest({ ...request, model: 'gemini-2.5-flash-image', size: '4:1' }), GeminiInputError);
+  for (const mime of ['image/png', 'image/jpeg', 'image/webp']) geminiRequest({ ...request, images: Array(14).fill(`data:${mime};base64,${image}`) });
+  geminiRequest({ ...request, model: 'gemini-2.5-flash-image', images: Array(3).fill(`data:image/png;base64,${image}`) });
+  assert.throws(() => geminiRequest({ ...request, model: 'gemini-2.5-flash-image', images: Array(4).fill(`data:image/png;base64,${image}`) }), GeminiInputError);
+  for (const mime of ['image/gif', 'image/heic', 'image/heif']) assert.throws(() => geminiRequest({ ...request, images: [`data:${mime};base64,${image}`] }), GeminiInputError);
+  assert.throws(() => geminiRequest({ ...request, prompt: 'x'.repeat(20_000_000) }), GeminiInputError);
 });
 
 test('Gemini preset is ready for a locally entered key without embedding credentials or guessed prices', () => {
