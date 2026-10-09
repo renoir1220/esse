@@ -1,7 +1,7 @@
-const assert = require('node:assert/strict');
-const { createServer } = require('node:http');
-const { randomUUID } = require('node:crypto');
-const { app, session } = require('electron');
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { app, session } from 'electron';
 
 // A new process, own temporary app paths and a memory-only partition. No real key.
 app.setPath('userData', process.argv[2]);

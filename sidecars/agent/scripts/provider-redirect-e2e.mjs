@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url';
 const require = createRequire(import.meta.url);
 const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-electron-redirect-'));
 try {
-  const entry = fileURLToPath(new URL('./provider-redirect-fixture.cjs', import.meta.url));
+  const entry = fileURLToPath(new URL('./provider-redirect-fixture.mjs', import.meta.url));
   const code = await new Promise((resolve, reject) => {
     const child = spawn(require('electron'), [entry, directory], { stdio: 'inherit', windowsHide: true });
     const timer = setTimeout(() => { child.kill(); reject(new Error('Electron redirect fixture timed out.')); }, 45_000);
