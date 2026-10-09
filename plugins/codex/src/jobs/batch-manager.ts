@@ -3,7 +3,7 @@ import path from "node:path";
 import { mkdir, readdir, rm, rmdir } from "node:fs/promises";
 import type { DataPaths } from "../paths.js";
 import { imageFilesToDataUrls } from "../files/image-files.js";
-import { backupImageVersion, importGeneratedImage, saveGeneratedImage } from "../files/output-files.js";
+import { backupImageVersion, importGeneratedImage, saveGeneratedImages } from "../files/output-files.js";
 import type { BatchActivation, BatchRecord, BatchSnapshot, BatchStatus, GenerationOptions, JobBackup, JobCallRecord, JobCallStatus, JobRecord, OfferingSnapshot, ProviderRequestError, ProviderTaskState } from "../types.js";
 import { ProviderRequestError as ProviderError } from "../types.js";
 import type { BatchStore } from "../storage/batch-store.js";
@@ -966,12 +966,19 @@ export class BatchManager {
       job.hasProviderResult = true;
       await this.persist(batch);
       const previousOutputs = job.generationInputPaths?.length ? job.generationInputPaths : job.generationInputPath ? [job.generationInputPath] : [];
-      job.outputPath = await saveGeneratedImage({
+      const savedPaths = await saveGeneratedImages({
         result,
         outputDirectory: batch.outputDirectory,
         sourceName: job.name,
         trustedBaseUrl: resolved.profile.baseUrl
       });
+      job.outputPath = savedPaths[0];
+      job.backups = [...(job.backups || []), ...savedPaths.slice(1).map((outputPath, index) => ({
+        id: randomUUID(), name: `${job.name}-结果${index + 2}`, outputPath,
+        prompt: job.prompt, referenceImagePaths: [...generationInputs],
+        offering: structuredClone(resolved.snapshot), createdAt: new Date().toISOString(),
+        resultIndex: index + 2, providerCallId: call.id
+      }))];
       for (const previousOutput of previousOutputs) {
         if (isInside(batch.outputDirectory, previousOutput)) await rm(previousOutput, { force: true }).catch(() => undefined);
       }
@@ -1166,7 +1173,7 @@ async function cloneMergedJob(
   const backups = job.backups ? await Promise.all(job.backups.map(async (backup, index) => ({
     ...backup,
     id: randomUUID(),
-    name: `${slot.name}-${index + 1}`,
+    name: backup.resultIndex ? `${slot.name}-结果${backup.resultIndex}` : `${slot.name}-${index + 1}`,
     outputPath: (await copyPath(backup.outputPath, `${slot.name}-${index + 1}`))!,
     referenceImagePaths: await copySources(backup.referenceImagePaths),
     offering: backup.offering ? cloneOffering(backup.offering) : undefined

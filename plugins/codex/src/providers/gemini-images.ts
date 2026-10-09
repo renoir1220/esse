@@ -22,14 +22,15 @@ export class GeminiImagesAdapter implements ProviderAdapter {
     try {
       // One POST only. Ambiguous transport/response failures are never resubmitted.
       const response = await (this.options.fetchImpl ?? fetch)(url, {
-        method: 'POST', headers: { 'x-goog-api-key': this.options.apiKey, 'content-type': 'application/json' }, body, signal: combined,
+        method: 'POST', headers: { 'x-goog-api-key': this.options.apiKey, 'content-type': 'application/json' }, body, signal: combined, redirect: 'error',
       });
       const parsed = await parseResponse(response);
       if (!response.ok) throw providerError(response, parsed);
       const id = requestId(response, parsed) || geminiResponseId(parsed);
-      const image = geminiImages(parsed)[0];
+      const images = geminiImages(parsed);
+      const image = images[0];
       if (!image) throw new ProviderRequestError(`Gemini 没有返回最终图片${geminiBlockReason(parsed) ? `（${geminiBlockReason(parsed)}）` : ''}；扣费状态未知，不会自动重试。`, { retryable: false, chargeState: 'unknown', requestId: id, origin: 'upstream' });
-      return { ...image, providerRequestId: id };
+      return { ...image, ...(images.length > 1 ? { additionalImages: images.slice(1) } : {}), providerRequestId: id };
     } catch (error) {
       throw normalizeTransportError(error);
     }

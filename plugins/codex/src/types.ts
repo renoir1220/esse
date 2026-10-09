@@ -131,6 +131,9 @@ export interface JobBackup {
   referenceImagePaths?: string[];
   offering?: OfferingSnapshot;
   createdAt: string;
+  /** Extra final image from the same paid call, rather than a historical version. */
+  resultIndex?: number;
+  providerCallId?: string;
 }
 
 export interface OfferingSnapshot {
@@ -208,6 +211,7 @@ export interface GenerateResult {
   b64Json?: string;
   mimeType?: string;
   providerRequestId?: string;
+  additionalImages?: Array<{ outputUrl?: string; b64Json?: string; mimeType?: string }>;
 }
 
 export interface ProviderAdapter {

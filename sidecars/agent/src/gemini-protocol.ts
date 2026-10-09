@@ -31,7 +31,8 @@ export function geminiRequest(input: { model: string; prompt: string; size?: str
     let a = width;
     let b = height;
     while (b) [a, b] = [b, a % b];
-    const ratio = `${width / a}:${height / a}`;
+    const reduced = `${width / a}:${height / a}`;
+    const ratio = reduced === '7:3' ? '21:9' : reduced;
     if (!['1:1', '1:4', '4:1', '1:8', '8:1', '2:3', '3:2', '3:4', '4:3', '4:5', '5:4', '9:16', '16:9', '21:9'].includes(ratio)) throw new GeminiInputError('Gemini 尺寸请使用比例，例如 9:16 或 16:9。');
     if ((legacy || /^gemini-3-pro-image(?:-preview)?$/.test(input.model)) && ['1:4', '4:1', '1:8', '8:1'].includes(ratio)) throw new GeminiInputError('这个 Gemini 模型不支持所选的超宽或超长比例。');
     imageConfig.aspectRatio = ratio;

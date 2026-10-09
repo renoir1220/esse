@@ -118,6 +118,9 @@ export interface JobBackup {
   id: string;
   name: string;
   imageId: string;
+  /** Extra final image from the same paid call, rather than a historical version. */
+  resultIndex?: number;
+  providerCallId?: string;
   prompt: string;
   referenceImageIds?: string[];
   offering?: OfferingSummary;

@@ -17,6 +17,41 @@ afterEach(async () => {
 });
 
 describe('Esse batch manager', () => {
+  it('restores, publishes, merges and individually deletes all final images without another paid request', async () => {
+    const fixture = await pendingProviderFixture('result', 'charged');
+    const record = (await fixture.batchStore.loadAll())[0];
+    record.jobs[0].status = 'queued';
+    await fixture.batchStore.save(record);
+    const callId = record.jobs[0].callHistory[0].id;
+    const result = generatedResult('accepted-request');
+    result.items.push(...generatedResult('second').items, ...generatedResult('third').items);
+    await fixture.batchStore.saveProviderResult(callId, result);
+    const generate = vi.fn(fakeApi().generate);
+    const changes: BatchManagerChange[] = [];
+    const manager = managerFor(fixture, { ...fakeApi(), generate }, { onChanged: (change) => changes.push(change) });
+    await manager.initialize();
+    await manager.waitForIdle();
+    const job = manager.get(fixture.batchId).jobs[0];
+    expect(job.backups.map((image) => image.resultIndex)).toEqual([2, 3]);
+    expect(job.backups.every((image) => image.providerCallId === callId)).toBe(true);
+    expect(job.callHistory).toHaveLength(1);
+    expect(changes.some((change) => change.type === 'upsert' && change.imageIds?.length === 3)).toBe(true);
+    expect(await fixture.imageStore.list()).toHaveLength(3);
+    const target = await manager.create({ prompt: 'merge target', requestKey: 'multiple-final-target' });
+    await manager.waitForIdle();
+    const merged = await manager.merge({ targetBatchId: target.id, sourceBatchIds: [fixture.batchId], requestKey: 'merge-multiple-finals' });
+    const moved = merged.jobs[1];
+    expect(moved.backups).toHaveLength(2);
+    const extra = (await fixture.imageStore.get(moved.backups[0].imageId))!;
+    await manager.deleteImages(merged.id, [extra.id]);
+    expect(await fixture.imageStore.get(extra.id)).toBeUndefined();
+    expect(manager.get(merged.id).jobs[1].backups).toHaveLength(1);
+    await manager.deleteImages(merged.id, manager.get(merged.id).jobs.map((entry) => entry.outputImageId!));
+    expect(await fixture.imageStore.list()).toHaveLength(0);
+    await manager.deleteBatch(merged.id);
+    expect(generate).toHaveBeenCalledTimes(1); // Only the explicitly created merge target.
+  });
+
   for (const mode of ['result', 'task'] as const) for (const chargeState of ['unknown', 'charged'] as const) {
     it(`cancel queued ${mode} retrieval retains ${chargeState} and can retrieve again without submission`, async () => {
       const fixture = await pendingProviderFixture(mode, chargeState);

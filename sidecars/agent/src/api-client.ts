@@ -107,7 +107,7 @@ export class EsseApiClient {
       throw new EsseApiError(error.message, { code: 'invalid_gemini_input', chargeState: 'not_charged', origin: 'esse' });
     }
     const timeout = AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS);
-    const response = await this.fetchImpl(url, { method: 'POST', headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' }, body, signal: signal ? AbortSignal.any([signal, timeout]) : timeout });
+    const response = await this.fetchImpl(url, { method: 'POST', headers: { 'x-goog-api-key': apiKey, 'content-type': 'application/json' }, body, signal: signal ? AbortSignal.any([signal, timeout]) : timeout, redirect: 'error' });
     const parsed = await parseResponse(response);
     if (!response.ok) throw providerError(response, parsed, profile);
     const id = requestId(response, parsed) || geminiResponseId(parsed);

@@ -15,6 +15,7 @@
     "stage:release": "node scripts/stage-release.mjs",
     "e2e:live:banana-1k": "node scripts/live-provider-e2e.mjs",
     "e2e:thumbnails": "tsx scripts/thumbnail-e2e.ts",
+    "e2e:provider-redirects": "node scripts/provider-redirect-e2e.mjs",
     "publish": "electron-forge publish",
     "smoke": "tsx scripts/smoke.ts",
     "verify:signatures": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-windows-signatures.ps1",

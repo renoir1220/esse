@@ -16,6 +16,36 @@ import type { BatchRecord } from "../src/types.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
 
+test('all final images survive checkpoint restart and merge, remain individually selectable, and are cleaned up', async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'esse-multiple-final-'));
+  try {
+    const fixture = await pendingProviderFixture(root, { mode: 'result', status: 'queued', chargeState: 'charged', target: true });
+    await fixture.store.saveProviderResult(fixture.callId, { b64Json: onePixelPng, additionalImages: [{ b64Json: onePixelPng }, { b64Json: onePixelPng }], providerRequestId: 'accepted-request' });
+    const restarted = new BatchManager(fixture.store, fixture.registry, fixture.paths);
+    await restarted.initialize();
+    const recovered = await waitForBatch(restarted, fixture.batchId);
+    const job = onlyJob(recovered);
+    assert.equal(job.backups?.length, 2);
+    assert.deepEqual(job.backups?.map((image) => image.resultIndex), [2, 3]);
+    assert(job.backups?.every((image) => image.providerCallId === fixture.callId));
+    assert.equal(job.callHistory?.length, 1);
+    assert.equal(fixture.requests.length, 0);
+    const merged = await restarted.mergeBatches({ targetBatchId: fixture.targetId!, sourceBatchIds: [recovered.id], requestKey: 'merge-multiple-finals' });
+    const moved = merged.jobs[1]!;
+    assert.equal(moved.backups?.length, 2);
+    assert(moved.backups?.every((image) => image.providerCallId === fixture.callId));
+    const extra = moved.backups![0]!;
+    await access(extra.outputPath);
+    await restarted.deleteImages(merged.id, [extra.id]);
+    await assert.rejects(access(extra.outputPath));
+    assert.equal(restarted.get(merged.id).jobs[1]!.backups?.length, 1);
+    const paths = [moved.outputPath!, moved.backups![1]!.outputPath];
+    await restarted.delete(merged.id);
+    for (const output of paths) await assert.rejects(access(output));
+    assert.equal(fixture.requests.length, 0);
+  } finally { await rm(root, { recursive: true, force: true }); }
+});
+
 for (const mode of ["result", "task"] as const) test(`restart resumes queued ${mode} recovery without a generation POST`, async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "esse-queued-recovery-"));
   try {

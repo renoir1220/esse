@@ -558,7 +558,7 @@ function JobCard(props: { asset: GalleryAsset; referenceImages: SavedImage[]; se
       {props.selected ? <span className="selected-check"><Check size={13} weight="bold" /></span> : null}
       {pending ? <span className="status-overlay"><span className="spinner" />{jobStageText(job)}</span> : null}
     </button>
-    <div className="card-meta"><span>{asset.kind === 'backup' ? '历史版本' : job.status === 'succeeded' ? asset.offering.displayName : statusText(job.status)}</span><div className="card-tools"><button title="任务详情" onClick={props.onDetails}><Info size={14} /></button>{image ? <button title="另存为" onClick={() => void window.esse.saveImage(image.id)}><DownloadSimple size={14} /></button> : null}</div></div>
+    <div className="card-meta"><span>{asset.kind === 'backup' ? asset.backup?.resultIndex ? '同次生成结果' : '历史版本' : job.status === 'succeeded' ? asset.offering.displayName : statusText(job.status)}</span><div className="card-tools"><button title="任务详情" onClick={props.onDetails}><Info size={14} /></button>{image ? <button title="另存为" onClick={() => void window.esse.saveImage(image.id)}><DownloadSimple size={14} /></button> : null}</div></div>
     {asset.kind === 'job' && job.status === 'failed' ? <div className="job-error"><p><span className="error-origin">{jobErrorOriginLabel(job, asset.offering.providerName)}</span>{job.error || '生成失败'}</p>{job.operation !== 'agent' ? <button onClick={() => void props.onRetry()}>重试</button> : <span>需由 Agent 重新发起</span>}</div> : null}
     {pending && peekPosition ? createPortal(<PendingTaskPeek id={peekId} prompt={asset.prompt} images={props.referenceImages} position={peekPosition} onPointerEnter={keepPeekOpen} onPointerLeave={closePeekSoon} />, document.body) : null}
   </article>;
@@ -598,7 +598,7 @@ function TaskDetailDialog({ asset, imagesById, onClose }: { asset: GalleryAsset;
   const references = asset.referenceImageIds.flatMap((id) => imagesById.get(id) ? [imagesById.get(id)!] : []);
   return <div className="task-detail-backdrop" role="presentation" onPointerDown={(event) => { if (event.target === event.currentTarget) onClose(); }}>
     <section className="task-detail-dialog" role="dialog" aria-modal="true" aria-label={`${asset.name}任务详情`}>
-      <header><div><span>{asset.kind === 'backup' ? '历史版本' : '任务详情'}</span><h2>{asset.name}</h2></div><button onClick={onClose} aria-label="关闭"><X size={17} /></button></header>
+      <header><div><span>{asset.kind === 'backup' ? asset.backup?.resultIndex ? '同次生成结果' : '历史版本' : '任务详情'}</span><h2>{asset.name}</h2></div><button onClick={onClose} aria-label="关闭"><X size={17} /></button></header>
       <div className="detail-summary">
         <div><span>状态</span><strong>{asset.kind === 'backup' ? '已保留' : jobStageText(job)}</strong></div>
         <div><span>模型</span><strong>{asset.offering.displayName}</strong></div>

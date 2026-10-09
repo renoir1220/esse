@@ -115,6 +115,8 @@ export interface JobBackupSnapshot {
   id: string;
   name: string;
   outputPath: string;
+  resultIndex?: number;
+  providerCallId?: string;
   prompt: string;
   referenceImagePaths?: string[];
   offering?: BatchSnapshot["offering"];

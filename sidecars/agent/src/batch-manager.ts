@@ -456,6 +456,7 @@ export class BatchManager {
     const ids = unique(imageIds);
     if (!ids.length) throw new Error('Select at least one image to delete.');
     const targets = ids.map((id) => this.resolveBatchImage(batch, id));
+    const removedImageIds = new Set(ids);
     for (const { job } of targets) {
       if (job.status === 'queued' || job.status === 'running') throw new Error(`${job.name} is still in progress.`);
     }
@@ -464,6 +465,7 @@ export class BatchManager {
       const job = target.job;
       if (target.kind === 'result') {
         const related = job.backups.map((backup) => backup.imageId);
+        for (const id of related) removedImageIds.add(id);
         if (related.length) await this.options.imageStore.trash(related);
         job.outputImageId = undefined;
         job.backups = [];
@@ -478,7 +480,7 @@ export class BatchManager {
     }
     batch.updatedAt = new Date().toISOString();
     await this.options.store.save(batch);
-    this.changed({ type: 'upsert', batch: snapshot(batch), removedImageIds: ids });
+    this.changed({ type: 'upsert', batch: snapshot(batch), removedImageIds: [...removedImageIds] });
     return snapshot(batch);
   }
 
@@ -696,7 +698,7 @@ export class BatchManager {
     else beginJob(job, offering, 'provider');
     batch.updatedAt = new Date().toISOString();
     let providerSubmitted = resuming;
-    let changedImageId: string | undefined;
+    let changedImageIds: string[] | undefined;
     const retrievalSignal = this.retrievalSignals.get(jobKey);
     try {
       await this.options.store.save(batch);
@@ -741,7 +743,7 @@ export class BatchManager {
       job.hasProviderResult = true;
       batch.updatedAt = new Date().toISOString();
       await this.options.store.save(batch);
-      const [saved] = await this.options.imageStore.saveBatch({
+      const savedImages = await this.options.imageStore.saveBatch({
         requestId: result.requestId,
         prompt: job.prompt,
         model: offering.id,
@@ -750,9 +752,19 @@ export class BatchManager {
         signal: retrievalSignal,
       });
       retrievalSignal?.throwIfAborted();
+      const saved = savedImages[0];
       if (!saved) throw new Error('Provider returned no image that Esse could save.');
+      for (const [index, image] of savedImages.slice(1).entries()) {
+        if (job.backups.some((backup) => backup.imageId === image.id)) continue;
+        job.backups.push({
+          id: randomUUID(), name: `${job.name}-结果${index + 2}`, imageId: image.id,
+          prompt: job.prompt, referenceImageIds: [...job.referenceImageIds],
+          offering: structuredClone(offering), createdAt: new Date().toISOString(),
+          resultIndex: index + 2, providerCallId: call.id,
+        });
+      }
       finishSucceeded(job, result, saved.id);
-      changedImageId = saved.id;
+      changedImageIds = savedImages.map((image) => image.id);
     } catch (error) {
       const chargeState = resuming && knownChargeState === 'charged' ? 'charged' : error instanceof EsseApiError ? error.details.chargeState : providerSubmitted ? 'unknown' : 'not_charged';
       const retryable = Boolean(job.hasProviderResult) || error instanceof EsseApiError && (error.details.chargeState === 'unknown'
@@ -763,12 +775,12 @@ export class BatchManager {
       batch.updatedAt = new Date().toISOString();
       try {
         await this.options.store.save(batch);
-        if (changedImageId) await this.options.store.deleteProviderResult(job.callHistory.at(-1)!.id).catch(() => undefined);
+        if (changedImageIds) await this.options.store.deleteProviderResult(job.callHistory.at(-1)!.id).catch(() => undefined);
       }
       finally {
         this.activeJobs.delete(jobKey);
         this.retrievalSignals.delete(jobKey);
-        this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: changedImageId ? [changedImageId] : undefined });
+        this.changed({ type: 'upsert', batch: snapshot(batch), imageIds: changedImageIds });
         this.schedule();
       }
     }

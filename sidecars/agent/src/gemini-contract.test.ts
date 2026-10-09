@@ -24,6 +24,7 @@ describe('Gemini official REST contract (offline only)', () => {
       }
     }
     expect(JSON.parse(geminiRequest({ ...request, size: '1024x1024' }).body).generationConfig.imageConfig.aspectRatio).toBe('1:1');
+    expect(JSON.parse(geminiRequest({ ...request, size: '2520x1080' }).body).generationConfig.imageConfig.aspectRatio).toBe('21:9');
     expect(() => geminiRequest({ ...request, model: 'gemini-3-pro-image', size: '1:8' })).toThrow(GeminiInputError);
     for (const mime of ['image/png', 'image/jpeg', 'image/webp']) expect(() => geminiRequest({ ...request, images: Array(14).fill(`data:${mime};base64,${image}`) })).not.toThrow();
     expect(() => geminiRequest({ ...request, model: 'gemini-2.5-flash-image', images: Array(3).fill(`data:image/png;base64,${image}`) })).not.toThrow();
@@ -77,6 +78,18 @@ describe('Gemini official REST contract (offline only)', () => {
     draft.offerings[0].displayName = 'Changed';
     expect(GEMINI_PROVIDER_PRESET.models[0].displayName).toBe('Nano Banana 2.1');
     expect(geminiImages({ candidates: [{ content: { parts: [{ thought: true, inlineData: { mimeType: 'image/png', data: image } }] } }] })).toEqual([]);
+  });
+
+  it('retains every final inline image under one native response ID', async () => {
+    const fetchMock = vi.fn(async () => Response.json({ responseId: 'multiple-final', candidates: [{ content: { parts: [
+      { thought: true, inlineData: { mimeType: 'image/png', data: image } },
+      { inlineData: { mimeType: 'image/png', data: image } },
+      { inlineData: { mimeType: 'image/webp', data: image } },
+    ] } }] }));
+    const result = await new EsseApiClient(fakeSettings(), fetchMock).generate({ model: 'offline', prompt: 'fixture' });
+    expect(result.requestId).toBe('multiple-final');
+    expect(result.items).toEqual([{ b64_json: image }, { b64_json: image }]);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
   it('stores only a credential reference and tests connection with a read-only native model list', async () => {

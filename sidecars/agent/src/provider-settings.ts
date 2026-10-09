@@ -95,6 +95,7 @@ export class ProviderSettingsStore {
     const gemini = adapterId === 'gemini-native-images';
     const response = await fetchImpl(gemini ? `${geminiApiRoot(normalizeBaseUrl(input.baseUrl))}/models?pageSize=100` : `${apiRoot(input.baseUrl)}/v1/models`, {
       headers: gemini ? { 'x-goog-api-key': apiKey } : { authorization: `Bearer ${apiKey}` },
+      ...(gemini ? { redirect: 'error' as const } : {}),
       signal: AbortSignal.timeout(30_000),
     });
     const body = await parseJsonResponse(response);

@@ -1258,7 +1258,7 @@ function ImageContextMenuView(props: { menu: ImageContextMenu; selected: boolean
 
 function TaskDetailDialog({ asset, metadata, referencePaths, previews, onClose }: { asset: ImageAsset; metadata?: ImageMetadata; referencePaths: string[]; previews: Record<string, CachedPreview>; onClose: () => void }) {
   const prompt = asset.job?.prompt || asset.backup?.prompt || "未记录 Prompt";
-  const status = asset.backup ? "历史版本" : asset.job ? jobStatusLabel(asset.job) : "任务";
+  const status = asset.backup ? asset.backup.resultIndex ? "同次生成结果" : "历史版本" : asset.job ? jobStatusLabel(asset.job) : "任务";
   const offering = asset.job?.offering || asset.backup?.offering;
   const calls = callHistoryFor(asset.job);
   const succeededCalls = calls.filter((call) => call.status === "succeeded").length;

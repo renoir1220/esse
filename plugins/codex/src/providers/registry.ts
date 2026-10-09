@@ -70,6 +70,7 @@ export class ProviderRegistry {
     const gemini = adapterId === "gemini-native-images";
     const response = await this.fetchImpl(gemini ? `${geminiApiRoot(input.baseUrl)}/models?pageSize=100` : `${apiRoot(input.baseUrl)}/v1/models`, {
       headers: gemini ? { "x-goog-api-key": apiKey } : { authorization: `Bearer ${apiKey}` },
+      ...(gemini ? { redirect: "error" as const } : {}),
       signal: AbortSignal.timeout(30_000)
     });
     const body = await parseResponse(response);

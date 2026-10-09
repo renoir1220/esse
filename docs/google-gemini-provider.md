@@ -25,13 +25,13 @@
 | 分辨率（quality） | `1K`、`2K`、`4K` |
 | 计费 | 未知，USD |
 
-Gemini 2.5 Flash Image 使用默认 1K，不发送 imageSize；不支持 2K/4K。`512` 仅用于 Gemini 3.1 Flash Image。每个任务一张，多个输出通过 Esse 批次执行。Esse 对 2.5 的参考图数限制为三张；其他预设限制为十四张；单次内联 JSON 请求必须小于 20 MB（包含 base64 和提示词）。参考图随本次请求上传原始文件内容，Esse 此适配器支持 PNG、JPEG、WebP；Google API 另支持 HEIC/HEIF，但现有工作台未接入，不宣称端到端支持。兼容旧工具的像素尺寸（如 1024x1024）只归一化为比例，输出分辨率仍由 quality 明确指定；不保证任意精确像素宽高。2.5 和 Pro 不支持 1:4、4:1、1:8、8:1，Nano Banana 2.1 和 Flash 支持。当前实现是独立的单轮生成/编辑，不传递多轮对话、thought signatures，也不自动添加搜索 grounding 工具。
+Gemini 2.5 Flash Image 使用默认 1K，不发送 imageSize；不支持 2K/4K。`512` 仅用于 Gemini 3.1 Flash Image。每个任务提交一次生成请求；若需要多次生成，使用 Esse 批次执行。若同一响应返回多张最终图片，全部保留：首张为主结果，其余显示为“同次生成结果”，可以独立查看、修改、删除和随批次合并，共用原调用记录。Esse 对 2.5 的参考图数限制为三张；其他预设限制为十四张；单次内联 JSON 请求必须小于 20 MB（包含 base64 和提示词）。参考图随本次请求上传原始文件内容，Esse 此适配器支持 PNG、JPEG、WebP；Google API 另支持 HEIC/HEIF，但现有工作台未接入，不宣称端到端支持。兼容旧工具的像素尺寸（如 1024x1024）只归一化为比例，输出分辨率仍由 quality 明确指定；不保证任意精确像素宽高。2.5 和 Pro 不支持 1:4、4:1、1:8、8:1，Nano Banana 2.1 和 Flash 支持。当前实现是独立的单轮生成/编辑，不传递多轮对话、thought signatures，也不自动添加搜索 grounding 工具。
 
 ## 请求合同
 
 `POST https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent`
 
-Headers 为 `x-goog-api-key` 和 `Content-Type: application/json`。Key 不放在 URL 查询参数中。9:16、2K、带参考图的请求体结构：
+Headers 为 `x-goog-api-key` 和 `Content-Type: application/json`。Key 不放在 URL 查询参数中；生成和连接测试均拒绝重定向，避免将 Key 转发到另一个站点。9:16、2K、带参考图的请求体结构：
 
 ```json
 {

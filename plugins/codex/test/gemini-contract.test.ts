@@ -56,6 +56,15 @@ test('Gemini parses the documented inline response and never treats thought-only
   assert.deepEqual(geminiImages({ candidates: [{ content: { parts: [{ thought: true, inlineData: { mimeType: 'image/png', data: image } }] } }] }), []);
 });
 
+test('Gemini adapter returns every final inline image under one request ID', async () => {
+  const adapter = new GeminiImagesAdapter({ baseUrl, apiKey: 'offline-placeholder', fetchImpl: async () => Response.json({ responseId: 'multi-result', candidates: [{ content: { parts: [
+    { thought: true, inlineData: { mimeType: 'image/png', data: image } },
+    { inlineData: { mimeType: 'image/png', data: image } },
+    { inlineData: { mimeType: 'image/webp', data: image } },
+  ] } }] }) });
+  assert.deepEqual(await adapter.generate(request), { b64Json: image, mimeType: 'image/png', additionalImages: [{ b64Json: image, mimeType: 'image/webp' }], providerRequestId: 'multi-result' });
+});
+
 test('Gemini preset capability matrix matches native model options', () => {
   for (const model of GEMINI_PROVIDER_PRESET.models) {
     for (const size of model.sizes) for (const quality of model.qualities.length ? model.qualities : ['1K']) {
@@ -65,6 +74,7 @@ test('Gemini preset capability matrix matches native model options', () => {
     }
   }
   assert.equal(JSON.parse(geminiRequest({ ...request, size: '1024x1024' }).body).generationConfig.imageConfig.aspectRatio, '1:1');
+  assert.equal(JSON.parse(geminiRequest({ ...request, size: '2520x1080' }).body).generationConfig.imageConfig.aspectRatio, '21:9');
   assert.equal(JSON.parse(geminiRequest({ ...request, size: '1920x1080', quality: '4k' }).body).generationConfig.imageConfig.imageSize, '4K');
   assert.throws(() => geminiRequest({ ...request, model: 'gemini-3-pro-image', size: '1:8' }), GeminiInputError);
   assert.throws(() => geminiRequest({ ...request, model: 'gemini-2.5-flash-image', size: '4:1' }), GeminiInputError);
