@@ -368,7 +368,7 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "list_image_batches", {
     title: "List recent local image batches",
-    description: "Lists recent Esse batch IDs, titles, image names, IDs, and statuses. Use this when the user refers to an earlier result such as 图1 but its batchId is not already known." + " " + WORKFLOW_TOOL_GUIDANCE,
+    description: "Lists recent Esse batch IDs, titles, image names, IDs, and statuses. Use this when the user refers to an earlier result such as 图1 but its batchId is not already known. Exact requestKey lookup fails on multiple matching batches before applying limit; resolve the original batchId without guessing or resubmitting." + " " + WORKFLOW_TOOL_GUIDANCE,
     inputSchema: { limit: z.number().int().min(1).max(50).default(10), requestKey: z.string().min(1).max(200).optional() },
     outputSchema: { batches: z.array(z.record(z.unknown())) },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
@@ -407,13 +407,15 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "modify_selected_images", {
     title: "Modify selected local images",
-    description: "Modifies exact image IDs inside their existing batch. Current results update in place and preserve the previous version as 图1-1, 图1-2, and so on; backups and failed-job sources append a new job to that same batch. Never create a replacement batch for a modification. Uses offeringId only when the user explicitly selects a model; otherwise reuses the batch offering." + " " + WORKFLOW_TOOL_GUIDANCE,
+    description: "Modifies exact image IDs inside their existing batch, retaining that image's prior references and attaching any supplied referenceImagePaths/referenceImages. Current results update in place and preserve the previous version as 图1-1, 图1-2, and so on; backups and failed-job sources append a new job to that same batch. Never create a replacement batch for a modification. Uses offeringId only when the user explicitly selects a model; otherwise reuses the batch offering." + " " + WORKFLOW_TOOL_GUIDANCE,
     inputSchema: {
       batchId: z.string().min(1),
       imageIds: z.array(z.string()).min(1).max(50).optional(),
       jobIds: z.array(z.string()).min(1).max(50).optional().describe("Deprecated alias for imageIds; retained for older widgets."),
       instructions: z.string().min(1).max(5000),
       offeringId: z.string().optional(),
+      referenceImagePaths: z.array(z.string()).max(20).optional(),
+      referenceImages: z.array(existingImageReferenceSchema).max(20).optional(),
       requestKey: z.string().min(1).max(200)
     },
     outputSchema: batchOutputSchema,
@@ -422,7 +424,11 @@ export function createLocalEsseServer(options: {
   }, async (input) => {
     const imageIds = input.imageIds || input.jobIds;
     if (!imageIds?.length) throw new Error("请提供至少一个准确的 image ID。");
-    const batch = await options.batches.modifyInPlace({ ...input, imageIds });
+    const batch = await options.batches.modifyInPlace({
+      batchId: input.batchId, imageIds, instructions: input.instructions,
+      offeringId: input.offeringId, requestKey: input.requestKey,
+      referenceImagePaths: [...(input.referenceImagePaths || []), ...resolveExistingImagePaths(options.batches, input.referenceImages)]
+    });
     const message = batch.jobs.some((job) => job.status === "queued" && job.offering?.adapterId === "agent-generation")
       ? "已建立 Codex 生成修改任务。当前 Agent 必须使用每个 job 返回的参考图完成生成并逐项回传结果。"
       : undefined;
@@ -933,7 +939,7 @@ function agentJobResult(batch: BatchSnapshot, job: JobRecord, message: string) {
         id: job.id,
         name: job.name,
         prompt: job.prompt,
-        referenceImagePaths: previewSourcePaths(job),
+        referenceImagePaths: job.referenceImagePaths?.length ? [...new Set(job.referenceImagePaths)] : previewSourcePaths(job),
         outputDirectory: batch.outputDirectory,
         status: job.status
       }

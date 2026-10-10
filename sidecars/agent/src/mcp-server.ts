@@ -343,7 +343,7 @@ function createServer(options: DesktopMcpServerOptions): McpServer {
 
   server.registerTool('list_image_batches', {
     title: 'List Esse image batches',
-    description: `只读查找已有批次；响应不明时用准确 requestKey 对账，不能据此重发生图或猜测最新批次。已知 batchId 时直接用 get_image_batch。${WORKFLOW_TOOL_GUIDANCE}`,
+    description: `只读查找已有批次；响应不明时用准确 requestKey 对账，多批匹配返回歧义错误，不会按 limit 截成一个结果。不能据此重发生图或猜测最新批次。已知 batchId 时直接用 get_image_batch。${WORKFLOW_TOOL_GUIDANCE}`,
     inputSchema: { limit: z.number().int().min(1).max(50).default(20), requestKey: requestKeySchema().optional() },
     annotations: { readOnlyHint: true, openWorldHint: false },
   }, async ({ limit, requestKey }) => toolResult(async () => ({

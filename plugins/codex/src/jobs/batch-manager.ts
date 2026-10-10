@@ -319,6 +319,7 @@ export class BatchManager {
     jobIds?: string[];
     instructions: string;
     offeringId?: string;
+    referenceImagePaths?: string[];
     requestKey?: string;
   }): Promise<BatchSnapshot> {
     const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
@@ -331,6 +332,7 @@ export class BatchManager {
     jobIds?: string[];
     instructions: string;
     offeringId?: string;
+    referenceImagePaths?: string[];
     requestKey?: string;
   }): Promise<BatchSnapshot> {
     const source = this.requireBatch(options.batchId);
@@ -350,9 +352,18 @@ export class BatchManager {
     const resolved = await this.registry.resolveOffering(options.offeringId || source.offering.id);
     if (!isAgentGeneration(resolved) && !resolved.profile.hasApiKey) throw new Error(`Provider ${resolved.profile.displayName} · ${resolved.profile.tierName} has no API key.`);
     if (!resolved.offering.supportsImageToImage) throw new Error(`${resolved.offering.displayName} does not support image editing.`);
+    const additionalReferences = (options.referenceImagePaths || []).map(value => path.resolve(value));
+    const references = selected.map(image => [...new Set([
+      image.sourcePath,
+      ...(image.kind === "backup" ? image.backup.referenceImagePaths || []
+        : image.job.referenceImagePaths || image.job.inputPaths || (image.job.inputPath ? [image.job.inputPath] : [])),
+      ...additionalReferences
+    ])]);
+    // Validate the complete per-target attachment set before mutating history.
+    for (const paths of references) await imageFilesToDataUrls(paths);
     const now = new Date().toISOString();
     const scheduled: JobRecord[] = [];
-    for (const image of selected) {
+    for (const [index, image] of selected.entries()) {
       if (image.kind === "result") {
         const job = image.job;
         const version = nextBackupVersion(job);
@@ -370,7 +381,7 @@ export class BatchManager {
         Object.assign(job, {
           generationInputPath: image.sourcePath,
           generationInputPaths: undefined,
-          referenceImagePaths: [backupPath],
+          referenceImagePaths: references[index]!.map(value => value === image.sourcePath ? backupPath : value),
           offering: resolved.snapshot,
           prompt: options.instructions,
           status: "queued",
@@ -396,8 +407,8 @@ export class BatchManager {
         index: slot.index,
         name: slot.name,
         inputPath: image.sourcePath,
-        inputPaths: [image.sourcePath],
-        referenceImagePaths: [image.sourcePath],
+        inputPaths: references[index]!,
+        referenceImagePaths: references[index]!,
         offering: resolved.snapshot,
         prompt: options.instructions,
         status: "queued",
@@ -484,11 +495,15 @@ export class BatchManager {
   }
 
   list(limit = 20, requestKey?: string): BatchSnapshot[] {
-    return [...this.batches.values()]
+    const matches = [...this.batches.values()]
       .filter((batch) => requestKey === undefined || batch.requestKey === requestKey
         || Object.hasOwn(batch.createAliases ?? {}, requestKey)
         || Object.hasOwn(batch.appendKeys ?? {}, requestKey)
-        || Object.hasOwn(batch.modificationKeys ?? {}, requestKey))
+        || Object.hasOwn(batch.modificationKeys ?? {}, requestKey));
+    if (requestKey !== undefined && matches.length > 1) {
+      throw new Error(`Ambiguous requestKey: ${matches.length} batches match. Use the original batchId; do not guess or resubmit.`);
+    }
+    return matches
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, Math.max(1, Math.min(MAX_BATCH_IMAGES, limit)))
       .map(snapshot);
@@ -1248,6 +1263,9 @@ function deriveStatus(counts: { queued: number; running: number; succeeded: numb
 }
 
 function generationInputsFor(job: JobRecord): string[] {
+  // References include the durable edit target and all retained/explicit inputs.
+  // generationInputPath(s) still identify only replaced outputs for cleanup.
+  if (job.referenceImagePaths?.length) return [...new Set(job.referenceImagePaths)];
   if (job.generationInputPaths?.length) return [...new Set(job.generationInputPaths)];
   if (job.generationInputPath) return [job.generationInputPath];
   if (job.inputPaths?.length) return [...new Set(job.inputPaths)];

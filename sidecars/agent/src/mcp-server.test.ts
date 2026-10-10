@@ -277,6 +277,63 @@ describe('Esse MCP server', () => {
     await client.close();
   });
 
+  it('returns a save error without publishing a receipt or executing the rejected edit later', async () => {
+    const edit = vi.fn(fakeApi().edit);
+    const fixture = await createFixture({ ...fakeApi(), edit });
+    const server = await startDesktopMcpServer({ pairingToken: 'save-failure-token', port: 0, batchManager: fixture.batchManager, imageStore: fixture.imageStore });
+    runningServers.push(server);
+    const client = new Client({ name: 'save-failure-review', version: '1.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint), { requestInit: { headers: { authorization: 'Bearer save-failure-token' } } }));
+    const mother = firstJson(await client.callTool({ name: 'create_image_batch', arguments: { prompt: 'mother', requestKey: 'parent-save-mother' } })).batch as { id: string };
+    await fixture.batchManager.waitForIdle();
+    const before = fixture.batchManager.get(mother.id);
+    const save = vi.spyOn(BatchStore.prototype, 'save').mockRejectedValueOnce(new Error('injected disk-save failure'));
+    const failed = await client.callTool({ name: 'modify_selected_images', arguments: { batchId: mother.id, imageIds: [before.jobs[0].outputImageId], instructions: 'rework', requestKey: 'parent-failed-save' } });
+    save.mockRestore();
+    const memoryAfterFailure = fixture.batchManager.get(mother.id);
+    const receipt = firstJson(await client.callTool({ name: 'list_image_batches', arguments: { requestKey: 'parent-failed-save', limit: 1 } }));
+    const disk = (await new BatchStore(path.join(fixture.directory, 'batches')).loadAll()).find(batch => batch.id === mother.id)!;
+    await client.callTool({ name: 'create_image_batch', arguments: { prompt: 'unrelated', requestKey: 'parent-unrelated-batch' } });
+    await fixture.batchManager.waitForIdle();
+    expect({ isError: failed.isError, memoryStatus: memoryAfterFailure.jobs[0].status, diskStatus: disk.jobs[0].status,
+      receiptCount: (receipt.batches as unknown[]).length, editCalls: edit.mock.calls.length,
+    }).toEqual({ isError: true, memoryStatus: 'succeeded', diskStatus: 'succeeded', receiptCount: 0, editCalls: 0 });
+    expect(memoryAfterFailure).toEqual(before);
+    expect(disk.jobs).toEqual(before.jobs);
+    await client.close();
+  });
+
+  it('reports a shared append receipt as ambiguous before either list limit can hide a match', async () => {
+    const generate = vi.fn(fakeApi().generate);
+    const fixture = await createFixture({ ...fakeApi(), generate });
+    const server = await startDesktopMcpServer({ pairingToken: 'ambiguity-token', port: 0, batchManager: fixture.batchManager, imageStore: fixture.imageStore });
+    runningServers.push(server);
+    const client = new Client({ name: 'ambiguity-review', version: '1.0.0' });
+    await client.connect(new StreamableHTTPClientTransport(new URL(server.endpoint), { requestInit: { headers: { authorization: 'Bearer ambiguity-token' } } }));
+    const ids: string[] = [];
+    for (const title of ['A', 'B']) {
+      const result = firstJson(await client.callTool({ name: 'create_image_batch', arguments: { prompt: title, requestKey: `parent-create-${title}` } }));
+      const batchId = (result.batch as { id: string }).id;
+      ids.push(batchId);
+      await client.callTool({ name: 'append_image_batch_jobs', arguments: { batchId, prompt: 'append', requestKey: 'shared-append-key' } });
+    }
+    await fixture.batchManager.waitForIdle();
+    const calls = generate.mock.calls.length;
+    for (const limit of [1, 50]) {
+      const result = await client.callTool({ name: 'list_image_batches', arguments: { requestKey: 'shared-append-key', limit } });
+      expect(result.isError).toBe(true);
+      expect(JSON.stringify(result.content)).toContain('Ambiguous requestKey: 2 batches match');
+      expect(result.structuredContent).toMatchObject({ error: expect.stringContaining('Ambiguous requestKey: 2 batches match') });
+      expect(result.structuredContent).not.toHaveProperty('batches');
+    }
+    for (const batchId of ids) expect(firstJson(await client.callTool({ name: 'get_image_batch', arguments: { batchId } }))).toHaveProperty('batch.id', batchId);
+    const restarted = new BatchManager({ store: new BatchStore(path.join(fixture.directory, 'batches')), imageStore: fixture.imageStore, createApiClient: async () => ({ ...fakeApi(), generate }) });
+    await restarted.initialize();
+    expect(() => restarted.list('shared-append-key')).toThrow('Ambiguous requestKey: 2 batches match');
+    expect(generate).toHaveBeenCalledTimes(calls);
+    await client.close();
+  });
+
   it('continues an authorized product workflow with real offline pixels, one task-scoped rework and failed-item archival', async () => {
     const generate = vi.fn(async (...args: unknown[]) => {
       const prompt = (args[0] as { prompt: string }).prompt;
