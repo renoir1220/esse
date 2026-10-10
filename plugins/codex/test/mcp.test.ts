@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -13,10 +13,100 @@ import { ProviderRegistry } from "../src/providers/registry.js";
 import { BatchManager } from "../src/jobs/batch-manager.js";
 import { Thumbnailer } from "../src/files/thumbnailer.js";
 import { createLocalEsseServer, WIDGET_URI } from "../src/mcp/app.js";
+import { AUTHORIZED_WORKFLOW_POLICY, WORKFLOW_POLLING, WORKFLOW_TOOL_GUIDANCE } from "../src/mcp/workflow-policy.js";
 import { ORIGINAL_IMAGE_RESOURCE_TEMPLATE } from "../src/files/original-image-registry.js";
 import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
+import { coloredPng } from "./pixel-fixture.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
+
+test("Agent rework retains original reference bytes and attaches explicit local and Esse references", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-reference-review-"));
+  const fixture = await reviewMcpFixture(root);
+  try {
+    const buffers = [coloredPng(255, 0, 0), coloredPng(0, 0, 255), coloredPng(0, 255, 0), coloredPng(255, 255, 0), coloredPng(0, 255, 255)];
+    const files = buffers.map((_, index) => path.join(root, `input-${index}.png`));
+    await Promise.all(files.map((file, index) => writeFile(file, buffers[index]!)));
+    const create = async (prompt: string, key: string, references: string[] = []) => {
+      const result = await fixture.client.callTool({ name: "create_image_batch", arguments: { offeringId: CODEX_GENERATION_OFFERING_ID, prompt, referenceImagePaths: references, requestKey: key } });
+      assert.notEqual(result.isError, true);
+      return (result.structuredContent as { batch: { id: string; jobs: Array<{ id: string }> } }).batch;
+    };
+    const mother = await create("mother with original A/B", "reference-mother", files.slice(0, 2));
+    const start = await fixture.client.callTool({ name: "start_agent_image_job", arguments: { batchId: mother.id, jobId: mother.jobs[0]!.id } });
+    const initialPaths = (start.structuredContent as { job: { referenceImagePaths: string[] } }).job.referenceImagePaths;
+    assert.deepEqual(await Promise.all(initialPaths.map(file => readFile(file))), buffers.slice(0, 2));
+    const completed = await fixture.client.callTool({ name: "complete_agent_image_job", arguments: { batchId: mother.id, jobId: mother.jobs[0]!.id, imagePath: files[2] } });
+    assert.notEqual(completed.isError, true);
+    const carrier = await create("structural reference carrier", "reference-carrier");
+    await fixture.client.callTool({ name: "start_agent_image_job", arguments: { batchId: carrier.id, jobId: carrier.jobs[0]!.id } });
+    const carrierCompleted = await fixture.client.callTool({ name: "complete_agent_image_job", arguments: { batchId: carrier.id, jobId: carrier.jobs[0]!.id, imagePath: files[4] } });
+    assert.notEqual(carrierCompleted.isError, true);
+    const modification = {
+      batchId: mother.id, imageIds: [mother.jobs[0]!.id], instructions: "bounded rework", requestKey: "reference-rework",
+      referenceImagePaths: [files[0], files[1], files[3]], referenceImages: [{ batchId: carrier.id, image: "图1" }]
+    };
+    const modified = await fixture.client.callTool({ name: "modify_selected_images", arguments: modification });
+    assert.notEqual(modified.isError, true);
+    const rework = await fixture.client.callTool({ name: "start_agent_image_job", arguments: { batchId: mother.id, jobId: mother.jobs[0]!.id } });
+    const reworkPaths = (rework.structuredContent as { job: { referenceImagePaths: string[] } }).job.referenceImagePaths;
+    assert.deepEqual(await Promise.all(reworkPaths.map(file => readFile(file))), [buffers[2], buffers[0], buffers[1], buffers[3], buffers[4]]);
+    assert.deepEqual(await readFile(files[0]!), buffers[0]);
+    assert.deepEqual(await readFile(files[1]!), buffers[1]);
+    assert.deepEqual(await readFile(fixture.batches.get(carrier.id).jobs[0]!.outputPath!), buffers[4]);
+    await fixture.client.callTool({ name: "fail_agent_image_job", arguments: { batchId: mother.id, jobId: mother.jobs[0]!.id, error: "offline fixture: no generation" } });
+    const beforeReplay = fixture.batches.get(mother.id);
+    const replayed = await fixture.client.callTool({ name: "modify_selected_images", arguments: modification });
+    assert.notEqual(replayed.isError, true);
+    for (const references of [[], [files[0], files[1], files[2]]]) {
+      const conflict = await fixture.client.callTool({ name: "modify_selected_images", arguments: { ...modification, referenceImagePaths: references } });
+      assert.equal(conflict.isError, true);
+      assert.match(JSON.stringify(conflict.content), /already used with different arguments/u);
+    }
+    assert.deepEqual(fixture.batches.get(mother.id), beforeReplay);
+  } finally { await fixture.client.close(); await fixture.server.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+test("Plugin MCP reports shared append receipts as ambiguous at limit 1 and 50", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-ambiguity-review-"));
+  const fixture = await reviewMcpFixture(root);
+  try {
+    for (const title of ["A", "B"]) {
+      const created = await fixture.client.callTool({ name: "create_image_batch", arguments: { offeringId: CODEX_GENERATION_OFFERING_ID, prompt: title, requestKey: `create-${title}` } });
+      const batchId = (created.structuredContent as { batch: { id: string } }).batch.id;
+      await fixture.client.callTool({ name: "append_image_batch_jobs", arguments: { batchId, prompt: "append", requestKey: "shared-append-key" } });
+    }
+    for (const limit of [1, 50]) {
+      const result = await fixture.client.callTool({ name: "list_image_batches", arguments: { requestKey: "shared-append-key", limit } });
+      assert.equal(result.isError, true);
+      assert.match(JSON.stringify(result.content), /Ambiguous requestKey: 2 batches match/u);
+      assert.equal(result.structuredContent, undefined);
+    }
+    for (const batch of fixture.batches.list()) {
+      const exact = await fixture.client.callTool({ name: "get_image_batch", arguments: { batchId: batch.id } });
+      assert.equal((exact.structuredContent as { batch: { id: string } }).batch.id, batch.id);
+      for (const job of batch.jobs) await fixture.client.callTool({ name: "fail_agent_image_job", arguments: { batchId: batch.id, jobId: job.id, error: "offline ambiguity fixture" } });
+    }
+    const restarted = new BatchManager(new BatchStore(fixture.paths.batchesDir), fixture.registry, fixture.paths);
+    await restarted.initialize();
+    assert.throws(() => restarted.list(1, "shared-append-key"), /Ambiguous requestKey: 2 batches match/u);
+  } finally { await fixture.client.close(); await fixture.server.close(); await rm(root, { recursive: true, force: true }); }
+});
+
+async function reviewMcpFixture(root: string) {
+  const paths = resolveDataPaths({ ESSE_DATA_DIR: root }, process.platform);
+  await ensureDataPaths(paths);
+  const settings = new SettingsStore(paths.settingsFile, new MemorySecretStore());
+  const registry = new ProviderRegistry(settings, async () => { throw new Error("Unexpected Provider call in offline Agent fixture"); });
+  const batches = new BatchManager(new BatchStore(paths.batchesDir), registry, paths);
+  await batches.initialize();
+  const server = createLocalEsseServer({ version: "review", widgetHtml: "<html></html>", settings, registry, batches, thumbnailer: new Thumbnailer(paths) });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "parent-review-fixture", version: "1.0.0" });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  return { paths, registry, batches, server, client };
+}
 
 function asyncTaskFetch(result: unknown): typeof fetch {
   let sequence = 0;
@@ -68,6 +158,10 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     const tools = await client.listTools();
+    assert(client.getInstructions()?.includes(AUTHORIZED_WORKFLOW_POLICY));
+    for (const name of ["create_image_batch", "append_image_batch_jobs", "modify_selected_images", "list_image_batches", "get_image_batch", "render_image_batch"]) {
+      assert(tools.tools.find(tool => tool.name === name)?.description?.includes(WORKFLOW_TOOL_GUIDANCE));
+    }
     const names = tools.tools.map((tool) => tool.name);
     for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "append_image_batch_jobs", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_check_for_updates", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_original_image_resource", "ui_get_image_metadata", "ui_save_image_as", "ui_copy_image_to_clipboard", "ui_copy_batch_reference_to_clipboard", "ui_copy_image_id_to_clipboard", "ui_delete_esse_images", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
@@ -86,6 +180,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert((appendTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.batchId, "append_image_batch_jobs must target one existing batch");
     assert(!((appendTool?.inputSchema as { required?: string[] })?.required || []).includes("offeringId"), "append_image_batch_jobs must reuse the batch model when offeringId is omitted");
     const listTool = tools.tools.find((tool) => tool.name === "list_image_batches");
+    assert((listTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.requestKey);
     assert.equal((listTool?.inputSchema as { properties?: { limit?: { maximum?: number } } })?.properties?.limit?.maximum, 50);
     const modifyTool = tools.tools.find((tool) => tool.name === "modify_selected_images");
     assert((modifyTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.imageIds, "modify_selected_images must accept exact image IDs");
@@ -145,6 +240,10 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const createdBatch = (created.structuredContent as { batch?: { id?: string; title?: string; offering?: { id?: string } } }).batch;
     assert.equal(createdBatch?.offering?.id, defaultOfferingId);
     assert.equal((created.structuredContent as { activateBatchId?: string }).activateBatchId, createdBatch?.id);
+    assert.equal((created.structuredContent as { nextAction?: string }).nextAction, AUTHORIZED_WORKFLOW_POLICY);
+    assert.deepEqual((created.structuredContent as { polling?: unknown }).polling, WORKFLOW_POLLING);
+    const reconciled = await client.callTool({ name: "list_image_batches", arguments: { requestKey: "mcp-create-default", limit: 1 } });
+    assert.deepEqual((reconciled.structuredContent as { batches: Array<{ id: string }> }).batches.map(batch => batch.id), [createdBatch?.id]);
     const refreshedState = await client.callTool({ name: "ui_get_local_state", arguments: { batchId: createdBatch?.id } });
     assert.equal((refreshedState.structuredContent as { state?: { activation?: { batchId?: string } } }).state?.activation?.batchId, createdBatch?.id);
     let completedJobId: string | undefined;
@@ -181,6 +280,8 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
       arguments: appendArguments
     });
     assert.equal((duplicateAppend.structuredContent as { batch?: { total?: number } }).batch?.total, 2);
+    const appendedReceipt = await client.callTool({ name: "list_image_batches", arguments: { requestKey: "mcp-append-once", limit: 1 } });
+    assert.deepEqual((appendedReceipt.structuredContent as { batches: Array<{ id: string }> }).batches.map(batch => batch.id), [createdBatch?.id]);
     const conflictingAppend = await client.callTool({
       name: "append_image_batch_jobs",
       arguments: { batchId: createdBatch?.id, prompt: "different operation", requestKey: "mcp-append-once" }

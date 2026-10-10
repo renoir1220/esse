@@ -43,6 +43,16 @@ export interface AppendBatchResult {
   appendedJobIds: string[];
 }
 
+export interface ModifyBatchInput {
+  batchId: string;
+  imageIds?: string[];
+  jobIds?: string[];
+  instructions: string;
+  offeringId?: string;
+  referenceImagePaths?: string[];
+  requestKey?: string;
+}
+
 type SelectedBatchImage =
   | { kind: "result" | "failed-source"; job: JobRecord; sourcePath: string }
   | { kind: "backup"; job: JobRecord; backup: JobBackup; sourcePath: string };
@@ -313,30 +323,16 @@ export class BatchManager {
     return { batch: snapshot(batch), appendedJobIds: appended.map((job) => job.id) };
   }
 
-  async modifyInPlace(options: {
-    batchId: string;
-    imageIds?: string[];
-    jobIds?: string[];
-    instructions: string;
-    offeringId?: string;
-    requestKey?: string;
-  }): Promise<BatchSnapshot> {
-    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
+  async modifyInPlace(options: ModifyBatchInput): Promise<BatchSnapshot> {
+    const fingerprint = modificationFingerprint(options);
     return this.withRequestKey(`modify:${options.batchId}:${options.requestKey || ""}`, options.requestKey, fingerprint, () => this.modifyInPlaceUnlocked(options));
   }
 
-  private async modifyInPlaceUnlocked(options: {
-    batchId: string;
-    imageIds?: string[];
-    jobIds?: string[];
-    instructions: string;
-    offeringId?: string;
-    requestKey?: string;
-  }): Promise<BatchSnapshot> {
+  private async modifyInPlaceUnlocked(options: ModifyBatchInput): Promise<BatchSnapshot> {
     const source = this.requireBatch(options.batchId);
-    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
+    const fingerprint = modificationFingerprint(options);
     if (options.requestKey && source.modificationKeys?.[options.requestKey]) {
-      assertMatchingFingerprint(source.modificationFingerprints?.[options.requestKey], fingerprint, options.requestKey);
+      assertCompatibleModificationFingerprint(source.modificationFingerprints?.[options.requestKey], options);
       this.activate(source.id);
       return snapshot(source);
     }
@@ -350,9 +346,18 @@ export class BatchManager {
     const resolved = await this.registry.resolveOffering(options.offeringId || source.offering.id);
     if (!isAgentGeneration(resolved) && !resolved.profile.hasApiKey) throw new Error(`Provider ${resolved.profile.displayName} · ${resolved.profile.tierName} has no API key.`);
     if (!resolved.offering.supportsImageToImage) throw new Error(`${resolved.offering.displayName} does not support image editing.`);
+    const additionalReferences = (options.referenceImagePaths || []).map(value => path.resolve(value));
+    const references = selected.map(image => [...new Set([
+      image.sourcePath,
+      ...(image.kind === "backup" ? image.backup.referenceImagePaths || []
+        : image.job.referenceImagePaths || image.job.inputPaths || (image.job.inputPath ? [image.job.inputPath] : [])),
+      ...additionalReferences
+    ])]);
+    // Validate the complete per-target attachment set before mutating history.
+    for (const paths of references) await imageFilesToDataUrls(paths);
     const now = new Date().toISOString();
     const scheduled: JobRecord[] = [];
-    for (const image of selected) {
+    for (const [index, image] of selected.entries()) {
       if (image.kind === "result") {
         const job = image.job;
         const version = nextBackupVersion(job);
@@ -370,7 +375,7 @@ export class BatchManager {
         Object.assign(job, {
           generationInputPath: image.sourcePath,
           generationInputPaths: undefined,
-          referenceImagePaths: [backupPath],
+          referenceImagePaths: references[index]!.map(value => value === image.sourcePath ? backupPath : value),
           offering: resolved.snapshot,
           prompt: options.instructions,
           status: "queued",
@@ -396,8 +401,8 @@ export class BatchManager {
         index: slot.index,
         name: slot.name,
         inputPath: image.sourcePath,
-        inputPaths: [image.sourcePath],
-        referenceImagePaths: [image.sourcePath],
+        inputPaths: references[index]!,
+        referenceImagePaths: references[index]!,
         offering: resolved.snapshot,
         prompt: options.instructions,
         status: "queued",
@@ -483,8 +488,16 @@ export class BatchManager {
     return snapshot(batch);
   }
 
-  list(limit = 20): BatchSnapshot[] {
-    return [...this.batches.values()]
+  list(limit = 20, requestKey?: string): BatchSnapshot[] {
+    const matches = [...this.batches.values()]
+      .filter((batch) => requestKey === undefined || batch.requestKey === requestKey
+        || Object.hasOwn(batch.createAliases ?? {}, requestKey)
+        || Object.hasOwn(batch.appendKeys ?? {}, requestKey)
+        || Object.hasOwn(batch.modificationKeys ?? {}, requestKey));
+    if (requestKey !== undefined && matches.length > 1) {
+      throw new Error(`Ambiguous requestKey: ${matches.length} batches match. Use the original batchId; do not guess or resubmit.`);
+    }
+    return matches
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, Math.max(1, Math.min(MAX_BATCH_IMAGES, limit)))
       .map(snapshot);
@@ -1244,6 +1257,9 @@ function deriveStatus(counts: { queued: number; running: number; succeeded: numb
 }
 
 function generationInputsFor(job: JobRecord): string[] {
+  // References include the durable edit target and all retained/explicit inputs.
+  // generationInputPath(s) still identify only replaced outputs for cleanup.
+  if (job.referenceImagePaths?.length) return [...new Set(job.referenceImagePaths)];
   if (job.generationInputPaths?.length) return [...new Set(job.generationInputPaths)];
   if (job.generationInputPath) return [job.generationInputPath];
   if (job.inputPaths?.length) return [...new Set(job.inputPaths)];
@@ -1337,6 +1353,28 @@ function defaultOutputDirectory(paths: DataPaths, inputDirectory: string | undef
 function isInside(directory: string, filePath: string): boolean {
   const relative = path.relative(path.resolve(directory), path.resolve(filePath));
   return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function modificationFingerprint(input: ModifyBatchInput): string | undefined {
+  return input.requestKey ? requestFingerprint({ ...input, requestKey: undefined,
+    referenceImagePaths: input.referenceImagePaths?.length ? input.referenceImagePaths : undefined,
+  }) : undefined;
+}
+
+function assertCompatibleModificationFingerprint(stored: string | undefined, input: ModifyBatchInput): void {
+  const variants = [input];
+  // The previous handler omitted this deprecated alias; older handlers kept it.
+  // Only identical selectors are equivalent. Other arguments remain unchanged.
+  if (input.imageIds && input.jobIds && JSON.stringify(input.imageIds) === JSON.stringify(input.jobIds)) {
+    variants.push({ ...input, jobIds: undefined });
+  }
+  const fingerprints = variants.flatMap(variant => [
+    modificationFingerprint(variant),
+    ...(!variant.referenceImagePaths?.length
+      ? [requestFingerprint({ ...variant, requestKey: undefined, referenceImagePaths: [] })] : [])
+  ]);
+  if (stored && fingerprints.includes(stored)) return;
+  assertMatchingFingerprint(stored, modificationFingerprint(input), input.requestKey!);
 }
 
 function requestFingerprint(value: unknown): string {

@@ -346,6 +346,66 @@ describe('Esse batch manager', () => {
     if (stage === 'start') expect(api.generate).toHaveBeenCalledTimes(1);
   });
 
+  for (const targetKind of ['result', 'backup'] as const) it(`does not retain or later execute a ${targetKind} edit after its save fails`, async () => {
+    const fixture = await fixtureDirectory();
+    const edit = vi.fn(fakeApi().edit);
+    const manager = managerFor(fixture, { ...fakeApi(), edit });
+    await manager.initialize();
+    const created = await manager.create({ prompt: 'mother', requestKey: 'save-failure-mother' });
+    await manager.waitForIdle();
+    if (targetKind === 'backup') {
+      await manager.modify({ batchId: created.id, imageIds: [manager.get(created.id).jobs[0].outputImageId!], prompt: 'seed backup', requestKey: 'save-failure-backup' });
+      await manager.waitForIdle();
+    }
+    const before = manager.get(created.id);
+    const editCalls = edit.mock.calls.length;
+    const imageId = targetKind === 'backup' ? before.jobs[0].backups[0].imageId : before.jobs[0].outputImageId!;
+    vi.spyOn(fixture.batchStore, 'save').mockRejectedValueOnce(new Error('injected disk-save failure'));
+    await expect(manager.modify({ batchId: created.id, imageIds: [imageId], prompt: 'must not escape', requestKey: 'parent-failed-save' })).rejects.toThrow('injected disk-save failure');
+    expect(manager.get(created.id)).toEqual(before);
+    expect(manager.list('parent-failed-save')).toEqual([]);
+    const disk = (await fixture.batchStore.loadAll()).find(batch => batch.id === created.id)!;
+    expect(disk.jobs).toEqual(before.jobs);
+    expect(disk.modificationKeys).not.toHaveProperty('parent-failed-save');
+    await manager.create({ prompt: 'unrelated', requestKey: 'after-failed-edit' });
+    await manager.waitForIdle();
+    expect(edit).toHaveBeenCalledTimes(editCalls);
+    expect(manager.get(created.id)).toEqual(before);
+  });
+
+  it('keeps an uncommitted edit invisible while unrelated work can run', async () => {
+    const fixture = await fixtureDirectory();
+    const edit = vi.fn(fakeApi().edit);
+    const manager = managerFor(fixture, { ...fakeApi(), edit });
+    await manager.initialize();
+    const created = await manager.create({ prompt: 'mother', requestKey: 'pending-save-mother' });
+    await manager.waitForIdle();
+    const before = manager.get(created.id);
+    let release!: () => void;
+    const barrier = new Promise<void>(resolve => { release = resolve; });
+    let entered = false;
+    const save = fixture.batchStore.save.bind(fixture.batchStore);
+    vi.spyOn(fixture.batchStore, 'save').mockImplementation(async batch => {
+      if (Object.hasOwn(batch.modificationKeys, 'pending-save-edit')) {
+        entered = true;
+        await barrier;
+        throw new Error('injected delayed save failure');
+      }
+      await save(batch);
+    });
+    const failed = expect(manager.modify({ batchId: created.id, imageIds: [before.jobs[0].outputImageId!], prompt: 'pending edit', requestKey: 'pending-save-edit' })).rejects.toThrow('injected delayed save failure');
+    try {
+      await vi.waitFor(() => expect(entered).toBe(true));
+      expect(manager.get(created.id)).toEqual(before);
+      expect(manager.list('pending-save-edit')).toEqual([]);
+      const unrelated = await manager.create({ prompt: 'unrelated', requestKey: 'during-pending-edit' });
+      await manager.waitForIdle();
+      expect(manager.get(unrelated.id).status).toBe('completed');
+      expect(edit).not.toHaveBeenCalled();
+    } finally { release(); await failed; }
+    expect(manager.get(created.id)).toEqual(before);
+  });
+
   it('publishes a batch-local change after durable acceptance', async () => {
     const fixture = await fixtureDirectory();
     const changes: BatchManagerChange[] = [];

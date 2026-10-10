@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { access, mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
@@ -13,6 +13,7 @@ import { BatchManager } from "../src/jobs/batch-manager.js";
 import { Semaphore } from "../src/jobs/semaphore.js";
 import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 import type { BatchRecord } from "../src/types.js";
+import { coloredPng } from "./pixel-fixture.js";
 
 const onePixelPng = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=";
 
@@ -500,6 +501,46 @@ test("Codex generation delegates to the current Agent and imports terminal resul
   } finally {
     await rm(root, { recursive: true, force: true });
   }
+});
+
+test("Provider rework sends the target plus original and additional reference bytes without deleting inputs", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "esse-provider-reference-review-"));
+  try {
+    const attachments: Buffer[][] = [];
+    const targetBytes = coloredPng(0, 255, 0);
+    const fixture = await createManager(root, async (_input, init) => {
+      assert(init?.body instanceof FormData);
+      const images = [...init.body.values()].filter((value): value is File => value instanceof Blob);
+      attachments.push(await Promise.all(images.map(async image => Buffer.from(await image.arrayBuffer()))));
+      return Response.json({ data: [{ b64_json: targetBytes.toString("base64") }] });
+    }, "reference-fixture-model");
+    const outputDirectory = path.join(root, "output");
+    await mkdir(outputDirectory);
+    const originalBytes = [coloredPng(255, 0, 0), coloredPng(0, 0, 255)];
+    const originalPaths = originalBytes.map((_, index) => path.join(outputDirectory, `original-${index}.png`));
+    await Promise.all(originalPaths.map((file, index) => writeFile(file, originalBytes[index]!)));
+    const extraBytes = coloredPng(255, 255, 0);
+    const extraPath = path.join(outputDirectory, "style.png");
+    await writeFile(extraPath, extraBytes);
+    const created = await fixture.manager.create({ offeringId: "offer-default", prompt: "original", referenceImagePaths: originalPaths, outputDirectory, requestKey: "provider-original" });
+    const before = await waitForBatch(fixture.manager, created.id);
+    assert.deepEqual(attachments[0], originalBytes);
+    const input = { batchId: created.id, imageIds: [before.jobs[0]!.id], instructions: "bounded rework", referenceImagePaths: [extraPath], requestKey: "provider-rework" };
+    await fixture.manager.modifyInPlace(input);
+    const after = await waitForBatch(fixture.manager, created.id);
+    assert.deepEqual(attachments[1], [targetBytes, ...originalBytes, extraBytes]);
+    assert.equal(attachments.length, 2);
+    assert.deepEqual(await Promise.all(originalPaths.map(file => readFile(file))), originalBytes);
+    assert.deepEqual(await readFile(extraPath), extraBytes);
+    assert.deepEqual(await readFile(after.jobs[0]!.backups![0]!.outputPath), targetBytes);
+    await fixture.manager.modifyInPlace(input);
+    assert.equal(attachments.length, 2, "receipt replay must not create another Provider call");
+    const extraPaths = Array.from({ length: 18 }, (_, index) => path.join(root, `extra-${index}.png`));
+    await Promise.all(extraPaths.map(file => writeFile(file, extraBytes)));
+    await assert.rejects(fixture.manager.modifyInPlace({ ...input, requestKey: "too-many-references", referenceImagePaths: extraPaths }), /at most 20 reference images/u);
+    assert.deepEqual(fixture.manager.get(created.id), after);
+    assert.equal(attachments.length, 2);
+  } finally { await rm(root, { recursive: true, force: true }); }
 });
 
 test("in-place modification keeps the batch, refreshes the main image, and creates Chinese backups", async () => {

@@ -3,6 +3,7 @@ import path from "node:path";
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { registerAppResource, registerAppTool, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server";
 import { z } from "zod";
+import { AUTHORIZED_WORKFLOW_POLICY, WORKFLOW_POLLING, WORKFLOW_TOOL_GUIDANCE } from "./workflow-policy.js";
 import type { BatchManager } from "../jobs/batch-manager.js";
 import { scanImageFolder } from "../files/image-files.js";
 import { readImageFileMetadata } from "../files/image-metadata.js";
@@ -52,7 +53,11 @@ const existingImageReferenceSchema = z.object({
 });
 
 const stateOutputSchema = { state: z.record(z.unknown()) };
-const batchOutputSchema = { batch: z.record(z.unknown()), activateBatchId: z.string().optional() };
+const batchOutputSchema = {
+  batch: z.record(z.unknown()), activateBatchId: z.string().optional(),
+  nextAction: z.string().optional(),
+  polling: z.object({ minIntervalMs: z.number(), maxIntervalMs: z.number(), timeoutMs: z.number() }).optional()
+};
 const agentJobOutputSchema = { batch: z.record(z.unknown()), job: z.record(z.unknown()) };
 
 export function createLocalEsseServer(options: {
@@ -88,7 +93,7 @@ export function createLocalEsseServer(options: {
     { name: "esse", version: options.version },
     {
       instructions:
-        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Append new generation tasks to an existing batch with append_image_batch_jobs; never simulate append by creating and merging a temporary batch. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself."
+        "esse runs local image batches. Use the locally configured default offering unless the user explicitly requests another model; do not choose a model on the user's behalf. Append new generation tasks to an existing batch with append_image_batch_jobs; never simulate append by creating and merging a temporary batch. Codex 生成 delegates each job to the current Agent's own image-generation capability; the Agent may use any available concurrency method and must return success or failure through the Agent job tools. Inspect local folders before image-aware work. When a user refers to an existing Esse result such as 图1, pass it through referenceImages with its batchId and exact image name; never leave the reference only in prompt text or invent a local path. Modify existing images with modify_selected_images and exact image IDs so the work remains in the same batch; do not create a replacement batch. Routine tools are headless and the docked sidebar refreshes itself. " + AUTHORIZED_WORKFLOW_POLICY
     }
   );
 
@@ -186,7 +191,7 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "create_image_batch", {
     title: "Create local parallel image batch",
-    description: "Creates a local persistent batch using the configured default model when offeringId is omitted. Each jobs[] item has its own prompt and zero or more references. If the resolved offering uses agent-generation, the current Agent must generate each job with any image capability and concurrency method it supports, then call start_agent_image_job and complete_agent_image_job or fail_agent_image_job. For existing Esse results such as 图1, use referenceImages with batchId + image so Esse resolves the real output file.",
+    description: "Creates a local persistent batch using the configured default model when offeringId is omitted. Each jobs[] item has its own prompt and zero or more references. If the resolved offering uses agent-generation, the current Agent must generate each job with any image capability and concurrency method it supports, then call start_agent_image_job and complete_agent_image_job or fail_agent_image_job. For existing Esse results such as 图1, use referenceImages with batchId + image so Esse resolves the real output file." + " " + WORKFLOW_TOOL_GUIDANCE,
     inputSchema: {
       title: z.string().max(120).optional(),
       offeringId: z.string().min(1).optional(),
@@ -259,7 +264,7 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "append_image_batch_jobs", {
     title: "Append generation jobs to an Esse batch",
-    description: "Adds new generation jobs directly to one existing batch, whether it is active or terminal. It never creates a temporary batch and never requires a merge. Uses the batch model when offeringId is omitted; pass offeringId only when the user explicitly requests another model. Each jobs[] item keeps its own prompt and references.",
+    description: "Adds new generation jobs directly to one existing batch, whether it is active or terminal. It never creates a temporary batch and never requires a merge. Uses the batch model when offeringId is omitted; pass offeringId only when the user explicitly requests another model. Each jobs[] item keeps its own prompt and references." + " " + WORKFLOW_TOOL_GUIDANCE,
     inputSchema: {
       batchId: z.string().min(1),
       offeringId: z.string().min(1).optional(),
@@ -312,6 +317,8 @@ export function createLocalEsseServer(options: {
       ? agentBatchResult(appended.batch, message, { appendedJobIds: appended.appendedJobIds, activate: true })
       : {
           structuredContent: {
+            nextAction: AUTHORIZED_WORKFLOW_POLICY,
+            polling: WORKFLOW_POLLING,
             batch: appended.batch,
             appendedJobIds: appended.appendedJobIds,
             activateBatchId: appended.batch.id
@@ -361,13 +368,13 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "list_image_batches", {
     title: "List recent local image batches",
-    description: "Lists recent Esse batch IDs, titles, image names, IDs, and statuses. Use this when the user refers to an earlier result such as 图1 but its batchId is not already known.",
-    inputSchema: { limit: z.number().int().min(1).max(50).default(10) },
+    description: "Lists recent Esse batch IDs, titles, image names, IDs, and statuses. Use this when the user refers to an earlier result such as 图1 but its batchId is not already known. Exact requestKey lookup fails on multiple matching batches before applying limit; resolve the original batchId without guessing or resubmitting." + " " + WORKFLOW_TOOL_GUIDANCE,
+    inputSchema: { limit: z.number().int().min(1).max(50).default(10), requestKey: z.string().min(1).max(200).optional() },
     outputSchema: { batches: z.array(z.record(z.unknown())) },
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
     _meta: headlessToolMeta()
-  }, async ({ limit }) => {
-    const batches = options.batches.list(limit);
+  }, async ({ limit, requestKey }) => {
+    const batches = options.batches.list(limit, requestKey);
     const text = batches.length
       ? batches.map((batch) => {
         const images = batch.jobs.flatMap((job) => [
@@ -382,7 +389,7 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "get_image_batch", {
     title: "Get local image batch",
-    description: "Gets current persistent batch status and local output paths.",
+    description: "Gets current persistent batch status and local output paths." + " " + WORKFLOW_TOOL_GUIDANCE,
     inputSchema: { batchId: z.string().min(1) },
     outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
@@ -391,7 +398,7 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "render_image_batch", {
     title: "Render local image batch",
-    description: "Returns an existing local image batch without opening a duplicate inline workbench. An already docked esse sidebar refreshes itself.",
+    description: "Returns an existing local image batch without opening a duplicate inline workbench. An already docked esse sidebar refreshes itself." + " " + WORKFLOW_TOOL_GUIDANCE,
     inputSchema: { batchId: z.string().min(1) },
     outputSchema: batchOutputSchema,
     annotations: { readOnlyHint: true, openWorldHint: false, destructiveHint: false },
@@ -400,13 +407,15 @@ export function createLocalEsseServer(options: {
 
   registerAppTool(server, "modify_selected_images", {
     title: "Modify selected local images",
-    description: "Modifies exact image IDs inside their existing batch. Current results update in place and preserve the previous version as 图1-1, 图1-2, and so on; backups and failed-job sources append a new job to that same batch. Never create a replacement batch for a modification. Uses offeringId only when the user explicitly selects a model; otherwise reuses the batch offering.",
+    description: "Modifies exact image IDs inside their existing batch, retaining that image's prior references and attaching any supplied referenceImagePaths/referenceImages. Current results update in place and preserve the previous version as 图1-1, 图1-2, and so on; backups and failed-job sources append a new job to that same batch. Never create a replacement batch for a modification. Uses offeringId only when the user explicitly selects a model; otherwise reuses the batch offering." + " " + WORKFLOW_TOOL_GUIDANCE,
     inputSchema: {
       batchId: z.string().min(1),
       imageIds: z.array(z.string()).min(1).max(50).optional(),
       jobIds: z.array(z.string()).min(1).max(50).optional().describe("Deprecated alias for imageIds; retained for older widgets."),
       instructions: z.string().min(1).max(5000),
       offeringId: z.string().optional(),
+      referenceImagePaths: z.array(z.string()).max(20).optional(),
+      referenceImages: z.array(existingImageReferenceSchema).max(20).optional(),
       requestKey: z.string().min(1).max(200)
     },
     outputSchema: batchOutputSchema,
@@ -415,7 +424,11 @@ export function createLocalEsseServer(options: {
   }, async (input) => {
     const imageIds = input.imageIds || input.jobIds;
     if (!imageIds?.length) throw new Error("请提供至少一个准确的 image ID。");
-    const batch = await options.batches.modifyInPlace({ ...input, imageIds });
+    const { referenceImages, ...modificationInput } = input;
+    const referenceImagePaths = [...(input.referenceImagePaths || []), ...resolveExistingImagePaths(options.batches, referenceImages)];
+    const batch = await options.batches.modifyInPlace({ ...modificationInput, imageIds,
+      referenceImagePaths: referenceImagePaths.length ? referenceImagePaths : undefined,
+    });
     const message = batch.jobs.some((job) => job.status === "queued" && job.offering?.adapterId === "agent-generation")
       ? "已建立 Codex 生成修改任务。当前 Agent 必须使用每个 job 返回的参考图完成生成并逐项回传结果。"
       : undefined;
@@ -872,7 +885,7 @@ function appResult(state: unknown) {
 
 function batchResult(batch: BatchSnapshot, message?: string, activate = false) {
   return {
-    structuredContent: { batch, ...(activate ? { activateBatchId: batch.id } : {}) },
+    structuredContent: { batch, nextAction: AUTHORIZED_WORKFLOW_POLICY, polling: WORKFLOW_POLLING, ...(activate ? { activateBatchId: batch.id } : {}) },
     content: [{ type: "text" as const, text: message || `${batch.title}: ${batch.succeeded}/${batch.total} completed; outputs: ${batch.outputDirectory}` }]
   };
 }
@@ -885,6 +898,8 @@ function agentBatchResult(
   return {
     structuredContent: {
       batch: agentBatchSummary(batch),
+      nextAction: AUTHORIZED_WORKFLOW_POLICY,
+      polling: WORKFLOW_POLLING,
       ...(options.appendedJobIds ? { appendedJobIds: options.appendedJobIds } : {}),
       ...(options.activate ? { activateBatchId: batch.id } : {})
     },
@@ -924,7 +939,7 @@ function agentJobResult(batch: BatchSnapshot, job: JobRecord, message: string) {
         id: job.id,
         name: job.name,
         prompt: job.prompt,
-        referenceImagePaths: previewSourcePaths(job),
+        referenceImagePaths: job.referenceImagePaths?.length ? [...new Set(job.referenceImagePaths)] : previewSourcePaths(job),
         outputDirectory: batch.outputDirectory,
         status: job.status
       }
