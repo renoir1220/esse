@@ -31,7 +31,7 @@ Download the matching `esse-community-windows-x64-*.exe` or `esse-community-maco
 2. Enter the API key inside Esse Community, test the connection, and save a default model.
 3. Copy the MCP configuration into the Agent's user-level HTTP MCP settings.
 
-Then simply tell the Agent to “use Esse to generate images.” Once durable background work is accepted by Esse Community, the Agent should return control immediately. It should not copy outputs back into the chat workspace or narrate prices and progress unless the user explicitly asks.
+Then simply tell the Agent to “use Esse to generate images.” A submit-only request may end after Esse Community durably accepts the background work. If the original task or an active persistent Goal already authorizes tracking, image verification or bounded rework, the Agent continues within the original scope, budget and attempt limit without a new user message. Background acceptance is not final image or task acceptance. Actual client Plan mode permits only planning and non-mutating exploration that improves the plan. Uncertain submissions or charges require read-only reconciliation, never automatic resubmission. Retrieve only results authorized by the task.
 
 ## Local data
 
