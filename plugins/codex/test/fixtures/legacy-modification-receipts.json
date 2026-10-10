@@ -1,0 +1,685 @@
+{
+  "schemaVersion": 1,
+  "fixtures": [
+    {
+      "sourceCommit": "996ea8acdab576f8cec2f77605b27b61679b6473",
+      "selector": "imageIds",
+      "request": {
+        "batchId": "666edb36-e28e-47a0-a818-26aa39a1d97d",
+        "imageIds": [
+          "4c666699-9db0-4ecf-b866-90defba7a609"
+        ],
+        "instructions": "legacy bounded rework",
+        "requestKey": "legacy-rework-key"
+      },
+      "record": {
+        "id": "666edb36-e28e-47a0-a818-26aa39a1d97d",
+        "requestKey": "legacy-mother-key",
+        "requestFingerprint": "a174782b0a62678f07559fe4afde6cd724be9c70a0d0d3f86f024fda895db98a",
+        "title": "Codex 生成 · 1 张",
+        "prompt": "legacy mother",
+        "outputDirectory": "$FIXTURE_ROOT/outputs/666edb36-e28e-47a0-a818-26aa39a1d97d",
+        "offering": {
+          "id": "esse-codex-generation",
+          "providerProfileId": "esse-codex",
+          "providerName": "Codex",
+          "tierName": "内置",
+          "adapterId": "agent-generation",
+          "canonicalModelId": "agent-image-generation",
+          "providerModelId": "agent-image-generation",
+          "displayName": "Codex 生成",
+          "concurrency": 1,
+          "price": {
+            "mode": "model_quota",
+            "currency": "MODEL"
+          }
+        },
+        "jobs": [
+          {
+            "id": "4c666699-9db0-4ecf-b866-90defba7a609",
+            "index": 0,
+            "name": "图1",
+            "referenceImagePaths": [
+              "$FIXTURE_ROOT/outputs/666edb36-e28e-47a0-a818-26aa39a1d97d/图1-1.png"
+            ],
+            "offering": {
+              "id": "esse-codex-generation",
+              "providerProfileId": "esse-codex",
+              "providerName": "Codex",
+              "tierName": "内置",
+              "adapterId": "agent-generation",
+              "canonicalModelId": "agent-image-generation",
+              "providerModelId": "agent-image-generation",
+              "displayName": "Codex 生成",
+              "concurrency": 1,
+              "price": {
+                "mode": "model_quota",
+                "currency": "MODEL"
+              }
+            },
+            "prompt": "legacy bounded rework",
+            "status": "succeeded",
+            "progress": 100,
+            "attempt": 1,
+            "retryable": false,
+            "chargeState": "charged",
+            "createdAt": "2026-10-10T02:56:21.628Z",
+            "startedAt": "2026-10-10T02:56:21.639Z",
+            "callHistory": [
+              {
+                "id": "4bbb536c-d9fd-4e29-94db-bcfda58e8138",
+                "sequence": 1,
+                "attempt": 1,
+                "source": "agent",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "status": "succeeded",
+                "chargeState": "charged",
+                "startedAt": "2026-10-10T02:56:21.631Z",
+                "finishedAt": "2026-10-10T02:56:21.636Z",
+                "durationMs": 5
+              },
+              {
+                "id": "4f820806-5de8-4ff6-b624-9e5c37255e6d",
+                "sequence": 2,
+                "attempt": 1,
+                "source": "agent",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "status": "succeeded",
+                "chargeState": "charged",
+                "startedAt": "2026-10-10T02:56:21.639Z",
+                "finishedAt": "2026-10-10T02:56:21.642Z",
+                "durationMs": 3
+              }
+            ],
+            "outputPath": "$FIXTURE_ROOT/outputs/666edb36-e28e-47a0-a818-26aa39a1d97d/图1-generated-2.png",
+            "finishedAt": "2026-10-10T02:56:21.642Z",
+            "durationMs": 3,
+            "backups": [
+              {
+                "id": "1ec3be22-5d70-4095-9be9-ccda38a0b9d9",
+                "name": "图1-1",
+                "outputPath": "$FIXTURE_ROOT/outputs/666edb36-e28e-47a0-a818-26aa39a1d97d/图1-1.png",
+                "prompt": "legacy mother",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "createdAt": "2026-10-10T02:56:21.638Z"
+              }
+            ],
+            "hasProviderResult": false
+          }
+        ],
+        "createdAt": "2026-10-10T02:56:21.628Z",
+        "updatedAt": "2026-10-10T02:56:21.642Z",
+        "modificationKeys": {
+          "legacy-rework-key": [
+            "4c666699-9db0-4ecf-b866-90defba7a609"
+          ]
+        },
+        "modificationFingerprints": {
+          "legacy-rework-key": "f0586860b7061c5fa10913045f3f3296445c49bc52183076ca7b73193638672c"
+        }
+      },
+      "files": [
+        {
+          "path": "$FIXTURE_ROOT/outputs/666edb36-e28e-47a0-a818-26aa39a1d97d/图1-generated-2.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg=="
+        },
+        {
+          "path": "$FIXTURE_ROOT/outputs/666edb36-e28e-47a0-a818-26aa39a1d97d/图1-1.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg=="
+        }
+      ]
+    },
+    {
+      "sourceCommit": "996ea8acdab576f8cec2f77605b27b61679b6473",
+      "selector": "jobIds",
+      "request": {
+        "batchId": "41f644d4-1982-46ae-9a54-2f89922b0eef",
+        "jobIds": [
+          "36de9009-2067-49b9-873f-6fae08294f88"
+        ],
+        "instructions": "legacy bounded rework",
+        "requestKey": "legacy-rework-key"
+      },
+      "record": {
+        "id": "41f644d4-1982-46ae-9a54-2f89922b0eef",
+        "requestKey": "legacy-mother-key",
+        "requestFingerprint": "a174782b0a62678f07559fe4afde6cd724be9c70a0d0d3f86f024fda895db98a",
+        "title": "Codex 生成 · 1 张",
+        "prompt": "legacy mother",
+        "outputDirectory": "$FIXTURE_ROOT/outputs/41f644d4-1982-46ae-9a54-2f89922b0eef",
+        "offering": {
+          "id": "esse-codex-generation",
+          "providerProfileId": "esse-codex",
+          "providerName": "Codex",
+          "tierName": "内置",
+          "adapterId": "agent-generation",
+          "canonicalModelId": "agent-image-generation",
+          "providerModelId": "agent-image-generation",
+          "displayName": "Codex 生成",
+          "concurrency": 1,
+          "price": {
+            "mode": "model_quota",
+            "currency": "MODEL"
+          }
+        },
+        "jobs": [
+          {
+            "id": "36de9009-2067-49b9-873f-6fae08294f88",
+            "index": 0,
+            "name": "图1",
+            "referenceImagePaths": [
+              "$FIXTURE_ROOT/outputs/41f644d4-1982-46ae-9a54-2f89922b0eef/图1-1.png"
+            ],
+            "offering": {
+              "id": "esse-codex-generation",
+              "providerProfileId": "esse-codex",
+              "providerName": "Codex",
+              "tierName": "内置",
+              "adapterId": "agent-generation",
+              "canonicalModelId": "agent-image-generation",
+              "providerModelId": "agent-image-generation",
+              "displayName": "Codex 生成",
+              "concurrency": 1,
+              "price": {
+                "mode": "model_quota",
+                "currency": "MODEL"
+              }
+            },
+            "prompt": "legacy bounded rework",
+            "status": "succeeded",
+            "progress": 100,
+            "attempt": 1,
+            "retryable": false,
+            "chargeState": "charged",
+            "createdAt": "2026-10-10T02:56:21.660Z",
+            "startedAt": "2026-10-10T02:56:21.664Z",
+            "callHistory": [
+              {
+                "id": "30390058-38d8-4e72-b205-fe936a1b4d61",
+                "sequence": 1,
+                "attempt": 1,
+                "source": "agent",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "status": "succeeded",
+                "chargeState": "charged",
+                "startedAt": "2026-10-10T02:56:21.661Z",
+                "finishedAt": "2026-10-10T02:56:21.662Z",
+                "durationMs": 1
+              },
+              {
+                "id": "5d746e23-19a9-4fe1-bb1c-2908c5ae463d",
+                "sequence": 2,
+                "attempt": 1,
+                "source": "agent",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "status": "succeeded",
+                "chargeState": "charged",
+                "startedAt": "2026-10-10T02:56:21.664Z",
+                "finishedAt": "2026-10-10T02:56:21.665Z",
+                "durationMs": 1
+              }
+            ],
+            "outputPath": "$FIXTURE_ROOT/outputs/41f644d4-1982-46ae-9a54-2f89922b0eef/图1-generated-2.png",
+            "finishedAt": "2026-10-10T02:56:21.665Z",
+            "durationMs": 1,
+            "backups": [
+              {
+                "id": "1d71c4ab-8a0f-44e7-ae3a-73c6a099065d",
+                "name": "图1-1",
+                "outputPath": "$FIXTURE_ROOT/outputs/41f644d4-1982-46ae-9a54-2f89922b0eef/图1-1.png",
+                "prompt": "legacy mother",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "createdAt": "2026-10-10T02:56:21.663Z"
+              }
+            ],
+            "hasProviderResult": false
+          }
+        ],
+        "createdAt": "2026-10-10T02:56:21.660Z",
+        "updatedAt": "2026-10-10T02:56:21.665Z",
+        "modificationKeys": {
+          "legacy-rework-key": [
+            "36de9009-2067-49b9-873f-6fae08294f88"
+          ]
+        },
+        "modificationFingerprints": {
+          "legacy-rework-key": "84b511719cfe7dbc604b48e3a43cdd411bf01f7ac43f08f1bb7f7662a7a8998a"
+        }
+      },
+      "files": [
+        {
+          "path": "$FIXTURE_ROOT/outputs/41f644d4-1982-46ae-9a54-2f89922b0eef/图1-generated-2.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg=="
+        },
+        {
+          "path": "$FIXTURE_ROOT/outputs/41f644d4-1982-46ae-9a54-2f89922b0eef/图1-1.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg=="
+        }
+      ]
+    },
+    {
+      "sourceCommit": "03fbd5fd3aa3ad0b48b375b518203900995e271f",
+      "selector": "imageIds",
+      "request": {
+        "batchId": "65eddb85-9707-4be0-b899-02467671d785",
+        "imageIds": [
+          "c0180e77-1592-49c1-8f20-4d609af05274"
+        ],
+        "instructions": "legacy bounded rework",
+        "requestKey": "legacy-rework-key"
+      },
+      "record": {
+        "id": "65eddb85-9707-4be0-b899-02467671d785",
+        "requestKey": "legacy-mother-key",
+        "requestFingerprint": "a174782b0a62678f07559fe4afde6cd724be9c70a0d0d3f86f024fda895db98a",
+        "title": "Codex 生成 · 1 张",
+        "prompt": "legacy mother",
+        "outputDirectory": "$FIXTURE_ROOT/outputs/65eddb85-9707-4be0-b899-02467671d785",
+        "offering": {
+          "id": "esse-codex-generation",
+          "providerProfileId": "esse-codex",
+          "providerName": "Codex",
+          "tierName": "内置",
+          "adapterId": "agent-generation",
+          "canonicalModelId": "agent-image-generation",
+          "providerModelId": "agent-image-generation",
+          "displayName": "Codex 生成",
+          "concurrency": 1,
+          "price": {
+            "mode": "model_quota",
+            "currency": "MODEL"
+          }
+        },
+        "jobs": [
+          {
+            "id": "c0180e77-1592-49c1-8f20-4d609af05274",
+            "index": 0,
+            "name": "图1",
+            "referenceImagePaths": [
+              "$FIXTURE_ROOT/outputs/65eddb85-9707-4be0-b899-02467671d785/图1-1.png"
+            ],
+            "offering": {
+              "id": "esse-codex-generation",
+              "providerProfileId": "esse-codex",
+              "providerName": "Codex",
+              "tierName": "内置",
+              "adapterId": "agent-generation",
+              "canonicalModelId": "agent-image-generation",
+              "providerModelId": "agent-image-generation",
+              "displayName": "Codex 生成",
+              "concurrency": 1,
+              "price": {
+                "mode": "model_quota",
+                "currency": "MODEL"
+              }
+            },
+            "prompt": "legacy bounded rework",
+            "status": "succeeded",
+            "progress": 100,
+            "attempt": 1,
+            "retryable": false,
+            "chargeState": "charged",
+            "createdAt": "2026-10-10T02:56:21.793Z",
+            "startedAt": "2026-10-10T02:56:21.800Z",
+            "callHistory": [
+              {
+                "id": "33513bd1-12b5-45d8-9586-d5c8b4af740f",
+                "sequence": 1,
+                "attempt": 1,
+                "source": "agent",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "status": "succeeded",
+                "chargeState": "charged",
+                "startedAt": "2026-10-10T02:56:21.795Z",
+                "finishedAt": "2026-10-10T02:56:21.797Z",
+                "durationMs": 2
+              },
+              {
+                "id": "df011c84-8b54-49ae-a93a-ef3213ec1e93",
+                "sequence": 2,
+                "attempt": 1,
+                "source": "agent",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "status": "succeeded",
+                "chargeState": "charged",
+                "startedAt": "2026-10-10T02:56:21.800Z",
+                "finishedAt": "2026-10-10T02:56:21.802Z",
+                "durationMs": 2
+              }
+            ],
+            "outputPath": "$FIXTURE_ROOT/outputs/65eddb85-9707-4be0-b899-02467671d785/图1-generated-2.png",
+            "finishedAt": "2026-10-10T02:56:21.802Z",
+            "durationMs": 2,
+            "backups": [
+              {
+                "id": "0cb9867d-e708-4d09-b5e3-43243eeffe49",
+                "name": "图1-1",
+                "outputPath": "$FIXTURE_ROOT/outputs/65eddb85-9707-4be0-b899-02467671d785/图1-1.png",
+                "prompt": "legacy mother",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "createdAt": "2026-10-10T02:56:21.799Z"
+              }
+            ],
+            "hasProviderResult": false
+          }
+        ],
+        "createdAt": "2026-10-10T02:56:21.793Z",
+        "updatedAt": "2026-10-10T02:56:21.802Z",
+        "modificationKeys": {
+          "legacy-rework-key": [
+            "c0180e77-1592-49c1-8f20-4d609af05274"
+          ]
+        },
+        "modificationFingerprints": {
+          "legacy-rework-key": "4e03ebeb2eea8b1cb619f4242740d0fff4f2691f6a79d234c96223537d200959"
+        }
+      },
+      "files": [
+        {
+          "path": "$FIXTURE_ROOT/outputs/65eddb85-9707-4be0-b899-02467671d785/图1-generated-2.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg=="
+        },
+        {
+          "path": "$FIXTURE_ROOT/outputs/65eddb85-9707-4be0-b899-02467671d785/图1-1.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg=="
+        }
+      ]
+    },
+    {
+      "sourceCommit": "03fbd5fd3aa3ad0b48b375b518203900995e271f",
+      "selector": "jobIds",
+      "request": {
+        "batchId": "242a496b-ab52-4e44-8eea-ab2b2d67bb49",
+        "jobIds": [
+          "db49d7dd-2e98-47aa-9cd2-8554cf944a99"
+        ],
+        "instructions": "legacy bounded rework",
+        "requestKey": "legacy-rework-key"
+      },
+      "record": {
+        "id": "242a496b-ab52-4e44-8eea-ab2b2d67bb49",
+        "requestKey": "legacy-mother-key",
+        "requestFingerprint": "a174782b0a62678f07559fe4afde6cd724be9c70a0d0d3f86f024fda895db98a",
+        "title": "Codex 生成 · 1 张",
+        "prompt": "legacy mother",
+        "outputDirectory": "$FIXTURE_ROOT/outputs/242a496b-ab52-4e44-8eea-ab2b2d67bb49",
+        "offering": {
+          "id": "esse-codex-generation",
+          "providerProfileId": "esse-codex",
+          "providerName": "Codex",
+          "tierName": "内置",
+          "adapterId": "agent-generation",
+          "canonicalModelId": "agent-image-generation",
+          "providerModelId": "agent-image-generation",
+          "displayName": "Codex 生成",
+          "concurrency": 1,
+          "price": {
+            "mode": "model_quota",
+            "currency": "MODEL"
+          }
+        },
+        "jobs": [
+          {
+            "id": "db49d7dd-2e98-47aa-9cd2-8554cf944a99",
+            "index": 0,
+            "name": "图1",
+            "referenceImagePaths": [
+              "$FIXTURE_ROOT/outputs/242a496b-ab52-4e44-8eea-ab2b2d67bb49/图1-1.png"
+            ],
+            "offering": {
+              "id": "esse-codex-generation",
+              "providerProfileId": "esse-codex",
+              "providerName": "Codex",
+              "tierName": "内置",
+              "adapterId": "agent-generation",
+              "canonicalModelId": "agent-image-generation",
+              "providerModelId": "agent-image-generation",
+              "displayName": "Codex 生成",
+              "concurrency": 1,
+              "price": {
+                "mode": "model_quota",
+                "currency": "MODEL"
+              }
+            },
+            "prompt": "legacy bounded rework",
+            "status": "succeeded",
+            "progress": 100,
+            "attempt": 1,
+            "retryable": false,
+            "chargeState": "charged",
+            "createdAt": "2026-10-10T02:56:21.817Z",
+            "startedAt": "2026-10-10T02:56:21.821Z",
+            "callHistory": [
+              {
+                "id": "724d3149-83ec-4267-be91-f0c8299eaaa2",
+                "sequence": 1,
+                "attempt": 1,
+                "source": "agent",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "status": "succeeded",
+                "chargeState": "charged",
+                "startedAt": "2026-10-10T02:56:21.817Z",
+                "finishedAt": "2026-10-10T02:56:21.819Z",
+                "durationMs": 2
+              },
+              {
+                "id": "6e6acd02-af92-485b-a43c-2631e7ca9556",
+                "sequence": 2,
+                "attempt": 1,
+                "source": "agent",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "status": "succeeded",
+                "chargeState": "charged",
+                "startedAt": "2026-10-10T02:56:21.821Z",
+                "finishedAt": "2026-10-10T02:56:21.823Z",
+                "durationMs": 2
+              }
+            ],
+            "outputPath": "$FIXTURE_ROOT/outputs/242a496b-ab52-4e44-8eea-ab2b2d67bb49/图1-generated-2.png",
+            "finishedAt": "2026-10-10T02:56:21.823Z",
+            "durationMs": 2,
+            "backups": [
+              {
+                "id": "a1765243-f42d-4db7-be5e-568be79c7934",
+                "name": "图1-1",
+                "outputPath": "$FIXTURE_ROOT/outputs/242a496b-ab52-4e44-8eea-ab2b2d67bb49/图1-1.png",
+                "prompt": "legacy mother",
+                "offering": {
+                  "id": "esse-codex-generation",
+                  "providerProfileId": "esse-codex",
+                  "providerName": "Codex",
+                  "tierName": "内置",
+                  "adapterId": "agent-generation",
+                  "canonicalModelId": "agent-image-generation",
+                  "providerModelId": "agent-image-generation",
+                  "displayName": "Codex 生成",
+                  "concurrency": 1,
+                  "price": {
+                    "mode": "model_quota",
+                    "currency": "MODEL"
+                  }
+                },
+                "createdAt": "2026-10-10T02:56:21.821Z"
+              }
+            ],
+            "hasProviderResult": false
+          }
+        ],
+        "createdAt": "2026-10-10T02:56:21.817Z",
+        "updatedAt": "2026-10-10T02:56:21.823Z",
+        "modificationKeys": {
+          "legacy-rework-key": [
+            "db49d7dd-2e98-47aa-9cd2-8554cf944a99"
+          ]
+        },
+        "modificationFingerprints": {
+          "legacy-rework-key": "26a4d87aeb84ec8283e0512f9536bf87fbbd33f15b7d6dbc34e5777ee9ea8a6b"
+        }
+      },
+      "files": [
+        {
+          "path": "$FIXTURE_ROOT/outputs/242a496b-ab52-4e44-8eea-ab2b2d67bb49/图1-generated-2.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgYPj/HwADAgH/5ncLrgAAAABJRU5ErkJggg=="
+        },
+        {
+          "path": "$FIXTURE_ROOT/outputs/242a496b-ab52-4e44-8eea-ab2b2d67bb49/图1-1.png",
+          "base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M/wHwAEAQH/cetH5QAAAABJRU5ErkJggg=="
+        }
+      ]
+    }
+  ]
+}

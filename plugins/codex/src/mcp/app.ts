@@ -424,10 +424,10 @@ export function createLocalEsseServer(options: {
   }, async (input) => {
     const imageIds = input.imageIds || input.jobIds;
     if (!imageIds?.length) throw new Error("请提供至少一个准确的 image ID。");
-    const batch = await options.batches.modifyInPlace({
-      batchId: input.batchId, imageIds, instructions: input.instructions,
-      offeringId: input.offeringId, requestKey: input.requestKey,
-      referenceImagePaths: [...(input.referenceImagePaths || []), ...resolveExistingImagePaths(options.batches, input.referenceImages)]
+    const { referenceImages, ...modificationInput } = input;
+    const referenceImagePaths = [...(input.referenceImagePaths || []), ...resolveExistingImagePaths(options.batches, referenceImages)];
+    const batch = await options.batches.modifyInPlace({ ...modificationInput, imageIds,
+      referenceImagePaths: referenceImagePaths.length ? referenceImagePaths : undefined,
     });
     const message = batch.jobs.some((job) => job.status === "queued" && job.offering?.adapterId === "agent-generation")
       ? "已建立 Codex 生成修改任务。当前 Agent 必须使用每个 job 返回的参考图完成生成并逐项回传结果。"

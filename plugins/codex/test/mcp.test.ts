@@ -42,10 +42,11 @@ test("Agent rework retains original reference bytes and attaches explicit local 
     await fixture.client.callTool({ name: "start_agent_image_job", arguments: { batchId: carrier.id, jobId: carrier.jobs[0]!.id } });
     const carrierCompleted = await fixture.client.callTool({ name: "complete_agent_image_job", arguments: { batchId: carrier.id, jobId: carrier.jobs[0]!.id, imagePath: files[4] } });
     assert.notEqual(carrierCompleted.isError, true);
-    const modified = await fixture.client.callTool({ name: "modify_selected_images", arguments: {
+    const modification = {
       batchId: mother.id, imageIds: [mother.jobs[0]!.id], instructions: "bounded rework", requestKey: "reference-rework",
       referenceImagePaths: [files[0], files[1], files[3]], referenceImages: [{ batchId: carrier.id, image: "图1" }]
-    } });
+    };
+    const modified = await fixture.client.callTool({ name: "modify_selected_images", arguments: modification });
     assert.notEqual(modified.isError, true);
     const rework = await fixture.client.callTool({ name: "start_agent_image_job", arguments: { batchId: mother.id, jobId: mother.jobs[0]!.id } });
     const reworkPaths = (rework.structuredContent as { job: { referenceImagePaths: string[] } }).job.referenceImagePaths;
@@ -54,6 +55,15 @@ test("Agent rework retains original reference bytes and attaches explicit local 
     assert.deepEqual(await readFile(files[1]!), buffers[1]);
     assert.deepEqual(await readFile(fixture.batches.get(carrier.id).jobs[0]!.outputPath!), buffers[4]);
     await fixture.client.callTool({ name: "fail_agent_image_job", arguments: { batchId: mother.id, jobId: mother.jobs[0]!.id, error: "offline fixture: no generation" } });
+    const beforeReplay = fixture.batches.get(mother.id);
+    const replayed = await fixture.client.callTool({ name: "modify_selected_images", arguments: modification });
+    assert.notEqual(replayed.isError, true);
+    for (const references of [[], [files[0], files[1], files[2]]]) {
+      const conflict = await fixture.client.callTool({ name: "modify_selected_images", arguments: { ...modification, referenceImagePaths: references } });
+      assert.equal(conflict.isError, true);
+      assert.match(JSON.stringify(conflict.content), /already used with different arguments/u);
+    }
+    assert.deepEqual(fixture.batches.get(mother.id), beforeReplay);
   } finally { await fixture.client.close(); await fixture.server.close(); await rm(root, { recursive: true, force: true }); }
 });
 

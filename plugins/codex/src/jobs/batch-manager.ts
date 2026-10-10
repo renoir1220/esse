@@ -43,6 +43,16 @@ export interface AppendBatchResult {
   appendedJobIds: string[];
 }
 
+export interface ModifyBatchInput {
+  batchId: string;
+  imageIds?: string[];
+  jobIds?: string[];
+  instructions: string;
+  offeringId?: string;
+  referenceImagePaths?: string[];
+  requestKey?: string;
+}
+
 type SelectedBatchImage =
   | { kind: "result" | "failed-source"; job: JobRecord; sourcePath: string }
   | { kind: "backup"; job: JobRecord; backup: JobBackup; sourcePath: string };
@@ -313,32 +323,16 @@ export class BatchManager {
     return { batch: snapshot(batch), appendedJobIds: appended.map((job) => job.id) };
   }
 
-  async modifyInPlace(options: {
-    batchId: string;
-    imageIds?: string[];
-    jobIds?: string[];
-    instructions: string;
-    offeringId?: string;
-    referenceImagePaths?: string[];
-    requestKey?: string;
-  }): Promise<BatchSnapshot> {
-    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
+  async modifyInPlace(options: ModifyBatchInput): Promise<BatchSnapshot> {
+    const fingerprint = modificationFingerprint(options);
     return this.withRequestKey(`modify:${options.batchId}:${options.requestKey || ""}`, options.requestKey, fingerprint, () => this.modifyInPlaceUnlocked(options));
   }
 
-  private async modifyInPlaceUnlocked(options: {
-    batchId: string;
-    imageIds?: string[];
-    jobIds?: string[];
-    instructions: string;
-    offeringId?: string;
-    referenceImagePaths?: string[];
-    requestKey?: string;
-  }): Promise<BatchSnapshot> {
+  private async modifyInPlaceUnlocked(options: ModifyBatchInput): Promise<BatchSnapshot> {
     const source = this.requireBatch(options.batchId);
-    const fingerprint = options.requestKey ? requestFingerprint({ ...options, requestKey: undefined }) : undefined;
+    const fingerprint = modificationFingerprint(options);
     if (options.requestKey && source.modificationKeys?.[options.requestKey]) {
-      assertMatchingFingerprint(source.modificationFingerprints?.[options.requestKey], fingerprint, options.requestKey);
+      assertCompatibleModificationFingerprint(source.modificationFingerprints?.[options.requestKey], options);
       this.activate(source.id);
       return snapshot(source);
     }
@@ -1359,6 +1353,28 @@ function defaultOutputDirectory(paths: DataPaths, inputDirectory: string | undef
 function isInside(directory: string, filePath: string): boolean {
   const relative = path.relative(path.resolve(directory), path.resolve(filePath));
   return Boolean(relative) && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
+function modificationFingerprint(input: ModifyBatchInput): string | undefined {
+  return input.requestKey ? requestFingerprint({ ...input, requestKey: undefined,
+    referenceImagePaths: input.referenceImagePaths?.length ? input.referenceImagePaths : undefined,
+  }) : undefined;
+}
+
+function assertCompatibleModificationFingerprint(stored: string | undefined, input: ModifyBatchInput): void {
+  const variants = [input];
+  // The previous handler omitted this deprecated alias; older handlers kept it.
+  // Only identical selectors are equivalent. Other arguments remain unchanged.
+  if (input.imageIds && input.jobIds && JSON.stringify(input.imageIds) === JSON.stringify(input.jobIds)) {
+    variants.push({ ...input, jobIds: undefined });
+  }
+  const fingerprints = variants.flatMap(variant => [
+    modificationFingerprint(variant),
+    ...(!variant.referenceImagePaths?.length
+      ? [requestFingerprint({ ...variant, requestKey: undefined, referenceImagePaths: [] })] : [])
+  ]);
+  if (stored && fingerprints.includes(stored)) return;
+  assertMatchingFingerprint(stored, modificationFingerprint(input), input.requestKey!);
 }
 
 function requestFingerprint(value: unknown): string {
