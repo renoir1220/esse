@@ -125,8 +125,12 @@ export class BatchManager {
     this.schedule();
   }
 
-  list(): BatchSnapshot[] {
+  list(requestKey?: string): BatchSnapshot[] {
     return [...this.batches.values()]
+      .filter((batch) => requestKey === undefined || batch.requestKey === requestKey
+        || Object.hasOwn(batch.createAliases ?? {}, requestKey)
+        || Object.hasOwn(batch.appendKeys, requestKey)
+        || Object.hasOwn(batch.modificationKeys, requestKey))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
       .map(snapshot);
   }

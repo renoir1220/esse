@@ -483,8 +483,12 @@ export class BatchManager {
     return snapshot(batch);
   }
 
-  list(limit = 20): BatchSnapshot[] {
+  list(limit = 20, requestKey?: string): BatchSnapshot[] {
     return [...this.batches.values()]
+      .filter((batch) => requestKey === undefined || batch.requestKey === requestKey
+        || Object.hasOwn(batch.createAliases ?? {}, requestKey)
+        || Object.hasOwn(batch.appendKeys ?? {}, requestKey)
+        || Object.hasOwn(batch.modificationKeys ?? {}, requestKey))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, Math.max(1, Math.min(MAX_BATCH_IMAGES, limit)))
       .map(snapshot);

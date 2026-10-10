@@ -13,6 +13,7 @@ import { ProviderRegistry } from "../src/providers/registry.js";
 import { BatchManager } from "../src/jobs/batch-manager.js";
 import { Thumbnailer } from "../src/files/thumbnailer.js";
 import { createLocalEsseServer, WIDGET_URI } from "../src/mcp/app.js";
+import { AUTHORIZED_WORKFLOW_POLICY, WORKFLOW_POLLING, WORKFLOW_TOOL_GUIDANCE } from "../src/mcp/workflow-policy.js";
 import { ORIGINAL_IMAGE_RESOURCE_TEMPLATE } from "../src/files/original-image-registry.js";
 import { CODEX_GENERATION_OFFERING_ID } from "../src/types.js";
 
@@ -68,6 +69,10 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     const tools = await client.listTools();
+    assert(client.getInstructions()?.includes(AUTHORIZED_WORKFLOW_POLICY));
+    for (const name of ["create_image_batch", "append_image_batch_jobs", "modify_selected_images", "list_image_batches", "get_image_batch", "render_image_batch"]) {
+      assert(tools.tools.find(tool => tool.name === name)?.description?.includes(WORKFLOW_TOOL_GUIDANCE));
+    }
     const names = tools.tools.map((tool) => tool.name);
     for (const required of ["open_esse", "inspect_image_folder", "list_image_batches", "create_image_batch", "append_image_batch_jobs", "start_agent_image_job", "complete_agent_image_job", "fail_agent_image_job", "modify_selected_images", "delete_esse_images", "merge_image_batches", "ui_get_batch_state", "ui_check_for_updates", "ui_list_image_batches", "ui_open_batch_folder", "ui_save_provider_profile", "ui_get_image_previews", "ui_get_original_image_resource", "ui_get_image_metadata", "ui_save_image_as", "ui_copy_image_to_clipboard", "ui_copy_batch_reference_to_clipboard", "ui_copy_image_id_to_clipboard", "ui_delete_esse_images", "ui_delete_image_batch"]) {
       assert(names.includes(required), `Missing local MCP tool ${required}`);
@@ -86,6 +91,7 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     assert((appendTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.batchId, "append_image_batch_jobs must target one existing batch");
     assert(!((appendTool?.inputSchema as { required?: string[] })?.required || []).includes("offeringId"), "append_image_batch_jobs must reuse the batch model when offeringId is omitted");
     const listTool = tools.tools.find((tool) => tool.name === "list_image_batches");
+    assert((listTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.requestKey);
     assert.equal((listTool?.inputSchema as { properties?: { limit?: { maximum?: number } } })?.properties?.limit?.maximum, 50);
     const modifyTool = tools.tools.find((tool) => tool.name === "modify_selected_images");
     assert((modifyTool?.inputSchema as { properties?: Record<string, unknown> })?.properties?.imageIds, "modify_selected_images must accept exact image IDs");
@@ -145,6 +151,10 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
     const createdBatch = (created.structuredContent as { batch?: { id?: string; title?: string; offering?: { id?: string } } }).batch;
     assert.equal(createdBatch?.offering?.id, defaultOfferingId);
     assert.equal((created.structuredContent as { activateBatchId?: string }).activateBatchId, createdBatch?.id);
+    assert.equal((created.structuredContent as { nextAction?: string }).nextAction, AUTHORIZED_WORKFLOW_POLICY);
+    assert.deepEqual((created.structuredContent as { polling?: unknown }).polling, WORKFLOW_POLLING);
+    const reconciled = await client.callTool({ name: "list_image_batches", arguments: { requestKey: "mcp-create-default", limit: 1 } });
+    assert.deepEqual((reconciled.structuredContent as { batches: Array<{ id: string }> }).batches.map(batch => batch.id), [createdBatch?.id]);
     const refreshedState = await client.callTool({ name: "ui_get_local_state", arguments: { batchId: createdBatch?.id } });
     assert.equal((refreshedState.structuredContent as { state?: { activation?: { batchId?: string } } }).state?.activation?.batchId, createdBatch?.id);
     let completedJobId: string | undefined;
@@ -181,6 +191,8 @@ test("local MCP exposes the installable plugin tools and widget over stdio-compa
       arguments: appendArguments
     });
     assert.equal((duplicateAppend.structuredContent as { batch?: { total?: number } }).batch?.total, 2);
+    const appendedReceipt = await client.callTool({ name: "list_image_batches", arguments: { requestKey: "mcp-append-once", limit: 1 } });
+    assert.deepEqual((appendedReceipt.structuredContent as { batches: Array<{ id: string }> }).batches.map(batch => batch.id), [createdBatch?.id]);
     const conflictingAppend = await client.callTool({
       name: "append_image_batch_jobs",
       arguments: { batchId: createdBatch?.id, prompt: "different operation", requestKey: "mcp-append-once" }
