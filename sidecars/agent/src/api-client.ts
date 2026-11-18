@@ -297,11 +297,17 @@ export class EsseApiClient {
 
   private openAiRequest(baseUrl: string, apiKey: string, model: string, input: GenerateInput, images: string[]): Promise<Response> {
     const apiBase = baseUrl.replace(/\/+$/, '').replace(/\/v1$/i, '');
+    const official = /^https:\/\/api\.openai\.com(?::443)?$/i.test(apiBase);
+    if (official && images.length > 16) {
+      throw new EsseApiError('OpenAI Images 最多支持 16 张参考图。', { code: 'invalid_reference_count', chargeState: 'not_charged', origin: 'esse' });
+    }
+    const redirect = official ? { redirect: 'error' as const } : {};
     if (!images.length) {
       return this.fetchImpl(`${apiBase}/v1/images/generations`, {
         method: 'POST',
         headers: { authorization: `Bearer ${apiKey}`, 'content-type': 'application/json' },
-        body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, response_format: 'b64_json', size: input.size, quality: input.quality }),
+        body: JSON.stringify({ model, prompt: input.prompt, n: input.n ?? 1, size: input.size, quality: input.quality, ...(!official ? { response_format: 'b64_json' } : {}) }),
+        ...redirect,
         signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
       });
     }
@@ -309,18 +315,20 @@ export class EsseApiClient {
     form.set('model', model);
     form.set('prompt', input.prompt);
     form.set('n', String(input.n ?? 1));
-    form.set('response_format', 'b64_json');
+    if (!official) form.set('response_format', 'b64_json');
     if (input.size) form.set('size', input.size);
     if (input.quality) form.set('quality', input.quality);
+    const imageField = official && images.length > 1 ? 'image[]' : 'image';
     for (const [index, image] of images.entries()) {
       const match = /^data:([^;,]+);base64,(.+)$/s.exec(image);
       if (!match?.[1] || !match[2]) throw new Error('Invalid local reference image.');
-      form.append('image', new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
+      form.append(imageField, new Blob([Buffer.from(match[2], 'base64')], { type: match[1] }), `input-${index + 1}.${extensionForMime(match[1])}`);
     }
     return this.fetchImpl(`${apiBase}/v1/images/edits`, {
       method: 'POST',
       headers: { authorization: `Bearer ${apiKey}` },
       body: form,
+      ...redirect,
       signal: AbortSignal.timeout(IMAGE_REQUEST_TIMEOUT_MS),
     });
   }

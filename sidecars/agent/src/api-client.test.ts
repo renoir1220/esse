@@ -123,11 +123,41 @@ describe('Esse Provider client', () => {
       expect(new Headers(init?.headers).get('authorization')).toBe('Bearer local-provider-key');
       const form = init?.body as FormData;
       expect(form.get('prompt')).toBe('add a scarf');
+      expect(form.get('response_format')).toBe('b64_json');
       expect(form.getAll('image')).toHaveLength(1);
       return new Response(JSON.stringify({ data: [{ b64_json: 'ZWRpdGVk' }] }), { status: 200, headers: { 'x-request-id': 'edit-request-1' } });
     }) as unknown as typeof fetch;
     const client = new EsseApiClient(fakeSettings('openai-images'), fetchMock);
     await expect(client.edit({ prompt: 'add a scarf', model: 'provider-1:gpt-image-2' }, [sourcePath], 'stable-edit-key')).resolves.toMatchObject({ requestId: 'edit-request-1' });
+  });
+
+  it('uses the official OpenAI GPT Image contract for generation and reference editing', async () => {
+    const directory = await mkdtemp(path.join(os.tmpdir(), 'esse-openai-edit-test-'));
+    temporaryDirectories.push(directory);
+    const sources = ['first', 'second'].map((name) => path.join(directory, `${name}.png`));
+    await Promise.all(sources.map((source) => writeFile(source, path.basename(source, '.png'))));
+    const model = 'gpt-image-2.6-flare';
+    const fetchMock = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      expect(new Headers(init?.headers).get('authorization')).toBe('Bearer local-provider-key');
+      expect(init?.redirect).toBe('error');
+      if (init?.body instanceof FormData) {
+        expect(String(url)).toBe('https://api.openai.com/v1/images/edits');
+        expect(init.body.has('response_format')).toBe(false);
+        expect(init.body.get('quality')).toBe('low');
+        expect(await Promise.all(init.body.getAll('image[]').map((image) => (image as Blob).text()))).toEqual(['first', 'second']);
+      } else {
+        expect(String(url)).toBe('https://api.openai.com/v1/images/generations');
+        expect(JSON.parse(String(init?.body))).toEqual({ model, prompt: 'test', n: 1, size: '1024x1024', quality: 'low' });
+      }
+      return Response.json({ data: [{ b64_json: 'aW1hZ2U=' }] }, { headers: { 'x-request-id': 'image-request' } });
+    });
+    const client = new EsseApiClient(fakeSettings('openai-images', model, 'https://api.openai.com/v1/'), fetchMock as typeof fetch);
+    const input = { model: 'offering', prompt: 'test', size: '1024x1024', quality: 'low' };
+    const expected = { requestId: 'image-request', items: [{ b64_json: 'aW1hZ2U=' }] };
+    await expect(client.generate(input)).resolves.toMatchObject(expected);
+    await expect(client.edit(input, sources)).resolves.toMatchObject(expected);
+    await expect(client.edit(input, Array<string>(17).fill(sources[0]!))).rejects.toMatchObject({ details: { chargeState: 'not_charged' } });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
   it('accepts up to twenty references and rejects a twenty-first before contacting the Provider', async () => {
