@@ -1,5 +1,10 @@
 # Plugin and Agent Sidecar parity
 
+## 2026-11-18 — official OpenAI Images Provider
+
+- Both implementations offer the OpenAI preset with GPT Image 2.6 Flare and Sunburst, a project API key in local settings and the existing read-only model-list connection test. Activated credits apply through the linked OpenAI API organization.
+- For the official API root, both adapters omit the legacy `response_format` field, read the default Base64 result, upload multiple original references as `image[]` and enforce the 16-reference limit. Official image requests reject redirects. Compatible third-party endpoints keep their previous payload.
+
 ## 2026-10-08 — official Google Gemini image Provider
 
 - Both implementations add a Google Gemini preset with no embedded credential and a native image adapter inside the existing Provider registry/settings architecture. Tuzi, OpenAI-compatible/Subrouter profiles and their stored adapter IDs keep their original routing.

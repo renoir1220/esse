@@ -86,7 +86,7 @@ Open the checksum-verified `.dmg`, drag `Esse Community.app` into Applications, 
 
 After installation, the user opens Esse Community and completes setup inside its settings page:
 
-1. Choose a built-in Tuzi preset or add an OpenAI-compatible Provider.
+1. Add a Provider in settings. To use the OpenAI Images API, choose **OpenAI · 官方** and enter a project API key. If you claimed [ChatGPT API credits](https://developers.openai.com/api/docs/guides/chatgpt-api-credits), use a key from the linked API organization. The connection test lists models. A generation or edit uses the organization's API balance.
 2. Paste the API Key inside Esse Community, test it, and save a default image model.
 3. Copy the MCP server configuration from Esse Community into the Agent's user-level HTTP MCP settings.
 4. Start a new Agent task and say `用 Esse 生成图片`.

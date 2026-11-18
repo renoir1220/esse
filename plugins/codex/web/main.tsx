@@ -9,6 +9,7 @@ import type { ImageMetadata } from "./image-metadata";
 import { initialImageZoom, zoomImageAtPoint } from "./image-zoom";
 import { originalImageDataUrl } from "./original-image-resource";
 import { GEMINI_PROVIDER_PRESET, createGeminiProviderDraft, geminiProviderPresetForDraft } from "./gemini-catalog";
+import { OPENAI_PROVIDER_HINT, OPENAI_PROVIDER_PRESET, createOpenAiProviderDraft, openAiProviderPresetForDraft } from "./openai-catalog";
 import { providerSavePayload } from "./provider-payload";
 import { DataUrlLruCache, jobFileSignature, jobPreviewRevision, versionedPreviewSignature } from "./preview-cache";
 import { progressivePreviewChunks } from "./preview-batching";
@@ -382,9 +383,10 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
   const [models, setModels] = useState<string[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const editing = Boolean(draft.id);
-  const activeTuziPreset = tuziProviderPresetForDraft(draft) || geminiProviderPresetForDraft(draft);
+  const activeTuziPreset = tuziProviderPresetForDraft(draft) || geminiProviderPresetForDraft(draft) || openAiProviderPresetForDraft(draft);
   const configuredTuziPresetIds = useMemo(() => new Set(props.state.providers.flatMap((profile) => {
-    const preset = tuziProviderPresetForDraft(providerDraftFromProfile(profile)) || geminiProviderPresetForDraft(providerDraftFromProfile(profile));
+    const savedDraft = providerDraftFromProfile(profile);
+    const preset = tuziProviderPresetForDraft(savedDraft) || geminiProviderPresetForDraft(savedDraft) || openAiProviderPresetForDraft(savedDraft);
     return preset ? [preset.id] : [];
   })), [props.state.providers]);
 
@@ -408,7 +410,8 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
 
   const startProviderDraft = (choiceId: string) => {
     const preset = TUZI_PROVIDER_PRESETS.find((entry) => entry.id === choiceId);
-    setDraft(choiceId === GEMINI_PROVIDER_PRESET.id ? createGeminiProviderDraft() : preset ? createTuziProviderDraft(preset.id) : createCustomProviderDraft());
+    if (choiceId === OPENAI_PROVIDER_PRESET.id) setDraft(createOpenAiProviderDraft());
+    else setDraft(choiceId === GEMINI_PROVIDER_PRESET.id ? createGeminiProviderDraft() : preset ? createTuziProviderDraft(preset.id) : createCustomProviderDraft());
     setModels([]);
     setConfirmDelete(false);
   };
@@ -487,7 +490,7 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
             ariaLabel="新建 Provider"
             title="选择 Provider"
             options={[
-              ...[...TUZI_PROVIDER_PRESETS, GEMINI_PROVIDER_PRESET].map((preset) => ({
+              ...[...TUZI_PROVIDER_PRESETS, GEMINI_PROVIDER_PRESET, OPENAI_PROVIDER_PRESET].map((preset) => ({
                 id: preset.id,
                 label: preset.label,
                 description: configuredTuziPresetIds.has(preset.id) ? "已配置，可从左侧列表编辑" : `${adapterDisplayName(preset.adapterId)} · ${preset.models.length} 个预制模型`,
@@ -514,7 +517,9 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
         <div className="editor-heading"><h1>{draft.displayName || "Provider"} · {draft.tierName || "档位"}</h1></div>
         {activeTuziPreset && <div className="preset-config-banner">
           <span><strong>预制配置</strong> · {activeTuziPreset.label}</span>
-          <small>{activeTuziPreset.id === "google-gemini" ? "接口与模型已填好，只需填写 Google API Key。价格以 Google 实际账单为准。" : "接口与模型已填好；目录价格为 2026-07-19 固定值，暂不自动同步。每个分组独立保存 API Key。"}</small>
+          <small>{activeTuziPreset.id === OPENAI_PROVIDER_PRESET.id ? OPENAI_PROVIDER_HINT
+            : activeTuziPreset.id === GEMINI_PROVIDER_PRESET.id ? "接口与模型已填好，只需填写 Google API Key。价格以 Google 实际账单为准。"
+              : "接口与模型已填好；目录价格为 2026-07-19 固定值，暂不自动同步。每个分组独立保存 API Key。"}</small>
         </div>}
         <section className="settings-section">
           <div className="settings-section-heading"><strong>连接</strong></div>
@@ -534,7 +539,7 @@ function SettingsView(props: { state: WorkbenchState; applyResult: (result: Tool
 
         <section className="settings-section models-section">
           <div className="offerings-heading">
-            <span className="offerings-title"><strong>模型</strong>{activeTuziPreset && <small>价格仅供参考，请以 Tuzi 官网为准。</small>}</span>
+            <span className="offerings-title"><strong>模型</strong>{activeTuziPreset?.id.startsWith("tuzi-") && <small>价格仅供参考，请以 Tuzi 官网为准。</small>}</span>
             <AddChoiceMenu
               ariaLabel="添加模型"
               title={activeTuziPreset ? `${activeTuziPreset.label} 支持的模型` : "添加模型"}

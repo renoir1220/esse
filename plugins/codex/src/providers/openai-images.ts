@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { GenerateRequest, GenerateResult, ProviderAdapter } from "../types.js";
+import { ProviderRequestError, type GenerateRequest, type GenerateResult, type ProviderAdapter } from "../types.js";
 import { extractImageResult, IMAGE_REQUEST_TIMEOUT_MS, normalizeTransportError, parseResponse, providerError, requestId, type FetchLike } from "./http.js";
 
 export class OpenAiImagesAdapter implements ProviderAdapter {
@@ -9,10 +9,15 @@ export class OpenAiImagesAdapter implements ProviderAdapter {
   async generate(request: GenerateRequest, signal?: AbortSignal): Promise<GenerateResult> {
     const timeout = AbortSignal.timeout(this.options.timeoutMs ?? IMAGE_REQUEST_TIMEOUT_MS);
     const combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
+    const base = apiBase(this.options.baseUrl);
+    const official = /^https:\/\/api\.openai\.com(?::443)?$/i.test(base);
+    if (official && request.images.length > 16) {
+      throw new ProviderRequestError("OpenAI Images supports up to 16 reference images.", { retryable: false, chargeState: "not_charged", origin: "esse" });
+    }
     try {
       const response = request.images.length
-        ? await this.edit(request, combined)
-        : await this.create(request, combined);
+        ? await this.edit(base, request, combined, official)
+        : await this.create(base, request, combined, official);
       const parsed = await parseResponse(response);
       if (!response.ok) throw providerError(response, parsed);
       return { ...extractImageResult(parsed), providerRequestId: requestId(response, parsed) };
@@ -21,8 +26,8 @@ export class OpenAiImagesAdapter implements ProviderAdapter {
     }
   }
 
-  private create(request: GenerateRequest, signal: AbortSignal): Promise<Response> {
-    return (this.options.fetchImpl ?? fetch)(`${apiBase(this.options.baseUrl)}/v1/images/generations`, {
+  private create(base: string, request: GenerateRequest, signal: AbortSignal, official: boolean): Promise<Response> {
+    return (this.options.fetchImpl ?? fetch)(`${base}/v1/images/generations`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.options.apiKey}`, "content-type": "application/json" },
       body: JSON.stringify({
@@ -31,28 +36,31 @@ export class OpenAiImagesAdapter implements ProviderAdapter {
         n: 1,
         size: request.size,
         quality: request.quality,
-        response_format: request.responseFormat
+        ...(!official ? { response_format: request.responseFormat } : {})
       }),
+      ...(official ? { redirect: "error" } : {}),
       signal
     });
   }
 
-  private async edit(request: GenerateRequest, signal: AbortSignal): Promise<Response> {
+  private async edit(base: string, request: GenerateRequest, signal: AbortSignal, official: boolean): Promise<Response> {
     const form = new FormData();
     form.append("model", request.model);
     form.append("prompt", request.prompt);
     form.append("n", "1");
     if (request.size) form.append("size", request.size);
     if (request.quality) form.append("quality", request.quality);
-    form.append("response_format", request.responseFormat);
+    if (!official) form.append("response_format", request.responseFormat);
+    const imageField = official && request.images.length > 1 ? "image[]" : "image";
     for (const image of request.images) {
       const { blob, extension } = await imageToBlob(image, this.options.fetchImpl ?? fetch, signal);
-      form.append("image", blob, `input-${randomUUID()}.${extension}`);
+      form.append(imageField, blob, `input-${randomUUID()}.${extension}`);
     }
-    return (this.options.fetchImpl ?? fetch)(`${apiBase(this.options.baseUrl)}/v1/images/edits`, {
+    return (this.options.fetchImpl ?? fetch)(`${base}/v1/images/edits`, {
       method: "POST",
       headers: { authorization: `Bearer ${this.options.apiKey}` },
       body: form,
+      ...(official ? { redirect: "error" } : {}),
       signal
     });
   }

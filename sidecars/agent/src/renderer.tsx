@@ -38,6 +38,7 @@ import { initialImageZoom, zoomImageAtPoint } from './image-zoom';
 import { shouldDismissOverlay } from './overlay-dismiss';
 import { PENDING_TASK_HOVER_DELAY_MS, pendingTaskPeekPosition, type PeekPosition } from './pending-task-peek';
 import { GEMINI_PROVIDER_PRESET, createGeminiProviderDraft, geminiProviderPresetForDraft } from './gemini-catalog';
+import { OPENAI_PROVIDER_HINT, OPENAI_PROVIDER_PRESET, createOpenAiProviderDraft, openAiProviderPresetForDraft } from './openai-catalog';
 import { blankOffering, createCustomProviderDraft, createTuziProviderDraft, offeringFromTuziModel, TUZI_PROVIDER_PRESETS, tuziProviderPresetForDraft } from './provider-catalog';
 import { SelectMenu } from './select-menu';
 import type { BatchSnapshot, DesktopState, ImageMetadata, OfferingConfig, OfferingSummary, ProviderDraft, ProviderProfile, SavedImage, SaveProviderInput } from './types';
@@ -726,9 +727,10 @@ function Settings(props: { state: DesktopState; busy: boolean; apply: (action: (
   const [models, setModels] = useState<string[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [copied, setCopied] = useState(false);
-  const activePreset = tuziProviderPresetForDraft(draft) || geminiProviderPresetForDraft(draft);
+  const activePreset = tuziProviderPresetForDraft(draft) || geminiProviderPresetForDraft(draft) || openAiProviderPresetForDraft(draft);
   const configuredPresetIds = new Set(props.state.providers.flatMap((profile) => {
-    const preset = tuziProviderPresetForDraft(providerDraftFromProfile(profile)) || geminiProviderPresetForDraft(providerDraftFromProfile(profile));
+    const savedDraft = providerDraftFromProfile(profile);
+    const preset = tuziProviderPresetForDraft(savedDraft) || geminiProviderPresetForDraft(savedDraft) || openAiProviderPresetForDraft(savedDraft);
     return preset ? [preset.id] : [];
   }));
 
@@ -746,7 +748,8 @@ function Settings(props: { state: DesktopState; busy: boolean; apply: (action: (
 
   const startDraft = (choice: string) => {
     const preset = TUZI_PROVIDER_PRESETS.find((entry) => entry.id === choice);
-    setDraft(choice === GEMINI_PROVIDER_PRESET.id ? createGeminiProviderDraft() : preset ? createTuziProviderDraft(preset.id) : createCustomProviderDraft());
+    if (choice === OPENAI_PROVIDER_PRESET.id) setDraft(createOpenAiProviderDraft());
+    else setDraft(choice === GEMINI_PROVIDER_PRESET.id ? createGeminiProviderDraft() : preset ? createTuziProviderDraft(preset.id) : createCustomProviderDraft());
     setModels([]);
     setConfirmDelete(false);
   };
@@ -812,7 +815,7 @@ function Settings(props: { state: DesktopState; busy: boolean; apply: (action: (
         align="end"
         leading={<Plus size={14} />}
         options={[
-          ...[...TUZI_PROVIDER_PRESETS, GEMINI_PROVIDER_PRESET].map((preset) => ({
+          ...[...TUZI_PROVIDER_PRESETS, GEMINI_PROVIDER_PRESET, OPENAI_PROVIDER_PRESET].map((preset) => ({
             value: preset.id,
             label: preset.label,
             disabled: configuredPresetIds.has(preset.id),
@@ -830,7 +833,9 @@ function Settings(props: { state: DesktopState; busy: boolean; apply: (action: (
 
     <div className="provider-editor">
       <header><h1>{draft.displayName || 'Provider'} · {draft.tierName || '档位'}</h1></header>
-      {activePreset ? <div className="preset-config-banner"><strong>预制配置 · {activePreset.label}</strong><span>{activePreset.id === 'google-gemini' ? '接口与模型已填好，只需填写 Google API Key。价格以 Google 实际账单为准。' : '接口与模型已填好；目录价格记录于 2026-07-19，请以 Provider 当前价格为准。每个分组独立保存 API Key。'}</span></div> : null}
+      {activePreset ? <div className="preset-config-banner"><strong>预制配置 · {activePreset.label}</strong><span>{activePreset.id === OPENAI_PROVIDER_PRESET.id ? OPENAI_PROVIDER_HINT
+        : activePreset.id === GEMINI_PROVIDER_PRESET.id ? '接口与模型已填好，只需填写 Google API Key。价格以 Google 实际账单为准。'
+          : '接口与模型已填好；目录价格记录于 2026-07-19，请以 Provider 当前价格为准。每个分组独立保存 API Key。'}</span></div> : null}
       <section className="provider-form-section"><h2>连接</h2><div className="form-grid">
         <Field label="服务商名称"><input value={draft.displayName} onChange={(event) => setDraft({ ...draft, displayName: event.target.value })} /></Field>
         <Field label="档位名称"><input value={draft.tierName} onChange={(event) => setDraft({ ...draft, tierName: event.target.value })} /></Field>
